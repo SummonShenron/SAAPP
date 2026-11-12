@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 import importlib.util
 import os
 
-_SHIPPED = {"CONVERSATION_FOLD_AT_MESSAGES": "20", "CONVERSATION_FOLD_AT_CHARS": "12000", "CONVERSATION_KEEP_TAIL_MESSAGES": "6"}
+_SHIPPED = {"CONVERSATION_FOLD_AT_MESSAGES": "50", "CONVERSATION_FOLD_AT_CHARS": "30000", "CONVERSATION_KEEP_TAIL_MESSAGES": "6"}
 
 
 def _module_with_shipped_defaults():
@@ -47,8 +47,8 @@ def test_the_shipped_defaults_are_twenty_messages_or_twelve_thousand_characters_
     source = (Path(__file__).resolve().parents[1] / "utils" / "conversation_summary.py").read_text(encoding="utf-8")
     for name, value in _SHIPPED.items():
         assert f'os.getenv("{name}", "{value}")' in source, name               # the literal defaults in the code itself
-    assert cs.FOLD_AT_MESSAGES == 20 and cs.FOLD_AT_CHARS == 12000 and cs.KEEP_TAIL_MESSAGES == 6
-    assert cs.HARD_MAX_MESSAGES == 22                                  # what a turn sends word for word at most, so a paused or failing fold cannot let the prompt grow
+    assert cs.FOLD_AT_MESSAGES == 50 and cs.FOLD_AT_CHARS == 30000 and cs.KEEP_TAIL_MESSAGES == 6
+    assert cs.HARD_MAX_MESSAGES == 52                                  # what a turn sends word for word at most, so a paused or failing fold cannot let the prompt grow
 
 
 def test_the_characters_scale_with_the_messages_so_a_chatty_conversation_does_not_fold_long_before_the_ring_says_so():
@@ -68,7 +68,7 @@ def test_the_word_for_word_part_runs_six_to_twenty_and_averages_about_thirteen()
         assert sizes[-1] <= cs.HARD_MAX_MESSAGES
         if cs.due(summary, messages):
             summary = fold_now(summary, messages)
-    assert 11 <= sum(sizes) / len(sizes) <= 16                          # the old default averaged about 10; the cost of the longer window is what this number is for (docs/conversation-summary-plan.md)
+    assert 24 <= sum(sizes) / len(sizes) <= 32                          # the old default averaged about 10; the cost of the longer window is what this number is for (docs/conversation-summary-plan.md)
     assert min(sizes) >= cs.KEEP_TAIL_MESSAGES
 
 
@@ -84,6 +84,6 @@ def test_a_fold_happens_about_once_per_fourteen_messages_so_there_are_fewer_of_t
 
 
 def test_the_page_ring_gets_twenty_as_its_denominator_and_the_environment_can_still_change_it():
-    assert cs.progress(None, 7) == {"unfolded": 7, "fold_at": 20, "keep": 6}
+    assert cs.progress(None, 7) == {"unfolded": 7, "fold_at": 50, "keep": 6}
     source = Path("backend/utils/conversation_summary.py").read_text(encoding="utf-8")
-    assert 'os.getenv("CONVERSATION_FOLD_AT_MESSAGES", "20")' in source and 'os.getenv("CONVERSATION_FOLD_AT_CHARS", "12000")' in source
+    assert 'os.getenv("CONVERSATION_FOLD_AT_MESSAGES", "50")' in source and 'os.getenv("CONVERSATION_FOLD_AT_CHARS", "30000")' in source

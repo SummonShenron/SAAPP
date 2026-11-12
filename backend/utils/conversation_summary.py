@@ -61,8 +61,8 @@ MODEL = "model"
 
 # Raised from 14 messages / 8,000 characters on 2026-11-06 (Jack), because the cheaper reply voices make a longer verbatim window affordable. The characters scale with the messages (about 600 a reply): left at 8,000, a
 # chatty conversation would still fold near 13 messages while the page's ring said "of 20". The ring's denominator is this number (page_view); it turns yellow at three quarters (local/src/components/compactionMeterLogic.ts).
-FOLD_AT_MESSAGES = max(int(os.getenv("CONVERSATION_FOLD_AT_MESSAGES", "20")), 6)
-FOLD_AT_CHARS = max(int(os.getenv("CONVERSATION_FOLD_AT_CHARS", "12000")), 2000)
+FOLD_AT_MESSAGES = max(int(os.getenv("CONVERSATION_FOLD_AT_MESSAGES", "50")), 6)
+FOLD_AT_CHARS = max(int(os.getenv("CONVERSATION_FOLD_AT_CHARS", "30000")), 2000)
 KEEP_TAIL_MESSAGES = max(int(os.getenv("CONVERSATION_KEEP_TAIL_MESSAGES", "6")), 2)
 HARD_MAX_MESSAGES = FOLD_AT_MESSAGES + 2          # what a turn sends word for word at most, so a fold that is paused or failing cannot let the prompt grow
 # While a meeting (Office Hours) is running in the conversation, the whole meeting stays word for word and no fold runs, up to this many messages: where the agenda stands is read off the visible history, and a fold

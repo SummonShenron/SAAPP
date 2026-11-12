@@ -14,7 +14,10 @@ logger = logging.getLogger("SASS Logger")
 # rewrote that many megabytes a dozen times. On a database serving bulk transfers at ~0.1 MB/s that is 25 s per save, minutes per question, and the
 # question never finishes. The full transcript is kept (and saved append-only) by app.py; the graph only ever reads the recent end (app.py sends the last
 # 10 messages in, and nodes look back a handful at most), so the state keeps a bounded recent window. 0 means no limit.
-MAX_STATE_MESSAGES = int(os.getenv("GRAPH_STATE_MAX_MESSAGES", "40"))
+# 82 (was 40, 2026-11-12): the state must hold at least the window a turn sends word for word, or the reasoner and the tool agent (which read the state) see a shorter conversation than the reply does:
+# conversation_summary.HARD_MAX_MESSAGES is 52 since the fold moved to 50 messages, and an Office Hours meeting keeps up to MEETING_MAX_MESSAGES (80) plus the new message. At about 500 characters a message
+# that is about 40 KB a checkpoint at most, against the megabytes this cap exists to prevent. A test pins this to stay at or above both.
+MAX_STATE_MESSAGES = int(os.getenv("GRAPH_STATE_MAX_MESSAGES", "82"))
 
 
 def add_and_trim_messages(left, right):

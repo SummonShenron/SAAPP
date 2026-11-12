@@ -48,11 +48,11 @@ def test_the_graph_state_uses_the_trimming_reducer_for_its_messages():
     assert gs.add_and_trim_messages in hints["messages"].__metadata__
 
 
-def test_the_default_cap_is_forty_messages_which_is_more_than_any_node_looks_back():
+def test_the_default_cap_is_82_messages_which_holds_the_widest_window_and_is_still_bounded():
     import inspect
 
-    assert 'GRAPH_STATE_MAX_MESSAGES", "40"' in inspect.getsource(gs)
-    assert gs.MAX_STATE_MESSAGES == 40 or gs.MAX_STATE_MESSAGES >= 0  # (an environment override is allowed)
+    assert 'GRAPH_STATE_MAX_MESSAGES", "82"' in inspect.getsource(gs)       # was 40 until the fold moved to 50 messages (2026-11-12)
+    assert gs.MAX_STATE_MESSAGES == 82 or gs.MAX_STATE_MESSAGES >= 0  # (an environment override is allowed)
 
 
 def test_the_chat_endpoint_reads_syncs_and_saves_the_conversation_in_worker_threads():
@@ -61,3 +61,14 @@ def test_the_chat_endpoint_reads_syncs_and_saves_the_conversation_in_worker_thre
     assert "await asyncio.to_thread(sync_session_messages, username, session_id, chat_sessions[history_key])" in source
     assert source.count("await asyncio.to_thread(save_conversation_turn,") == 5
     assert "\n    save_conversation_turn(" not in source and " save_conversation_turn(username" not in source.replace("to_thread(save_conversation_turn", "")
+
+
+def test_the_state_holds_every_message_a_turn_sends_word_for_word():
+    from backend.utils import conversation_summary as cs
+
+    # a window longer than the state is silently cut to the state's size, so the reasoner and the tool agent (which read the state) saw less than the reply did
+    assert gs.MAX_STATE_MESSAGES >= cs.HARD_MAX_MESSAGES + 1 and gs.MAX_STATE_MESSAGES >= cs.MEETING_MAX_MESSAGES + 1
+    window = cs.HARD_MAX_MESSAGES
+    assert len(gs.add_and_trim_messages([], msgs(window))) == window
+    meeting = cs.MEETING_MAX_MESSAGES
+    assert len(gs.add_and_trim_messages([], msgs(meeting))) == meeting
