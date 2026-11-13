@@ -1320,7 +1320,7 @@ export interface ServerMemory {
 
 /** Sonic's record of its own work (backend/utils/experience_capture.py): abstract dated notes, pending until approved. */
 export interface ExperienceReflection { status: string; text: string; }
-export interface ExperienceNote { id: string; on: string; kind: string; signal: string; area: string; what: string; status: string; count: number; reflection?: ExperienceReflection; }
+export interface ExperienceNote { id: string; on: string; kind: string; signal: string; area: string; what: string; status: string; count: number; reflection?: ExperienceReflection; /** the sentence a pattern note is matched by, and the template that wrote it (signal 'pattern') */ key?: string; template?: string; }
 export interface RecordNote { id: string; on: string; kind: string; what: string; leaning: string; area: string; reflection: ExperienceReflection; }
 export interface ExperiencesView {
   pending: ExperienceNote[]; approved: ExperienceNote[]; registry: RecordNote[];
@@ -1329,6 +1329,21 @@ export interface ExperiencesView {
 
 export function getExperiences(): Promise<ExperiencesView> {
   return adminRequest<ExperiencesView>('/api/admin/experiences', 'GET');
+}
+/** A template for notes that code writes from a finished day's counters (backend/utils/pattern_notes.py): approved once, never note by note. */
+export interface PatternTemplate { id: string; name: string; rule: string; key: string; careful: string; example: string; approved: boolean; approved_at?: string | null; notes: number; latest: string | null; }
+export interface PatternTemplatesView { templates: PatternTemplate[]; limits: { per_week: number; recent_days: number; backfill: number }; }
+export function getPatternTemplates(): Promise<PatternTemplatesView> {
+  return adminRequest<PatternTemplatesView>('/api/admin/pattern-templates', 'GET');
+}
+export async function approvePatternTemplate(id: string): Promise<PatternTemplate[]> {
+  return (await adminRequest<{ templates: PatternTemplate[] }>(`/api/admin/pattern-templates/${encodeURIComponent(id)}/approve`, 'POST')).templates;
+}
+export async function revokePatternTemplate(id: string): Promise<PatternTemplate[]> {
+  return (await adminRequest<{ templates: PatternTemplate[] }>(`/api/admin/pattern-templates/${encodeURIComponent(id)}/revoke`, 'POST')).templates;
+}
+export function backfillPatternNotes(): Promise<{ written: number; capped: number; templates: PatternTemplate[] }> {
+  return adminRequest<{ written: number; capped: number; templates: PatternTemplate[] }>('/api/admin/pattern-templates/backfill', 'POST');
 }
 export function approveExperience(id: string): Promise<ExperiencesView> {
   return adminRequest<ExperiencesView>(`/api/admin/experiences/${encodeURIComponent(id)}/approve`, 'POST');
@@ -2828,6 +2843,10 @@ export const api = {
   editSelfModelStatement,
   retireSelfModelStatement,
   getExperiences,
+  getPatternTemplates,
+  approvePatternTemplate,
+  revokePatternTemplate,
+  backfillPatternNotes,
   writeExperienceReflections,
   decideExperienceReflection,
   approveExperience,

@@ -185,7 +185,7 @@ def list_all(db) -> List[Dict[str, Any]]:
     """Every stored experience that is not deleted, newest first, as plain dicts with `id`. Blocking."""
     if db is None:
         return []
-    rows = list(db[COLLECTION].find({"status": {"$in": [PENDING, APPROVED]}}, {"_id": 1, "on": 1, "kind": 1, "signal": 1, "area": 1, "what": 1, "status": 1, "count": 1, "created_at": 1, "approved_at": 1}))
+    rows = list(db[COLLECTION].find({"status": {"$in": [PENDING, APPROVED]}}, {"_id": 1, "on": 1, "kind": 1, "signal": 1, "area": 1, "what": 1, "key": 1, "template": 1, "status": 1, "count": 1, "created_at": 1, "approved_at": 1}))
     out = [{**{k: v for k, v in row.items() if k != "_id"}, "id": row["_id"]} for row in rows]
     return sorted(out, key=lambda row: str(row.get("created_at") or ""), reverse=True)
 
@@ -197,7 +197,7 @@ def approved_entries(db) -> List[Dict[str, Any]]:
         if row.get("status") == APPROVED and row.get("what"):
             out.append({
                 "id": f"db-{row['id']}", "on": str(row.get("on", "")), "kind": str(row.get("kind") or "failure"), "what": row["what"], "leaning": "", "area": row.get("area", ""),
-                "when": row["what"], "line": "", "asks": [], "approved": True,
+                "when": row["what"], "line": "", "asks": [], "approved": True, "key": row.get("key") or "",      # `key` is the sentence a pattern note is matched by, kept for later (backend/utils/pattern_notes.py); the index still reads `when`
             })
     return out
 
@@ -271,6 +271,8 @@ def approve(db, experience_id: str, by: Optional[str] = None, now: Optional[date
 
 def edit(db, experience_id: str, text: str, now: Optional[datetime] = None) -> Optional[str]:
     """Changes a note's text if it passes the same checks. Returns None on success, else what is wrong. Blocking."""
+    if db is not None and next(iter(db[COLLECTION].find({"_id": experience_id, "signal": "pattern"}, {"_id": 1})), None) is not None:
+        return "a pattern note is written from its template: change the template, or delete the note"      # whatever the new text is (backend/utils/pattern_notes.py)
     issue = note_issue(text)
     if issue:
         return issue
