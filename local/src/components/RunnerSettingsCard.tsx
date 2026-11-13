@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type ProjectSettings, type RunnerInfo, type RunnerList, type RunnerPairing, type RunnerProject, type RunnerScript } from '../api';
-import { OS_LABEL, browserLine, checkIsOn, detectOs, launchHint, minutesLeft, noChecksLine, notConnectedReason, requestSentence, requestsOpen, requestsToShow, runHint, statusSentence, updateNote, withAutoUpdate, withCheck, withFakeKeys, withReadOnlyAuto, type OsKind } from '../runnerLogic';
+import { api, disconnectLocalWorkspace, getLocalWorkspaceStatus, type LocalWorkspaceStatus, type ProjectSettings, type RunnerInfo, type RunnerList, type RunnerPairing, type RunnerProject, type RunnerScript } from '../api';
+import { OS_LABEL, browserLine, canShareFiles, checkIsOn, detectOs, launchHint, minutesLeft, noChecksLine, notConnectedReason, requestSentence, requestsOpen, requestsToShow, runnerCanShareFiles, sharingLine, runHint, statusSentence, updateNote, withAutoUpdate, withCheck, withFakeKeys, withReadOnlyAuto, type OsKind } from '../runnerLogic';
 import './__styles__/RunnerSettingsCard.css';
 
 const POLL_WHILE_PAIRING_MS = 4000;
@@ -59,6 +59,9 @@ export default function RunnerSettingsCard() {
   const [copied, setCopied] = useState('');
   const [now, setNow] = useState(() => Date.now());
   const [saving, setSaving] = useState('');
+  // Where Sonic's copy of the folder came from (the browser's open folder, or this person's runner on their say-so): a project whose files a runner sent shows "Sonic is reading N files" and a Stop sharing button.
+  const [workspace, setWorkspace] = useState<LocalWorkspaceStatus | null>(null);
+  const [sharing, setSharing] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -67,11 +70,41 @@ export default function RunnerSettingsCard() {
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'Could not load your runners.');
     }
+    try {
+      setWorkspace(await getLocalWorkspaceStatus());
+    } catch {
+      /* the copy's state is only a line of text here: keep what we had */
+    }
   }, []);
+
+  const shareFiles = async (runner: RunnerInfo, project: RunnerProject) => {
+    setSharing(project.id);
+    try {
+      await api.shareRunnerFiles(runner.id, project.id);
+      await load();
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : 'Could not ask for the files.');
+    } finally {
+      setSharing('');
+    }
+  };
+
+  const stopSharing = async () => {
+    setSharing('stop');
+    try {
+      await disconnectLocalWorkspace();
+      await load();
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : 'Could not stop sharing.');
+    } finally {
+      setSharing('');
+    }
+  };
 
   // The first load, written as a promise chain so no state is set inside the effect itself (the same shape the other settings cards use). Later loads (after an add or a remove, and while a code is showing) call `load`.
   useEffect(() => {
     let cancelled = false;
+    getLocalWorkspaceStatus().then(status => { if (!cancelled) setWorkspace(status); }).catch(() => undefined);
     api.listRunners()
       .then(result => { if (!cancelled) setList(result); })
       .catch(problem => { if (!cancelled) setError(problem instanceof Error ? problem.message : 'Could not load your runners.'); });
@@ -254,6 +287,21 @@ export default function RunnerSettingsCard() {
                         </span>
                       </label>
                     ))}
+                    <div className="runner-share" data-help="runner.shareFiles">
+                      {sharingLine(workspace, project.name) ? (
+                        <>
+                          <span className="account-hint" role="status">{sharingLine(workspace, project.name)}</span>
+                          <button type="button" className="runner-link" disabled={sharing === 'stop'} onClick={() => void stopSharing()}>Stop sharing</button>
+                        </>
+                      ) : (
+                        <span className="account-hint">Sonic reads your project through your browser's folder. Where your browser can't open folders, let your runner send the text files instead.</span>
+                      )}
+                      <button type="button" className="account-btn" disabled={!canShareFiles(runner.connected, runner.requests, project.id, runner.version) || sharing === project.id} onClick={() => void shareFiles(runner, project)}>
+                        {sharing === project.id ? 'Asking...' : "Let Sonic read this project's files"}
+                      </button>
+                      {!runnerCanShareFiles(runner.version) && <span className="account-hint runner-warning">This runner is too old to send files. Update it first (the Update button above).</span>}
+                      <span className="account-hint">A window on that computer asks you first. Only text files are sent; secrets (.env files, keys), node_modules, build folders and lock files never are.</span>
+                    </div>
                     <label className="runner-check" data-help="runner.fakeKey">
                       <input type="checkbox" checked={project.settings.fake_keys} disabled={saving === runner.id}
                         onChange={event => void changeProject(runner, project, withFakeKeys(project.settings, event.target.checked))} />

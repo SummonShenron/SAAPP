@@ -24,6 +24,7 @@ from . import __version__
 from . import browser as browser_module
 from . import confirm as confirm_module
 from . import picker as picker_module
+from . import share_dialog, sharing
 from . import projects, runlog, service, update
 from . import status as status_codes
 from .client import Client, ServerError, Unreachable
@@ -126,6 +127,27 @@ def cmd_pick_folder(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_share_dialog(args: argparse.Namespace) -> int:
+    """The window that asks whether to send a project's files to SAAPP. Run by the runner in its own process (share_dialog.py); prints one line of JSON."""
+    print(json.dumps(share_dialog.run_dialog(args.name, Path(args.root), args.summary)))
+    return 0
+
+
+def cmd_unshare_files(args: argparse.Namespace) -> int:
+    """Takes back the files this runner sent to SAAPP (a folder the browser connected is left alone)."""
+    credentials = load_credentials()
+    if not credentials:
+        print("This computer is not paired with SAAPP yet.")
+        return 1
+    try:
+        answer = Client(credentials["server"], credentials["key"]).workspace_clear()
+    except (ServerError, Unreachable) as problem:
+        print(getattr(problem, "message", None) or str(problem))
+        return 1
+    print("The files this runner sent were removed from SAAPP." if answer.get("status") == "cleared" else "SAAPP had no files from this runner.")
+    return 0
+
+
 def cmd_confirm_command(args: argparse.Namespace) -> int:
     """The window that asks the person to confirm a command that changes things. Run by the runner in its own process (confirm.py); prints one line of JSON."""
     try:
@@ -209,7 +231,8 @@ def _serve(args: argparse.Namespace, client: Client, say, stop, background: bool
     else:
         say("It runs only these, only after you press Run in SAAPP (turn any of them off in SAAPP's settings). Press Ctrl+C to stop.")
     runner = Runner(client, None, say=say, stop=stop, timeout=args.timeout, roots_provider=projects.load, launch="service" if background else "hand", updater=update.attempt,
-                    picker=picker_module.new_picker(), asker=confirm_module.new_asker(), restarter=service.restart_soon, browser_finder=browser_module.find_browser)
+                    picker=picker_module.new_picker(), asker=confirm_module.new_asker(), restarter=service.restart_soon, browser_finder=browser_module.find_browser,
+                    sharer=sharing.Sharing(client, say, share_dialog.new_starter()))
     if not runner.hello():
         return 1
     say("Connected. Waiting for checks you approve in SAAPP...")
@@ -293,6 +316,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("remove-project", help="stop serving a project folder (nothing in it is touched)").add_argument("--root", required=True)
     pick = sub.add_parser("pick-folder", help=argparse.SUPPRESS)
     pick.add_argument("--name", required=True)
+    share = sub.add_parser("share-dialog", help=argparse.SUPPRESS)
+    share.add_argument("--name", required=True)
+    share.add_argument("--root", required=True)
+    share.add_argument("--summary", default="")
+    sub.add_parser("unshare-files", help="take back the files this runner sent to SAAPP so Sonic could read a project (a folder you connected in the browser is left alone)")
     mcp = sub.add_parser("mcp", help="serve this computer's projects, checks and the command language to an MCP client (Claude Desktop, Claude Code...) over stdio")
     mcp.add_argument("--timeout", type=float, default=300, help="seconds one call may run (default 300)")
     mcp.add_argument("--print-config", action="store_true", help="print the entry an MCP client's configuration needs, then exit")
@@ -307,7 +335,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         sub.add_parser(name, help=text)
     args = parser.parse_args(argv)
     return {"pair": cmd_pair, "init": cmd_init, "start": cmd_start, "install-service": cmd_install_service, "uninstall-service": cmd_uninstall_service, "status": cmd_status, "add-project": cmd_add_project,
-            "remove-project": cmd_remove_project, "projects": cmd_projects, "pick-folder": cmd_pick_folder, "confirm-command": cmd_confirm_command, "mcp": cmd_mcp, "start-link": cmd_start_link}[args.command](args)
+            "remove-project": cmd_remove_project, "projects": cmd_projects, "pick-folder": cmd_pick_folder, "share-dialog": cmd_share_dialog, "unshare-files": cmd_unshare_files, "confirm-command": cmd_confirm_command, "mcp": cmd_mcp, "start-link": cmd_start_link}[args.command](args)
 
 
 if __name__ == "__main__":

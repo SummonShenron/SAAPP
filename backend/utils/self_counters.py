@@ -142,6 +142,8 @@ VERIFY_KEYS = ("coding_turns_can_verify", "coding_turns_no_runner")
 ADVISOR_KEYS = ("keep_going_sent_back", "advisor_early_answer", "advisor_repeat", "advisor_no_proposal", "advisor_reading_streak", "advisor_failing_check", "advisor_handback", "advisor_failed")
 # Which model read each turn's routing and risk (agent_workflow.reasoner_node via models.reasoner_llm_for): Claude Haiku for a person whose base model is Haiku or Auto, the Gemini lite model for everyone else. Counts only.
 REASONER_KEYS = ("reasoner_on_haiku", "reasoner_on_lite")
+# A runner sending a project's files so Sonic can read them (backend/utils/runner_files.py): batches taken, batches refused (nobody had asked, or the project is not the runner's), and batches that failed. Counts only.
+RUNNER_FILES_KEYS = ("runner_files_ok", "runner_files_refused", "runner_files_failed")
 # Step lists Sonic put on a card for the person to run themselves (backend/utils/command_steps.py): lists shown, steps in them, and lists refused because a step was not allowed. Counts only.
 STEPS_KEYS = ("steps_proposed", "steps_in_lists", "steps_refused")
 # Relatable lines picked by meaning rather than by a trigger word (backend/utils/relatable_utils.py): a share of relatable_offered, to see whether the meaning match earns its place. Counts only.
@@ -153,7 +155,7 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   # Later check-ins on a feeling still being carried (backend/utils/emotion_checkin.py): turns that were told to end with one, replies that really did, and on the next message whether the person's
                   # ceiling had eased or they were still low. Counts only.
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + VERIFY_KEYS + ADVISOR_KEYS + REASONER_KEYS + STEPS_KEYS + PROACTIVE_KEYS
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + VERIFY_KEYS + ADVISOR_KEYS + REASONER_KEYS + RUNNER_FILES_KEYS + STEPS_KEYS + PROACTIVE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

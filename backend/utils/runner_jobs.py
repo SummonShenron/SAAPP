@@ -53,7 +53,7 @@ MAX_CHECKS = 20
 MAX_PROJECTS = 20                  # projects one computer's runner may report
 REQUEST_MINUTES = 15               # how long a "please add this project" request stays good, waiting to be delivered and then waiting for the person's answer on their computer
 MAX_OPEN_REQUESTS = 3
-REQUEST_RESULTS = ("added", "declined", "no_picker", "error")        # what a runner may say became of a request
+REQUEST_RESULTS = ("added", "declined", "no_picker", "error", "shared")        # what a runner may say became of a request ("shared": the person said yes on their computer and the files were sent)
 LEGACY_PROJECT_ID = "main"         # an older runner (one folder per key) is shown as a single project with this id
 RETENTION_DAYS = 7
 
@@ -332,8 +332,15 @@ def hello(db: Any, key: Dict[str, Any], payload: Dict[str, Any], now: Optional[d
     return {"ok": True, "runner_id": key["_id"], "min_version": ".".join(str(p) for p in MIN_RUNNER_VERSION), "poll_seconds": POLL_SECONDS}
 
 
-def _new_request(name: str, now: datetime) -> Dict[str, Any]:
-    return {"id": uuid.uuid4().hex[:12], "name": _clean_label(name, 80) or "project", "requested_at": now, "delivered_at": None, "result": ""}
+def _new_request(name: str, now: datetime, kind: str = "", project_id: str = "") -> Dict[str, Any]:
+    request: Dict[str, Any] = {"id": uuid.uuid4().hex[:12], "name": _clean_label(name, 80) or "project", "requested_at": now, "delivered_at": None, "result": ""}
+    if kind == KIND_FILES:
+        request.update({"kind": KIND_FILES, "project_id": str(project_id)[:40]})
+    return request
+
+
+FILES_MIN_VERSION = (0, 2, 2)      # the first runner that can send a project's files; an older one would ignore the request and leave it waiting
+KIND_FILES = "files"      # a request to send a project's files to SAAPP (backend/utils/runner_files.py); the rest of the requests are for adding a project
 
 
 def request_state(request: Dict[str, Any], now: Optional[datetime] = None) -> str:
@@ -358,7 +365,7 @@ def _settle_requests(requests: List[Dict[str, Any]], results: Any, projects: Lis
         if not request.get("result"):
             if said.get(request.get("id")) in REQUEST_RESULTS:
                 request["result"] = said[request["id"]]
-            elif request.get("name", "").lower() in names:
+            elif request.get("kind") != KIND_FILES and request.get("name", "").lower() in names:
                 request["result"] = "added"
         asked = _aware(request.get("requested_at"))
         if asked and (now - asked) <= timedelta(days=1):
@@ -500,19 +507,53 @@ def request_remove_project(db: Any, username: str, runner_id: str, project_id: s
     return True
 
 
+def request_files(db: Any, username: str, runner_id: str, project_id: Any, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+    """The person asks (on the page) for one of a runner's projects to send its files to SAAPP so Sonic can read them. The runner is told the project's id and name the next time it asks and shows the
+    person a window on their own computer: nothing is sent unless they say yes there. An open request for the same project is returned instead of making another. None when the runner is not theirs.
+    Blocking."""
+    now = now or _now()
+    key = db[KEYS].find_one({"_id": runner_id, "username": username})
+    if not key or key.get("revoked"):
+        return None
+    runner = db[RUNNERS].find_one({"_id": runner_id}) or {}
+    project = next((p for p in runner.get("projects") or [] if p["id"] == str(project_id)), None)
+    if project is None:
+        raise RunnerError("no_project", "That runner does not serve that project.")
+    if (parse_version(runner.get("version")) or (0, 0, 0)) < FILES_MIN_VERSION:
+        raise RunnerError("old_runner", "This runner is too old to send files. Update it to " + ".".join(str(p) for p in FILES_MIN_VERSION) + " or newer first.")
+    requests = runner.get("requests") or []
+    for existing in requests:
+        if existing.get("kind") == KIND_FILES and existing.get("project_id") == project["id"] and request_state(existing, now) in ("waiting", "asked"):
+            return {"id": existing["id"], "name": existing["name"], "state": request_state(existing, now), "kind": KIND_FILES, "project_id": project["id"]}
+    if len([r for r in requests if request_state(r, now) in ("waiting", "asked")]) >= MAX_OPEN_REQUESTS:
+        raise RunnerError("limit", "Answer the windows on your computer that are already waiting first.")
+    request = _new_request(project["name"], now, KIND_FILES, project["id"])
+    db[RUNNERS].update_one({"_id": runner_id}, {"$set": {"requests": [*requests, request][-10:]}}, upsert=True)
+    return {"id": request["id"], "name": request["name"], "state": "waiting", "kind": KIND_FILES, "project_id": project["id"]}
+
+
 def instruction_for(db: Any, key: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
     """What a runner should do besides running a job: {"add_project": {"id", "name"} or None, "remove_project": a project id or None}. An add request is given once (the dialog must not appear again
     and again); a removal is repeated until the runner stops reporting the project. Blocking."""
     now = now or _now()
     runner = db[RUNNERS].find_one({"_id": key["_id"]}) or {}
-    requests, add = [dict(r) for r in runner.get("requests") or []], None
+    requests, add, share = [dict(r) for r in runner.get("requests") or []], None, None
     for request in requests:
-        if add is None and request_state(request, now) == "waiting":
+        if request_state(request, now) != "waiting":
+            continue
+        if request.get("kind") == KIND_FILES:
+            if share is None:
+                request["delivered_at"] = now
+                share = {"id": request["id"], "project_id": request.get("project_id") or "", "name": request["name"]}
+        elif add is None:
             request["delivered_at"] = now
             add = {"id": request["id"], "name": request["name"]}
-    if add:
+    if add or share:
         db[RUNNERS].update_one({"_id": key["_id"]}, {"$set": {"requests": requests}})
-    return {"add_project": add, "remove_project": next(iter(runner.get("removals") or []), None)}
+    answer: Dict[str, Any] = {"add_project": add, "remove_project": next(iter(runner.get("removals") or []), None)}
+    if share:
+        answer["share_files"] = share          # present only when there is one: a runner that does not know it ignores it, and an answer without one is the shape it always had
+    return answer
 
 
 def wanted_update(db: Any, key: Dict[str, Any], now: Optional[datetime] = None) -> Optional[str]:
@@ -539,7 +580,8 @@ def public_runner(key: Dict[str, Any], doc: Dict[str, Any], now: datetime) -> Di
             "status": doc.get("status") or "", "launch": doc.get("launch") or "", "last_seen": seen.isoformat() if seen else None,
             "connected": bool(seen and (now - seen).total_seconds() <= RUNNER_ALIVE_SECONDS), "settings": {"auto_update": settings_of(doc)["auto_update"], "read_only_auto": settings_of(doc)["read_only_auto"]}, "update": update_info(doc, now),
             "commands": commands_supported(doc), "looks": can_look(doc), "browser": doc.get("browser") or "",
-            "projects": projects, "requests": [{"id": r["id"], "name": r["name"], "state": request_state(r, now)} for r in doc.get("requests") or []][-5:]}
+            "projects": projects, "requests": [{"id": r["id"], "name": r["name"], "state": request_state(r, now), **({"kind": KIND_FILES, "project_id": r.get("project_id") or ""} if r.get("kind") == KIND_FILES else {})}
+                                              for r in doc.get("requests") or []][-5:]}
 
 
 def runner_view(runner: Dict[str, Any], project: Dict[str, Any]) -> Dict[str, Any]:
@@ -1102,7 +1144,7 @@ def list_command_jobs(db: Any, username: str, runner_id: str, project_id: str, n
 # What a runner's requests do (app.py's endpoints, and the end-to-end test's server, both call these, so they cannot drift apart)
 # ---------------------------------------------------------------------------------------------------------------
 
-STATUS_FOR = {"needs_confirm": 409, "bad_command": 422, "bad_code": 401, "bad_key": 401, "too_old": 426, "not_connected": 409, "busy": 409, "limit": 409, "not_running": 409, "no_update": 409, "no_project": 409, "bad_name": 422, "unknown_check": 422, "bad_files": 422, "no_placeholder": 422, "no_browser": 409, "unknown_server": 422, "bad_url": 422, "no_server": 409}
+STATUS_FOR = {"old_runner": 409, "not_asked": 403, "stale": 409, "needs_confirm": 409, "bad_command": 422, "bad_code": 401, "bad_key": 401, "too_old": 426, "not_connected": 409, "busy": 409, "limit": 409, "not_running": 409, "no_update": 409, "no_project": 409, "bad_name": 422, "unknown_check": 422, "bad_files": 422, "no_placeholder": 422, "no_browser": 409, "unknown_server": 422, "bad_url": 422, "no_server": 409}
 
 
 def api_pair(db: Any, body: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -1124,7 +1166,7 @@ def api_next(db: Any, key: Dict[str, Any], now: Optional[datetime] = None) -> Di
     if job:
         return {"job": job, "update": None, "add_project": None, "remove_project": None}
     asked = instruction_for(db, key, now)
-    busy = bool(asked["add_project"] or asked["remove_project"])
+    busy = bool(asked["add_project"] or asked["remove_project"] or asked.get("share_files"))
     return {"job": None, "update": None if busy else wanted_update(db, key, now), **asked}
 
 

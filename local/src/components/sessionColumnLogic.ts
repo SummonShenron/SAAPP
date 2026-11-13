@@ -71,6 +71,72 @@ export function folderLine(status: string, name: string | null, fileCount: numbe
   }
 }
 
+/** The one folder card (2026-11-12): while a folder is open, the Connection card shows it as ONE thing with two abilities, "Files" (Sonic reading the folder: the browser's upload) and "Run" (the runner running checks in
+ *  it), each on its own line, instead of an unrelated runner row and folder row. `runKind` says which help belongs under the Run line. null when no folder is open (the runner row and "No folder connected" stay as they were). */
+export type RunKind = 'checking' | 'none' | 'not_answering' | 'needs_project' | 'ready';
+export interface FolderCard { files: Line; run: Line; runKind: RunKind; }
+const FILES_TEXT: Record<string, string> = {
+  connected: 'Files · in sync', syncing: 'Files · syncing', 'not-uploaded': 'Files · not on the server yet', 'needs-permission': 'Files · reconnect the folder', error: 'Files · sync failed',
+};
+export function folderCard(runners: RunnerInfo[] | null, folderStatus: string, folderName: string | null, fileCount: number | null, now: Date = new Date()): FolderCard | null {
+  const name = (folderName ?? '').trim();
+  if (!name || !(folderStatus in FILES_TEXT)) return null;
+  const files: Line = { ...folderLine(folderStatus, folderName, fileCount), text: FILES_TEXT[folderStatus] };
+  if (runners === null) return { files, run: { tone: 'off', text: 'Run · checking the runner', detail: '' }, runKind: 'checking' };
+  if (runners.length === 0) return { files, run: { tone: 'off', text: 'Run · no runner set up', detail: 'Settings has the steps to run checks on your machine.' }, runKind: 'none' };
+  const live = runners.filter(r => r.connected);
+  if (live.length === 0) {
+    const seen = lastSeenText(runners[0].last_seen, now);
+    return { files, run: { tone: 'warn', text: 'Run · runner not answering', detail: seen ? `Last seen ${seen}` : 'Start it on your computer.' }, runKind: 'not_answering' };
+  }
+  const wanted = name.toLowerCase();
+  for (const runner of live) {
+    const project = (runner.projects ?? []).find(p => p.name.toLowerCase() === wanted);
+    if (project) return { files, run: { tone: 'ok', text: 'Run · ready', detail: [project.name, lastSeenText(runner.last_seen, now)].filter(Boolean).join(' · ') }, runKind: 'ready' };
+  }
+  // The server's own fallback (runner_jobs.connected_runner): with exactly one runner and one project, a check goes to that project even when its name differs from the open folder. That is not "ready" for THIS folder, so
+  // the card says which project the checks would use and the button to add this folder stays (the same rule as runnerProjectOffer).
+  if (live.length === 1 && (live[0].projects ?? []).length === 1) {
+    return { files, run: { tone: 'warn', text: `Run · would use "${live[0].projects[0].name}"`, detail: `${live[0].name || 'Your runner'} does not know "${name}"` }, runKind: 'needs_project' };
+  }
+  return { files, run: { tone: 'warn', text: 'Run · not added yet', detail: `${live[0].name || 'Your runner'} does not know "${name}"` }, runKind: 'needs_project' };
+}
+
+/** What the Connection card offers about the runner for the folder that is open (2026-11-12, one pick instead of two): the page sends only the folder's NAME and a window on the person's computer asks them to confirm it (the browser
+ *  never gives a path, so a second step there cannot be skipped). `offer` is the button; `waiting` is the window being open; the others are how the last ask ended, each with the button to try again. */
+export type RunnerProjectKind = 'offer' | 'waiting' | 'declined' | 'no_picker' | 'error' | 'expired';
+export interface RunnerProjectOffer { kind: RunnerProjectKind; runnerId: string; runnerName: string; folderName: string; }
+const FOLDER_STATUSES_WITH_A_FOLDER = ['connected', 'syncing', 'not-uploaded', 'needs-permission', 'error'];
+
+/** The offer for the open folder, or null: no folder, no runner answering (those rows have their own help), or a connected runner that already has a project named like the folder (case aside, as the server matches it:
+ *  runner_jobs.connected_runner). With several runners connected the first one is asked. A request that finished as "added" is no longer shown (the project is about to be listed); if the project is later removed the offer comes back. */
+export function runnerProjectOffer(runners: RunnerInfo[] | null, folderStatus: string, folderName: string | null): RunnerProjectOffer | null {
+  const name = (folderName ?? '').trim();
+  if (!name || !runners || !FOLDER_STATUSES_WITH_A_FOLDER.includes(folderStatus)) return null;
+  const live = runners.filter(r => r.connected);
+  if (live.length === 0) return null;
+  const wanted = name.toLowerCase();
+  if (live.some(r => (r.projects ?? []).some(p => p.name.toLowerCase() === wanted))) return null;
+  const runner = live[0];
+  // Only the asks to ADD a project: a request to send a project's files (kind 'files') carries the project's name too and says nothing about whether the runner knows the folder.
+  const last = [...(runner.requests ?? [])].reverse().find(r => r.kind !== 'files' && r.name.toLowerCase() === wanted);
+  let kind: RunnerProjectKind = 'offer';
+  if (last) kind = last.state === 'waiting' || last.state === 'asked' ? 'waiting' : last.state === 'added' || last.state === 'shared' ? 'offer' : last.state;
+  return { kind, runnerId: runner.id, runnerName: runner.name, folderName: name };
+}
+
+/** The sentence under the button for each state. */
+export function runnerProjectHint(offer: RunnerProjectOffer): string {
+  switch (offer.kind) {
+    case 'waiting': return 'A window on your computer asks you to choose the folder. It stays open for a few minutes.';
+    case 'declined': return 'The window on your computer was closed without choosing a folder.';
+    case 'no_picker': return 'The runner could not open a window on your computer. In a terminal there, run: saapp-runner add-project --root <your folder>';
+    case 'expired': return 'The window on your computer timed out before a folder was chosen.';
+    case 'error': return 'The runner could not add that folder. Check it on your computer, then try again.';
+    default: return `Your runner does not know "${offer.folderName}" yet. Pressing this opens a window on your computer to confirm or choose it; only the folder's name is sent from here.`;
+  }
+}
+
 /** How far the approved plan is: "1 of 3 steps". */
 export function planProgress(plan: CodePlan): { done: number; total: number; label: string } {
   const total = plan.steps.length;

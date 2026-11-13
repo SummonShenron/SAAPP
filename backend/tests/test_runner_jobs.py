@@ -832,7 +832,7 @@ def test_a_request_counts_as_added_when_its_project_appears_and_an_unknown_answe
     unknown = rj.request_project(db, "jack@example.com", record["_id"], "app-unknown", later(seconds=8))
     rj.api_next(db, record, later(seconds=9))
     rj.hello(db, record, {"version": "0.1.1", "projects": [], "request_results": [{"id": unknown["id"], "result": "made-up"}]}, later(seconds=10))
-    assert request_state_of(db, unknown["id"], later(seconds=11)) == "asked" and rj.REQUEST_RESULTS == ("added", "declined", "no_picker", "error")
+    assert request_state_of(db, unknown["id"], later(seconds=11)) == "asked" and rj.REQUEST_RESULTS == ("added", "declined", "no_picker", "error", "shared")
 
 
 def test_an_unanswered_request_expires_and_too_many_open_ones_are_refused():

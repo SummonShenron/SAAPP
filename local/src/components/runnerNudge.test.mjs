@@ -44,7 +44,7 @@ test('the page, the column and the phone strip are wired: the nudge opens the Ac
   assert.match(chat, /localStorage\.setItem\(RUNNER_NUDGE_KEY, String\(until\)\)/);
   assert.match(chat, /const runnerSetup = isGuestPrincipal\(principal\) \? null :/);
   assert.match(chat, /runnerSetup=\{runnerSetup\}/);                                       // the column
-  assert.match(chat, /folderControls,\s*runnerSetup,\s*\};/);                              // the phone strip's connection props
+  assert.match(chat, /folderControls,\s*runnerSetup,\s*onRunnerAsked: checkRunnerSoon,\s*\};/);      // the phone strip's connection props (and the quick re-check after "Let the runner run checks here")
   const column = readFileSync(new URL('./SessionColumn.tsx', import.meta.url), 'utf8');
   assert.match(column, /\{runnerSetup\?\.visible && <RunnerNudge setup=\{runnerSetup\} \/>\}/);
   assert.match(column, /runners !== null && runners\.length === 0 && runnerSetup/);       // the Connection panel's own button, always there while no runner is set up

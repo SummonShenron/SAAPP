@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import type { CodePlan, MemorySources, RunnerInfo } from '../api';
+import { api, type CodePlan, type MemorySources, type RunnerInfo } from '../api';
 import type { RingView } from './budgetText';
 import Ring from './Ring';
 import {
-  APPROVAL_OPTIONS, GIT_OPTIONS, RUNNER_INSTALL_CMD, RUNNER_INSTALL_POWERSHELL, contextGauge, folderLight, folderLine, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, serializeCollapsed, toggleCollapsed,
-  type ContextUse, type Line, type Option, type RunnerStartPhase, type ScopeChoice, RUNNER_NUDGE_TEXT, RUNNER_NUDGE_TITLE } from './sessionColumnLogic';
+  APPROVAL_OPTIONS, GIT_OPTIONS, RUNNER_INSTALL_CMD, RUNNER_INSTALL_POWERSHELL, contextGauge, folderLight, folderLine, folderCard, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, runnerProjectHint, runnerProjectOffer, serializeCollapsed, toggleCollapsed,
+  type ContextUse, type Line, type Option, type RunnerProjectOffer, type RunnerStartPhase, type ScopeChoice, RUNNER_NUDGE_TEXT, RUNNER_NUDGE_TITLE } from './sessionColumnLogic';
 import CompactionMeter from './CompactionMeter';
 import { gaugesSummary, isOverloaded, meterCaption, meterName, type CompactionView } from './compactionMeterLogic';
 import './__styles__/SessionColumn.css';
@@ -36,6 +36,8 @@ interface Props {
   runnerStart: { phase: RunnerStartPhase; onStart: () => void } | null;
   /** The way to the runner's setup (see ConnectionProps.runnerSetup); the nudge shows at the top of the column while it is due. */
   runnerSetup?: RunnerSetup | null;
+  /** See ConnectionProps.onRunnerAsked. */
+  onRunnerAsked?: () => void;
   /** The usage ring's view (components/budgetText.ts); null when there is no limit to show. */
   usage: RingView | null;
   /** How full the model's context window got on the last turn, as the server reported it (counts only); null before the first turn. Shown as the compaction meter's tooltip: the ring it used to be is gone. */
@@ -171,6 +173,8 @@ export interface ConnectionProps {
   folderControls: FolderControls | null;
   /** The way to the runner's setup, which is in the Account settings: `visible` while the nudge is due (no runner set up and not dismissed), `onOpen` goes there, `onDismiss` is "Not now". null where there is no runner to set up (a guest). */
   runnerSetup?: RunnerSetup | null;
+  /** Called after "Let the runner run checks here" asked a runner to add the open folder, so the page can ask which projects the runner has now every few seconds (hooks/useRunnerPing askSoon). */
+  onRunnerAsked?: () => void;
 }
 
 export interface RunnerSetup { visible: boolean; onOpen: () => void; onDismiss: () => void; }
@@ -189,7 +193,45 @@ export function RunnerNudge({ setup, className }: { setup: RunnerSetup; classNam
   );
 }
 
-export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, folderControls, runnerSetup }: ConnectionProps) {
+/** The button that asks the connected runner to add the folder that is open (the one pick: the page sends only the folder's name, and a window on the person's computer confirms it). Drawn by ConnectionPanel when
+ *  runnerProjectOffer has something to say; the pressed state is kept here until the runner lists the project or the ask ends another way. */
+function RunnerProjectAsk({ offer, onAsked }: { offer: RunnerProjectOffer; onAsked?: () => void }) {
+  const [sending, setSending] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  const [failure, setFailure] = useState('');
+  useEffect(() => {
+    if (offer.kind !== 'offer' && offer.kind !== 'waiting') setPressed(false);      // the ask ended in a way that needs a new press
+  }, [offer.kind]);
+  const press = async () => {
+    setSending(true);
+    setFailure('');
+    try {
+      await api.addRunnerProject(offer.runnerId, offer.folderName);
+      setPressed(true);
+      onAsked?.();
+    } catch (error) {
+      setFailure(error instanceof Error && error.message ? error.message : 'Could not ask the runner.');
+    } finally {
+      setSending(false);
+    }
+  };
+  const waiting = offer.kind === 'waiting' || (pressed && offer.kind === 'offer');
+  const retry = offer.kind === 'declined' || offer.kind === 'expired' || offer.kind === 'error';
+  return (
+    <div className="sc-runner-start">
+      {!waiting && offer.kind !== 'no_picker' && (
+        <button type="button" className="sc-btn sc-btn-primary" onClick={() => { void press(); }} disabled={sending} aria-busy={sending}>
+          {sending && <span className="sc-spinner" aria-hidden="true" />}
+          {retry ? 'Ask again' : 'Let the runner run checks here'}
+        </button>
+      )}
+      {waiting && <span className="sc-spinner" aria-hidden="true" />}
+      <span className="sc-option-hint" role="status" aria-live="polite">{failure || runnerProjectHint(waiting ? { ...offer, kind: 'waiting' } : offer)}</span>
+    </div>
+  );
+}
+
+export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, folderControls, runnerSetup, onRunnerAsked }: ConnectionProps) {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -198,9 +240,14 @@ export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, f
   }, []);
   const runner = runnerEnabled ? runnerLine(runners, now) : null;
   const folderRow = folderLine(folder.status, folder.name, folder.fileCount);
+  const projectOffer = runnerEnabled ? runnerProjectOffer(runners, folder.status, folder.name) : null;
+  // With a folder open it is one card with two abilities (Files, Run); with none, the runner row and "No folder connected" stand alone as before.
+  const card = folderCard(runners, folder.status, folder.name, folder.fileCount, now);
   return (
     <>
-    {runner && <Row line={runner} />}
+    {card ? <Row line={card.files} /> : null}
+    {card ? (runnerEnabled ? <Row line={card.run} /> : null) : (runner && <Row line={runner} />)}
+    {projectOffer && <RunnerProjectAsk offer={projectOffer} onAsked={onRunnerAsked} />}
     {runner && runners !== null && runners.length === 0 && runnerSetup && (
       <div className="sc-runner-start">
         <button type="button" className="sc-btn sc-btn-primary" onClick={runnerSetup.onOpen}>Set up the runner</button>
@@ -226,7 +273,7 @@ export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, f
         )}
       </div>
     )}
-    <Row line={folderRow} />
+    {!card && <Row line={folderRow} />}
     {folder.branch && <div className="sc-branch">On branch <code>{folder.branch}</code></div>}
     {folderControls && (
       <div className="sc-folder-controls">
@@ -255,7 +302,7 @@ export function ConnectionPanel({ folder, runnerEnabled, runners, runnerStart, f
  * controls, the gauges, the plan while there is one, and what this conversation is scoped to. It only shows what the page already knows; settings stay in the "..." menu (the scope row
  * opens that menu's own picker). A card with nothing to show is not drawn, and any card can be folded (remembered in this browser).
  */
-const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, runnerSetup, usage, context, compaction, onSwitchMeter, onFold, folding, plan, scope, memory, folderControls, repo, controls }) => {
+const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runnerStart, runnerSetup, onRunnerAsked, usage, context, compaction, onSwitchMeter, onFold, folding, plan, scope, memory, folderControls, repo, controls }) => {
   // "2s ago" goes stale on its own: redraw the times every few seconds.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -297,7 +344,7 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
           </span>
         )}
       >
-        <ConnectionPanel folder={folder} runnerEnabled={runnerEnabled} runners={runners} runnerStart={runnerStart} folderControls={folderControls} runnerSetup={runnerSetup} />
+        <ConnectionPanel folder={folder} runnerEnabled={runnerEnabled} runners={runners} runnerStart={runnerStart} folderControls={folderControls} runnerSetup={runnerSetup} onRunnerAsked={onRunnerAsked} />
       </Card>
 
       {repo && (

@@ -42,8 +42,10 @@ class Runner:
                  add_project: Optional[Callable[[Path], Tuple[bool, str]]] = None, remove_project: Optional[Callable[[str], bool]] = None,
                  asker: Optional[Callable[[str, List[str]], Any]] = None, rules_provider: Optional[Callable[[], "confirm.Rules"]] = None,
                  restarter: Optional[Callable[[], Any]] = None, server_manager: Optional["servers_module.ServerManager"] = None,
-                 browser_finder: Optional[Callable[[], Optional[Dict[str, str]]]] = None, looker: Optional[Callable[..., Dict[str, Any]]] = None) -> None:
+                 browser_finder: Optional[Callable[[], Optional[Dict[str, str]]]] = None, looker: Optional[Callable[..., Dict[str, Any]]] = None, sharer: Optional[Any] = None) -> None:
         self.client, self.say = client, say
+        # `sharer` (sharing.Sharing) sends a project's files to SAAPP when asked, after the person says yes in a window on this computer; None means this runner does not (a test, or not wired).
+        self.sharer = sharer
         # BACKGROUND SERVERS AND PAGE LOOKS (servers.py, browser.py). `server_manager` keeps the project's own dev server running between jobs; `browser_finder()` says which browser this computer has (None
         # means none, or that this runner was not given one, as in a test); `looker` is browser.look. All of it is decided here: the server only names a server of the project and a page on this machine.
         self.servers = server_manager or servers_module.ServerManager()
@@ -166,6 +168,7 @@ class Runner:
                 self._last_scan = time.monotonic()
                 self.refresh()
             self._check_dialog()
+            self._check_sharing()
             try:
                 job = self.client.next_job(self.poll_wait)
                 delay = 2.0
@@ -196,6 +199,10 @@ class Runner:
         if isinstance(add, dict) and add.get("id") and add.get("name"):
             self._ask_for_project(add)
             acted = True
+        share = getattr(client, "share_files", None)
+        if isinstance(share, dict) and share.get("id") and share.get("project_id"):
+            self._offer_files(share)
+            acted = True
         if isinstance(forget, str) and forget:
             if self._remove_project(forget):
                 self.say("A project was removed here because you removed it in SAAPP.")
@@ -205,6 +212,26 @@ class Runner:
             self._update_to(offered)
             acted = True
         return acted
+
+    # ---- sending a project's files: a window on THIS computer asks first -------------------------------------------------------------------------------
+
+    def _offer_files(self, request: Dict[str, Any]) -> None:
+        """SAAPP asked to send one of this runner's projects' files (by its id and name, never a path). Without a sharer, or for a project this runner does not serve, nothing is sent and SAAPP is told."""
+        project = self.projects.get(str(request["project_id"]))
+        if self.sharer is None:
+            self._results.append({"id": request["id"], "result": "no_picker"})
+            self.hello()
+            return
+        self.sharer.offer(request, project.root if project is not None else None)
+
+    def _check_sharing(self) -> None:
+        """Reports the requests to send files that finished (shared, declined, no_picker or error) so SAAPP can close them."""
+        if self.sharer is None:
+            return
+        finished = self.sharer.poll()
+        if finished:
+            self._results.extend(finished)
+            self.hello()
 
     # ---- adding a project: a dialog on THIS computer --------------------------------------------------------------------------------------------
 
