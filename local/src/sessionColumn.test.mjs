@@ -157,7 +157,7 @@ test('the phone strip is the same controls as the column, including the Connecti
   // the Connection is the column's own card body: the runner is tied to the account, so a phone sees it as a desktop does
   assert.match(rail, /<ConnectionPanel \{\.\.\.connection\} \/>/);
   assert.match(column, /export function ConnectionPanel\(/);
-  assert.match(column, /<ConnectionPanel folder=\{folder\} runnerEnabled=\{runnerEnabled\} runners=\{runners\} runnerStart=\{runnerStart\} folderControls=\{folderControls\} runnerSetup=\{runnerSetup\} \/>/);
+  assert.match(column, /<ConnectionPanel folder=\{folder\} runnerEnabled=\{runnerEnabled\} runners=\{runners\} runnerStart=\{runnerStart\} folderControls=\{folderControls\} runnerSetup=\{runnerSetup\} onRunnerAsked=\{onRunnerAsked\} \/>/);
   // the page hands the strip the same connection, and the message box has no folder button on any screen (the column and the strip carry it)
   const chat = await readFile(new URL('./pages/Chat.tsx', import.meta.url), 'utf8');
   assert.match(chat, /const railVisible = compactScreen && showSessionColumn;/);

@@ -154,7 +154,7 @@ from backend.utils import experiences as experiences_utils
 from backend.utils import experience_capture
 from backend.utils import experience_reflections
 from backend.utils import self_model
-from backend.utils import runner_jobs
+from backend.utils import runner_jobs, runner_files
 from backend.utils import runner_scripts
 from backend.utils import clarifications as clarify_utils
 from backend.utils import emotion_checkin
@@ -2575,6 +2575,19 @@ class RunnerPairingRequest(BaseModel):
     folder_name: str = ""           # the name of the folder connected in the page, so the starter script can warn when someone picks a different one
 
 
+class RunnerFilesRequest(BaseModel):
+    project_id: str = ""            # the runner's own id for the project (a short hash, never a path)
+
+
+class RunnerWorkspaceSync(BaseModel):
+    project_id: str
+    reset: bool = False
+    files: list[LocalWorkspaceFile] = []
+    deleted: list[str] = []
+    upload_id: Optional[str] = None
+    commit: bool = False
+
+
 class RunnerProjectRequest(BaseModel):
     name: str = ""                  # the project's folder NAME (never a path): the runner asks the person to choose the folder in a dialog on their own computer
 
@@ -2653,7 +2666,7 @@ async def runner_next(wait: int = Query(runner_jobs.POLL_SECONDS, ge=0, le=30), 
     deadline = asyncio.get_running_loop().time() + wait
     while True:
         answer = await asyncio.to_thread(runner_jobs.api_next, db, key)
-        if answer["job"] or answer["update"] or answer["add_project"] or answer["remove_project"] or asyncio.get_running_loop().time() >= deadline:
+        if answer["job"] or answer["update"] or answer["add_project"] or answer["remove_project"] or answer.get("share_files") or asyncio.get_running_loop().time() >= deadline:
             return answer
         await asyncio.sleep(1.0)
 
@@ -2730,6 +2743,34 @@ async def add_runner_project(runner_id: str, body: RunnerProjectRequest, current
     if asked is None:
         raise HTTPException(status_code=404, detail="No runner of yours has that id.")
     return {"request": asked}
+
+
+@app.post("/api/runner/runners/{runner_id}/share-files")
+async def share_runner_project_files(runner_id: str, body: RunnerFilesRequest, current_user = Depends(get_current_user)):
+    """The person asks one of their runner's projects to send its files to SAAPP so Sonic can read them. Nothing is sent from here: the runner shows a window on their own computer and only a yes there starts it."""
+    username = _runner_person(current_user)
+    try:
+        asked = await asyncio.to_thread(runner_jobs.request_files, _runner_db_or_503(), username, runner_id, body.project_id)
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+    if asked is None:
+        raise HTTPException(status_code=404, detail="No runner of yours has that id.")
+    return {"request": asked}
+
+
+@app.post("/api/runner/workspace/sync")
+async def runner_workspace_sync(payload: RunnerWorkspaceSync, key = Depends(get_runner_key)):
+    """A batch of the files a runner sends after its person said yes on their computer (backend/utils/runner_files.py). Taken only while a request for that project is open."""
+    try:
+        return await asyncio.to_thread(runner_files.api_sync, _runner_db_or_503(), key, {**payload.dict(), "files": [f.dict() for f in payload.files]})
+    except runner_jobs.RunnerError as problem:
+        raise _runner_http_error(problem)
+
+
+@app.delete("/api/runner/workspace")
+async def runner_workspace_clear(key = Depends(get_runner_key)):
+    """The runner takes back the files it sent. A folder the browser connected is left alone."""
+    return await asyncio.to_thread(runner_files.api_clear, _runner_db_or_503(), key)
 
 
 @app.delete("/api/runner/runners/{runner_id}/projects/{project_id}")

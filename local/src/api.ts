@@ -2149,8 +2149,9 @@ export interface RunnerSettings { auto_update: boolean; /** run command lines th
 /** One project folder a runner serves: chosen on that computer, reported by the runner with its checks and a status code. */
 export interface RunnerProject { id: string; name: string; status: string; checks: RunnerCheck[]; /** the servers this project can keep running, by name (npm run dev as dev) */ servers?: { name: string; command: string }[]; settings: ProjectSettings; }
 /** A request to add a project: the page sends only the folder NAME, and the person chooses the folder in a window on their own computer. */
-export type RunnerRequestState = 'waiting' | 'asked' | 'added' | 'declined' | 'no_picker' | 'error' | 'expired';
-export interface RunnerRequest { id: string; name: string; state: RunnerRequestState; }
+export type RunnerRequestState = 'waiting' | 'asked' | 'added' | 'shared' | 'declined' | 'no_picker' | 'error' | 'expired';
+/** A request to add a project, or (kind 'files') to send a project's files to SAAPP so Sonic can read them: a window on the person's computer asks first. `project_id` is the runner's own id for the project. */
+export interface RunnerRequest { id: string; name: string; state: RunnerRequestState; kind?: 'files'; project_id?: string; }
 /** Whether this runner is older than the version the server wants, and whether a click on Update is still waiting for the runner to pick it up. */
 export interface RunnerUpdate { wanted: string; available: boolean; pending: boolean; }
 export interface RunnerInfo {
@@ -2202,6 +2203,9 @@ export const updateRunnerSettings = (id: string, change: RunnerSettingsChange): 
   taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/settings`, { method: 'POST', body: JSON.stringify(change) }, 'Failed to save the runner settings.');
 export const addRunnerProject = (id: string, name: string): Promise<{ request: RunnerRequest }> =>
   taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/projects`, { method: 'POST', body: JSON.stringify({ name }) }, 'Failed to ask for that project.');
+/** Asks one of the person's runners to send a project's files so Sonic can read them. Nothing is sent from here: a window on that computer asks first, and only a yes there starts it. */
+export const shareRunnerFiles = (id: string, projectId: string): Promise<{ request: RunnerRequest }> =>
+  taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/share-files`, { method: 'POST', body: JSON.stringify({ project_id: projectId }) }, 'Failed to ask for the files.');
 export const removeRunnerProject = (id: string, projectId: string): Promise<{ status: string }> =>
   taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' }, 'Failed to remove that project.');
 export const requestRunnerUpdate = (id: string): Promise<{ update: RunnerUpdate }> =>
@@ -2346,6 +2350,8 @@ export interface LocalWorkspaceStatus {
   file_count?: number;
   total_bytes?: number;
   synced_at?: number;
+  /** Who filled the server's copy: the browser's open folder, or the person's runner on their say-so. */
+  source?: 'browser' | 'runner';
 }
 
 export interface LocalWorkspaceSyncResult {
@@ -2807,6 +2813,7 @@ export const api = {
   createRunnerPairing,
   updateRunnerSettings,
   addRunnerProject,
+  shareRunnerFiles,
   removeRunnerProject,
   requestRunnerUpdate,
   removeRunner,

@@ -2658,6 +2658,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
     runnerStart,
     folderControls,
     runnerSetup,
+    onRunnerAsked: checkRunnerSoon,
   };
   // The attach button. In the app it sits at the left of the text; the embedded widget keeps it with the other buttons at the right.
   const attachButton = (
@@ -3466,6 +3467,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           runners={runnerList}
           runnerStart={runnerStart}
           runnerSetup={runnerSetup}
+          onRunnerAsked={checkRunnerSoon}
           usage={budget ? ringView(budget) : null}
           context={contextUse && contextUse.sessionId === sessionId ? contextUse : null}
           compaction={shownMeter}

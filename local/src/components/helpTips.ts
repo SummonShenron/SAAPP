@@ -124,6 +124,7 @@ export const HELP_TIPS: Record<string, HelpTip> = {
   'runner.fakeKey': { title: 'Fake AI key', what: 'Keeps a test from spending real money by giving it made-up AI keys while the project\'s checks run.' },
   'runner.readOnly': { title: 'Commands that only look', what: 'Lets commands that only look around (git status, git diff, ls, cat and the like) run without the Run button, so Sonic can read your project without a click each time.', wont: 'Skip your Run button for anything that changes things.' },
   'runner.autoUpdate': { title: 'Update automatically', what: 'Installs a newer version of the runner by itself, only while no check is running, then restarts it. Off until you turn it on.' },
+  'runner.shareFiles': { title: 'Let Sonic read this project\'s files', what: 'Asks the runner to send this project\'s text files to SAAPP so Sonic can read them, for a browser that can\'t open folders. A window on that computer asks you first and nothing is sent unless you say yes. Secrets, node_modules, build folders and lock files are never sent. Stop sharing removes them.' },
   'runner.addProject': { title: 'Add a project', what: 'Asks for a project to be added. Only the folder\'s name comes to Sonic; the runner then opens a window on that computer where you choose the folder.' },
 
   // ---- Paid use (Account, only where billing is on) ----

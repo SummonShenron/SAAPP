@@ -143,8 +143,23 @@ export function noChecksLine(connected: boolean): string {
     : 'Its checks appear here once the runner has connected.';
 }
 
+/** What to say about a request to send a project's files (kind 'files'), from where it stands. The first two say that nothing is sent unless the person says yes on their computer. */
+function filesRequestSentence(request: Pick<RunnerRequest, 'name' | 'state'>): string {
+  switch (request.state) {
+    case 'waiting': return `Waiting for your computer to pick up the request to share the files of "${request.name}"...`;
+    case 'asked': return `A window on your computer asks whether to send the files of "${request.name}" to SAAPP. Nothing is sent unless you say yes there.`;
+    case 'shared': return `The files of "${request.name}" were sent. Sonic can read them now.`;
+    case 'declined': return 'You said no on your computer, so nothing was sent.';
+    case 'no_picker': return "That computer can't show a window to ask you, so nothing was sent.";
+    case 'error': return `The files of "${request.name}" could not be sent. Try again; if it keeps failing, run the runner in a terminal there to see why.`;
+    case 'expired': return 'Nobody answered the window in time, so nothing was sent. Ask again when you are at that computer.';
+    default: return '';
+  }
+}
+
 /** What to say about a request to add a project, from where it stands. "" for one that needs no words (added: the project shows in the list). */
-export function requestSentence(request: Pick<RunnerRequest, 'name' | 'state'>): string {
+export function requestSentence(request: Pick<RunnerRequest, 'name' | 'state'> & { kind?: string }): string {
+  if (request.kind === 'files') return filesRequestSentence(request);
   switch (request.state) {
     case 'waiting': return `Waiting for your computer to pick up the request for "${request.name}"...`;
     case 'asked': return `A window on your computer asks you to choose the folder for "${request.name}". Nothing is added until you choose it there.`;
@@ -164,6 +179,40 @@ export function requestsOpen(requests: Array<Pick<RunnerRequest, 'state'>>): boo
 /** The requests worth showing under a runner: the ones not yet answered, and the ones that did not end in a project being added. */
 export function requestsToShow(requests: RunnerRequest[]): RunnerRequest[] {
   return requests.filter(request => request.state !== 'added');
+}
+
+/** The latest request to send this project's files, or undefined. */
+export function filesRequestFor(requests: RunnerRequest[], projectId: string): RunnerRequest | undefined {
+  return [...requests].reverse().find(request => request.kind === 'files' && request.project_id === projectId);
+}
+
+/** The first runner that can send a project's files (backend/utils/runner_jobs.py FILES_MIN_VERSION); an older one would ignore the request. */
+export const FILES_MIN_VERSION = '0.2.2';
+
+/** Whether a runner's version ("0.2.1", or "" from one that has not said) can send files. */
+export function runnerCanShareFiles(version: string | null | undefined): boolean {
+  const parts = (version ?? '').split('.').map(Number);
+  const wanted = FILES_MIN_VERSION.split('.').map(Number);
+  if (parts.length !== 3 || parts.some(part => !Number.isInteger(part))) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (parts[index] !== wanted[index]) return parts[index] > wanted[index];
+  }
+  return true;
+}
+
+/** Whether the "Let Sonic read this project's files" button is pressable: the runner is answering, is new enough, and no earlier ask for this project is still open. */
+export function canShareFiles(runnerConnected: boolean, requests: RunnerRequest[], projectId: string, version: string | null | undefined = FILES_MIN_VERSION): boolean {
+  const open = filesRequestFor(requests, projectId);
+  return runnerConnected && runnerCanShareFiles(version) && !(open && (open.state === 'waiting' || open.state === 'asked'));
+}
+
+/** What Sonic reads for this project when the runner filled the server's copy: "Sonic is reading 142 files from this project (sent 5 min ago)", or null when the copy is not from the runner or is another project's. */
+export function sharingLine(workspace: { connected: boolean; name?: string; file_count?: number; synced_at?: number; source?: string } | null, projectName: string, now: number = Date.now()): string | null {
+  if (!workspace || !workspace.connected || workspace.source !== 'runner' || (workspace.name ?? '').toLowerCase() !== projectName.toLowerCase()) return null;
+  const count = workspace.file_count ?? 0;
+  const minutes = workspace.synced_at ? Math.max(0, Math.round((now - workspace.synced_at * 1000) / 60000)) : null;
+  const when = minutes === null ? '' : minutes < 1 ? ' (sent just now)' : minutes < 60 ? ` (sent ${minutes} min ago)` : ` (sent ${Math.round(minutes / 60)} h ago)`;
+  return `Sonic is reading ${count} ${count === 1 ? 'file' : 'files'} from this project${when}.`;
 }
 
 /**

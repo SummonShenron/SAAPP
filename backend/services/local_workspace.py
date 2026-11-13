@@ -42,6 +42,7 @@ _MAX_PATH_CHARS = 500
 # exact bytes — v1 wrote text, which on a Windows server turned every CRLF into CR CR LF and made
 # each line read back followed by a blank one.
 SNAPSHOT_FORMAT_VERSION = 2
+SOURCES = ("browser", "runner")      # who filled the snapshot (a manifest from before this field counts as the browser)
 _MAX_REJECTIONS_REPORTED = 20
 
 # These are the sub values get_current_user returns for the shared guest sandbox identities.
@@ -286,8 +287,10 @@ def apply_sync(
     reset: bool = False,
     upload_id: Optional[str] = None,
     commit: bool = False,
+    source: str = "browser",
 ) -> Dict[str, Any]:
-    """Applies one batch of an upload. `files` are {"path","content"} text files to write, `deleted` are paths to remove. Per-file problems are reported back and skipped,
+    """Applies one batch of an upload. `source` says who is filling the snapshot, "browser" (the person's open folder) or "runner" (their runner, on their command: backend/utils/runner_files.py); it is kept in
+    the manifest so the page can say where the files come from, and an upload from the other source replaces the copy like any other upload. `files` are {"path","content"} text files to write, `deleted` are paths to remove. Per-file problems are reported back and skipped,
     never raised. Returns {"accepted", "rejected": [...], "file_count", "total_bytes"}.
 
     A FULL upload (the initial connect, a re-scan, or a recovery after the server lost its copy) carries an `upload_id`: its batches are written into a STAGING copy and replace
@@ -297,13 +300,14 @@ def apply_sync(
     Without an `upload_id` (a small delta of what changed since the last sync) the batch is applied to the live snapshot directly; a `reset` there wipes it first, as before."""
     if not username or is_guest_username(username) or username == demo_project.OWNER:
         raise PermissionError("local workspaces are only available to signed-in users")
+    source = source if source in SOURCES else "browser"
     with _user_lock(username):
         if upload_id:
-            return _apply_staged(username, name, files, deleted, reset, upload_id, commit)
-        return _apply_direct(username, name, files, deleted, reset)
+            return _apply_staged(username, name, files, deleted, reset, upload_id, commit, source)
+        return _apply_direct(username, name, files, deleted, reset, source)
 
 
-def _apply_direct(username: str, name: str, files: List[Dict[str, Any]], deleted: List[str], reset: bool) -> Dict[str, Any]:
+def _apply_direct(username: str, name: str, files: List[Dict[str, Any]], deleted: List[str], reset: bool, source: str = "browser") -> Dict[str, Any]:
     existing = _current_manifest(username)
     if reset or existing is None:
         # Also covers a snapshot left by an older storage format (see SNAPSHOT_FORMAT_VERSION).
@@ -314,17 +318,17 @@ def _apply_direct(username: str, name: str, files: List[Dict[str, Any]], deleted
     index: Dict[str, int] = manifest.get("files", {})
     outcome = _write_batch(root.resolve(), index, files, deleted)
     now = time.time()
-    _write_manifest(username, {"version": SNAPSHOT_FORMAT_VERSION, "name": (name or "local folder")[:200], "synced_at": now, "last_used_at": now, "files": index})
+    _write_manifest(username, {"version": SNAPSHOT_FORMAT_VERSION, "name": (name or "local folder")[:200], "synced_at": now, "last_used_at": now, "files": index, "source": source})
     logger.info("[local_workspace] sync applied: accepted=%d rejected=%d file_count=%d", outcome["accepted"], len(outcome["rejected"]), len(index))
     return _result(outcome["accepted"], outcome["rejected"], index)
 
 
-def _apply_staged(username: str, name: str, files: List[Dict[str, Any]], deleted: List[str], reset: bool, upload_id: str, commit: bool) -> Dict[str, Any]:
+def _apply_staged(username: str, name: str, files: List[Dict[str, Any]], deleted: List[str], reset: bool, upload_id: str, commit: bool, source: str = "browser") -> Dict[str, Any]:
     staging = _staging_dir(username)
     meta = _read_staging(username)
     if reset:
         shutil.rmtree(staging, ignore_errors=True)           # a newer upload replaces any earlier unfinished one
-        meta = {"id": upload_id, "name": (name or "local folder")[:200], "started_at": time.time(), "files": {}}
+        meta = {"id": upload_id, "name": (name or "local folder")[:200], "started_at": time.time(), "files": {}, "source": source}
     elif not meta or meta.get("id") != upload_id:
         logger.warning("[local_workspace] a batch arrived for an upload this process has no staging for (%s)", where())
         raise StaleUpload("That upload was replaced by a newer one, or expired.")
@@ -349,7 +353,7 @@ def _swap_in(username: str, meta: Dict[str, Any], index: Dict[str, int]) -> None
         os.replace(live, old)
     os.replace(_staging_dir(username) / "files", live)
     now = time.time()
-    _write_manifest(username, {"version": SNAPSHOT_FORMAT_VERSION, "name": meta.get("name", "local folder"), "synced_at": now, "last_used_at": now, "files": index})
+    _write_manifest(username, {"version": SNAPSHOT_FORMAT_VERSION, "name": meta.get("name", "local folder"), "synced_at": now, "last_used_at": now, "files": index, "source": meta.get("source") if meta.get("source") in SOURCES else "browser"})
     shutil.rmtree(old, ignore_errors=True)
     shutil.rmtree(_staging_dir(username), ignore_errors=True)
 
@@ -406,7 +410,14 @@ def workspace_status(username: Optional[str]) -> Dict[str, Any]:
         "file_count": len(files),
         "total_bytes": sum(files.values()),
         "synced_at": synced_at,
+        "source": manifest.get("source") if manifest.get("source") in SOURCES else "browser",
     }
+
+
+def snapshot_source(username: Optional[str]) -> Optional[str]:
+    """"browser" or "runner" for the person's connected folder, or None when there is none."""
+    status = workspace_status(username)
+    return status.get("source") if status.get("connected") else None
 
 
 def snapshot_paths(username: Optional[str]) -> List[str]:

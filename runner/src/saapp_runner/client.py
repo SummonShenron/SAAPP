@@ -1,7 +1,7 @@
 """The runner's side of the conversation with the SAAPP server. Standard library only.
 
-The runner always connects OUT: it never listens on a port. The key goes only over https (or to this machine, for testing), and no message ever carries file contents, only a check's name, the paths asked
-for, and the end of a command's output.
+The runner always connects OUT: it never listens on a port. The key goes only over https (or to this machine, for testing). A message carries a check's name, the paths asked for and the end of a command's
+output, and ONE exception, `workspace_sync`: the text files of a project, sent only after the person said yes in a window on this computer (sharing.py), so Sonic can read the project.
 """
 import json
 import urllib.error
@@ -42,6 +42,7 @@ class Client:
         self.update_to: Optional[str] = None
         self.add_project: Optional[Dict[str, str]] = None
         self.remove_project: Optional[str] = None
+        self.share_files: Optional[Dict[str, str]] = None       # a request to ask the person whether to send a project's files: {"id", "project_id", "name"}; names and ids, never a path
 
     def _call(self, method: str, path: str, body: Optional[Dict[str, Any]] = None, timeout: float = 40) -> Dict[str, Any]:
         headers = {"Content-Type": "application/json", "User-Agent": f"saapp-runner/{__version__}"}
@@ -82,7 +83,18 @@ class Client:
         self.update_to = offered if isinstance(offered, str) else None
         self.add_project = {"id": str(add["id"]), "name": str(add["name"])} if isinstance(add, dict) and add.get("id") and add.get("name") else None      # only the two words, whatever else was sent
         self.remove_project = forget if isinstance(forget, str) else None
+        share = answer.get("share_files")
+        self.share_files = ({"id": str(share["id"]), "project_id": str(share["project_id"]), "name": str(share.get("name") or "project")}
+                            if isinstance(share, dict) and share.get("id") and share.get("project_id") else None)
         return answer.get("job")
+
+    def workspace_sync(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """One batch of a project's files (sharing.py, after the person said yes here). The server takes it only while a request for that project is open."""
+        return self._call("POST", "/api/runner/workspace/sync", body, timeout=120)
+
+    def workspace_clear(self) -> Dict[str, Any]:
+        """Takes back the files this runner sent (a folder the browser connected is left alone)."""
+        return self._call("DELETE", "/api/runner/workspace")
 
     def heartbeat(self, job_id: str, output: str = "") -> Dict[str, Any]:
         """Says the job is still running. `output` is the end of what it has printed so far, shown in the Terminal before it finishes (a server from before this ignores it)."""

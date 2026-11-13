@@ -7,6 +7,9 @@ command instead.
 
 The dialog is plain tkinter (it ships with Python on Windows and macOS and with most Linux Pythons). It asks twice, so a stray click cannot add a folder: first whether to choose one at all, saying what
 SAAPP asked for and that checks only ever run after the person presses Run in SAAPP; then the folder; and if the chosen folder's name differs from the one asked for, once more.
+
+When the runner can find ONE likely folder with that name under the person's home folder (finder.py), it shows its full path and asks once instead: Yes uses it, No goes to the chooser, Cancel adds nothing. That
+single question is the consent, the same as the chooser's, and it says exactly which folder; the search itself only reads folder names on this computer.
 """
 import json
 import subprocess
@@ -14,11 +17,26 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from . import finder as finder_module
+
 TIMEOUT_SECONDS = 15 * 60          # the same window the server gives a request before it calls it expired
 
 
-def run_dialog(name: str, ask: Optional[Any] = None) -> Dict[str, Any]:
-    """Shows the dialog and returns {"result": "chosen", "path": ...}, {"result": "declined"} or {"result": "no_picker"}. Runs in the child process; `ask` replaces tkinter in tests."""
+def _candidate(name: str, find: Optional[Callable[[str], List[Any]]]) -> Optional[Path]:
+    """The one folder worth offering for `name`, or None (nothing found, several equally likely, no search asked for, or the search failed: the chooser is the fallback for all of them)."""
+    if find is None:
+        return None
+    try:
+        return finder_module.likely_one([Path(p) for p in find(name)])
+    except Exception:
+        return None
+
+
+def run_dialog(name: str, ask: Optional[Any] = None, find: Optional[Callable[[str], List[Any]]] = None) -> Dict[str, Any]:
+    """Shows the dialog and returns {"result": "chosen", "path": ...}, {"result": "declined"} or {"result": "no_picker"}. Runs in the child process; `ask` replaces tkinter in tests. `find` looks for the folder by name
+    (finder.find_candidates); the real dialog (no `ask`) uses it by default, and a test that passes `ask` searches nothing unless it passes `find` too."""
+    if find is None and ask is None:
+        find = finder_module.find_candidates
     try:
         if ask is None:
             import tkinter
@@ -34,7 +52,14 @@ def run_dialog(name: str, ask: Optional[Any] = None) -> Dict[str, Any]:
     except Exception:
         return {"result": "no_picker"}
     try:
-        if not ask.confirm("SAAPP runner", f'SAAPP asked to run checks in a project called "{name}" on this computer.\n\nChecks only ever run after you press Run in SAAPP, and only in the folder you choose.\n\nChoose the folder now?'):
+        found = _candidate(name, find)
+        if found is not None:
+            answer = ask.use_found("SAAPP runner", f'SAAPP asked to run checks in a project called "{name}" on this computer.\n\nThis folder has that name:\n{found}\n\nChecks only ever run after you press Run in SAAPP, and only in the folder you choose.\n\nYes: use this folder.\nNo: choose a different folder.\nCancel: do not add a project.')
+            if answer is None:
+                return {"result": "declined"}
+            if answer:
+                return {"result": "chosen", "path": str(found)}
+        elif not ask.confirm("SAAPP runner", f'SAAPP asked to run checks in a project called "{name}" on this computer.\n\nChecks only ever run after you press Run in SAAPP, and only in the folder you choose.\n\nChoose the folder now?'):
             return {"result": "declined"}
         chosen = ask.folder(f'Choose the folder of "{name}"')
         if not chosen:
@@ -57,6 +82,10 @@ class _TkAsk:
 
     def confirm(self, title: str, text: str) -> bool:
         return bool(self.messagebox.askyesno(title, text, parent=self.root))
+
+    def use_found(self, title: str, text: str) -> Optional[bool]:
+        """Yes (True), No (False) or Cancel (None)."""
+        return self.messagebox.askyesnocancel(title, text, parent=self.root)
 
     def folder(self, title: str) -> str:
         return str(self.filedialog.askdirectory(title=title, mustexist=True, parent=self.root) or "")
