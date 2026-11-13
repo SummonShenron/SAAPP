@@ -33,6 +33,11 @@ def _apply(doc: Dict[str, Any], update: Dict[str, Any]) -> None:
         doc[key] = (doc.get(key) or 0) + value
     for key in (update.get("$unset") or {}):
         doc.pop(key, None)
+    for key, value in (update.get("$push") or {}).items():
+        items = value["$each"] if isinstance(value, dict) and "$each" in value else [value]
+        doc[key] = [*(doc.get(key) or []), *copy.deepcopy(items)]
+        if isinstance(value, dict) and isinstance(value.get("$slice"), int) and value["$slice"] < 0:
+            doc[key] = doc[key][value["$slice"]:]
 
 
 class FakeCursor(list):
@@ -74,11 +79,16 @@ class FakeCollection:
 
     def update_one(self, flt: Dict[str, Any], update: Dict[str, Any], upsert: bool = False) -> Any:
         doc = self._first(flt, None)
+        inserted = False
         if doc is None and upsert:
             doc = {"_id": flt["_id"]} if "_id" in flt else {}
             self.docs[doc["_id"]] = doc
+            inserted = True
         if doc is None:
             return type("R", (), {"matched_count": 0, "modified_count": 0})()
+        if inserted:
+            for key, value in (update.get("$setOnInsert") or {}).items():
+                doc[key] = copy.deepcopy(value)
         _apply(doc, update)
         return type("R", (), {"matched_count": 1, "modified_count": 1})()
 
@@ -89,6 +99,12 @@ class FakeCollection:
         before = copy.deepcopy(doc)
         _apply(doc, update)
         return copy.deepcopy(doc) if return_document else before
+
+    def delete_one(self, flt: Optional[Dict[str, Any]] = None) -> Any:
+        for key in [k for k, d in self.docs.items() if _matches(d, flt)][:1]:
+            del self.docs[key]
+            return type("R", (), {"deleted_count": 1})()
+        return type("R", (), {"deleted_count": 0})()
 
     def delete_many(self, flt: Optional[Dict[str, Any]] = None) -> None:
         for key in [k for k, d in self.docs.items() if _matches(d, flt)]:

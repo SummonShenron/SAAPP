@@ -152,6 +152,7 @@ from backend.utils import reply_stamp
 from backend.utils import character as character_utils
 from backend.utils import experiences as experiences_utils
 from backend.utils import experience_capture
+from backend.utils import pattern_notes
 from backend.utils import experience_reflections
 from backend.utils import self_model
 from backend.utils import runner_jobs, runner_files
@@ -319,6 +320,8 @@ async def lifespan(app: FastAPI):
     user_task_task = spawn_background_task(_run_user_task_schedule())
     # A meeting the person forgot to end closes itself after a quiet spell, with its notes (backend/services/meeting_sweep.py).
     meeting_sweep_task = spawn_background_task(_run_meeting_sweep())
+    # Notes for Sonic's record that code writes from a finished day's counters, for the templates a person approved (backend/utils/pattern_notes.py).
+    pattern_notes_task = spawn_background_task(pattern_notes.run_schedule(get_db))
     watchdog_task = loop_watchdog.start()  # logs when the event loop is blocked, and what was waiting (backend/utils/loop_watchdog.py)
     single_process_notice = process_info.single_process_warning()    # a deployment that asks for more than one worker breaks the wait for Apply (backend/utils/process_info.py)
     if single_process_notice:
@@ -344,6 +347,7 @@ async def lifespan(app: FastAPI):
     routine_task.cancel()
     user_task_task.cancel()
     meeting_sweep_task.cancel()
+    pattern_notes_task.cancel()
     watchdog_task.cancel()
     await asyncio.to_thread(llm_usage.flush)  # whatever the last calls used, before the process goes
     chat_sessions = {}
@@ -4177,6 +4181,36 @@ async def list_experiences(admin = Depends(require_global_admin)):
     """The notes waiting for approval, the approved ones a person added, the hand-written ones, and each one's reflection (backend/utils/experience_capture.py, experience_reflections.py).
     Abstract sentences only: no conversation text is ever stored."""
     return await asyncio.to_thread(experiences_utils.admin_view, _admin_db())
+
+
+@app.get("/api/admin/pattern-templates")
+async def list_pattern_templates(admin = Depends(require_global_admin)):
+    """The record's pattern templates: what each one writes, whether a person approved it, how many notes it made. Nothing is written for one that is not approved (backend/utils/pattern_notes.py)."""
+    return {"templates": await asyncio.to_thread(pattern_notes.view, _admin_db()), "limits": {"per_week": pattern_notes.WEEKLY_CAP, "recent_days": pattern_notes.RECENT_DAYS, "backfill": pattern_notes.BACKFILL_LIMIT}}
+
+
+@app.post("/api/admin/pattern-templates/{template_id}/approve")
+async def approve_pattern_template(template_id: str, admin = Depends(require_global_admin)):
+    db = _admin_db()
+    if not await asyncio.to_thread(pattern_notes.approve, db, template_id, admin.get("sub")):
+        raise HTTPException(status_code=404, detail="No such pattern template.")
+    return {"templates": await asyncio.to_thread(pattern_notes.view, db)}
+
+
+@app.post("/api/admin/pattern-templates/{template_id}/revoke")
+async def revoke_pattern_template(template_id: str, admin = Depends(require_global_admin)):
+    db = _admin_db()
+    if not await asyncio.to_thread(pattern_notes.revoke, db, template_id):
+        raise HTTPException(status_code=404, detail="No such pattern template.")
+    return {"templates": await asyncio.to_thread(pattern_notes.view, db)}
+
+
+@app.post("/api/admin/pattern-templates/backfill")
+async def backfill_pattern_notes(admin = Depends(require_global_admin)):
+    """Writes the notes the approved templates earn from ALL earlier finished days, once (at most a handful), ignoring the weekly cap that the daily pass keeps."""
+    db = _admin_db()
+    result = await asyncio.to_thread(pattern_notes.run_pass, db, None, backfill=True)
+    return {**result, "templates": await asyncio.to_thread(pattern_notes.view, db)}
 
 
 class ReflectionDecision(BaseModel):

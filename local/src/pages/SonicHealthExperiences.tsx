@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api, type ExperienceNote, type ExperienceReflection, type ExperiencesView } from '../api';
+import { api, type ExperienceNote, type ExperienceReflection, type ExperiencesView, type PatternTemplate, type PatternTemplatesView } from '../api';
+import { backfillMessage, canBackfill, limitsLine, templateState } from './patternTemplatesLogic';
 import { shortDate } from './sonicHealthFormat';
 
 const SIGNAL_LABELS: Record<string, string> = {
@@ -7,6 +8,7 @@ const SIGNAL_LABELS: Record<string, string> = {
   step_limit: 'the turn ran into its step limit',
   answer_check: 'the answer check found an unsupported claim',
   praise: 'the next message praised it',
+  pattern: "a finished day's counters matched an approved template",
 };
 
 /**
@@ -16,6 +18,7 @@ const SIGNAL_LABELS: Record<string, string> = {
  */
 export const ExperiencesTab: React.FC = () => {
   const [view, setView] = useState<ExperiencesView | null>(null);
+  const [patterns, setPatterns] = useState<PatternTemplatesView | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -25,6 +28,7 @@ export const ExperiencesTab: React.FC = () => {
   const load = useCallback(async () => {
     try {
       setView(await api.getExperiences());
+      setPatterns(await api.getPatternTemplates());
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load the record.');
@@ -42,6 +46,37 @@ export const ExperiencesTab: React.FC = () => {
       setEditingReflection(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not work.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Approving a template once lets code write its notes from finished days; revoking stops new ones (the notes it made stay until deleted).
+  const decideTemplate = async (template: PatternTemplate, approve: boolean) => {
+    setBusy(`template-${template.id}`);
+    setError('');
+    setNotice('');
+    try {
+      const templates = approve ? await api.approvePatternTemplate(template.id) : await api.revokePatternTemplate(template.id);
+      setPatterns(current => (current ? { ...current, templates } : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not work.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const backfillPatterns = async () => {
+    setBusy('backfill');
+    setError('');
+    setNotice('');
+    try {
+      const result = await api.backfillPatternNotes();
+      setPatterns(current => (current ? { ...current, templates: result.templates } : current));
+      setNotice(backfillMessage(result));
+      setView(await api.getExperiences());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not write the earlier days.');
     } finally {
       setBusy(null);
     }
@@ -108,7 +143,7 @@ export const ExperiencesTab: React.FC = () => {
           </div>
           <div className="sh-row-buttons">
             {pending && <button type="button" className="sh-btn sh-btn-primary" disabled={busy === note.id} onClick={() => run(note.id, () => api.approveExperience(note.id))}>Approve</button>}
-            <button type="button" className="sh-btn" disabled={busy === note.id} onClick={() => setEditing({ id: note.id, text: note.what })}>Edit</button>
+            {note.signal !== 'pattern' && <button type="button" className="sh-btn" disabled={busy === note.id} onClick={() => setEditing({ id: note.id, text: note.what })}>Edit</button>}
             <button type="button" className="sh-btn" disabled={busy === note.id} onClick={() => { if (window.confirm('Remove this note for good?')) void run(note.id, () => api.deleteExperience(note.id)); }}>Delete</button>
           </div>
           {!pending && reflectionBlock(`db-${note.id}`, note.reflection)}
@@ -133,6 +168,39 @@ export const ExperiencesTab: React.FC = () => {
         {error && <div className="account-error" role="alert">{error}</div>}
         {view.pending.length === 0 ? <p className="card-description">Nothing waiting.</p> : <ul className="sh-list">{view.pending.map(note => row(note, true))}</ul>}
       </section>
+      {patterns && (
+        <section className="service-card sh-card" data-help="record.patterns">
+          <div className="card-badge">{patterns.templates.filter(template => template.approved).length} OF {patterns.templates.length} APPROVED</div>
+          <h2>Pattern stories</h2>
+          <p className="card-description">
+            Code can write a note from a finished day's own counters: a rough day, a good day, a turn that ran out of steps while it was still making progress. No model writes it, so nothing is invented, and
+            it says only what the counters say. You approve each TEMPLATE once, here, not each note; nothing is written for one you have not approved. A note then joins the record like any approved one, and a note you
+            delete is never written again. {patterns.limits && limitsLine(patterns.limits)}
+          </p>
+          <ul className="sh-list">
+            {patterns.templates.map(template => (
+              <li key={template.id} className="sh-row">
+                <div className="sh-row-body">
+                  <div className="sh-row-text"><strong>{template.name}</strong>: when {template.rule}.</div>
+                  <div className="sh-row-meta">Writes, for example: {template.example}</div>
+                  <div className="sh-row-meta">Matched by (never said): {template.key}</div>
+                  <div className="sh-row-meta">Careful: {template.careful}.</div>
+                  <div className="sh-row-meta" role="status">{templateState(template)}</div>
+                  <div className="sh-row-buttons">
+                    {template.approved
+                      ? <button type="button" className="sh-btn" disabled={busy === `template-${template.id}`} onClick={() => void decideTemplate(template, false)}>Stop writing these</button>
+                      : <button type="button" className="sh-btn sh-btn-primary" disabled={busy === `template-${template.id}`} onClick={() => void decideTemplate(template, true)}>Approve this template</button>}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="sh-row-buttons">
+            <button type="button" className="sh-btn" disabled={busy === 'backfill' || !canBackfill(patterns.templates)} onClick={() => void backfillPatterns()}>{busy === 'backfill' ? 'Writing...' : 'Write the earlier days'}</button>
+          </div>
+          {notice && <p className="card-description" role="status">{notice}</p>}
+        </section>
+      )}
       <section className="service-card sh-card">
         <div className="card-badge">{view.approved.length} APPROVED</div>
         <h2>Notes you approved</h2>
