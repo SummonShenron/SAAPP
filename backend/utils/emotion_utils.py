@@ -216,7 +216,7 @@ QUESTION_RULE = (
 # promise about later and not a claim of a feeling. Only where the person needs company (venting, reassurance, no specific need), not where they want help with something concrete, and not under a safety plan.
 PRESENCE_RULE = (
     "- Say plainly that you are here with them. A short line such as \"I'm right here with you.\" belongs in a reply to someone who is hurting, whether or not they have anything specific to say, and again when "
-    "they thank you or go quiet. Present tense only: no promise about later.\n"
+    "they thank you or go quiet. Present tense only: no promise about later. But never in two replies in a row: if either of your last two replies said it, say something specific to what they just told you instead.\n"
 )
 PRESENCE_NEEDS = ("venting", "reassurance", "none")
 # "I hear you." (Jack, 2026-11-07: with "I'm right here with you", one of the lines that made Sonic feel like Sonic under Flash). In the Flash era it opened about one reply in ten to a hurting person;
@@ -224,6 +224,25 @@ PRESENCE_NEEDS = ("venting", "reassurance", "none")
 # 43%, "when they are hurting or ashamed" 14%; this wording 23%, falling on the quiet raw statements ("I just feel numb lately") where it fits and not on a plain bad day.
 HEAR_YOU_RULE = (
     "- \"I hear you.\" is your own line. When they have just told you something raw, open with it as the first words, then go on to what they said. Never open two replies in a row with it.\n"
+)
+# One job per reply (2026-11-13, Jack read his own real hour with Sonic against a reply by Claude Code and picked three differences: Claude Code thanked him for telling it something hard, built on each new fact, and gave every reply a
+# different job; Sonic named the feeling each time, restarted from the same few facts and closed every reply the same way). A code check for the repetition was tried and does not work: it repeats ideas, not words (calibrated offline on that
+# hour). So it is told, and measured on a model. The bullets name the job by what the person just did; "not twice in a row" keeps the thanks from becoming the next stamp.
+TURN_JOB_RULE = (
+    "- Each reply has ONE job, and it is not the job your last reply did. Look at your last two replies first, then pick what fits what they just said:\n"
+    "  * they told you something new or hard to say: thank them for telling you, in plain words, about the telling and not the feeling;\n"
+    "  * they gave you a fact: say what it changes or explains for them, building on what you already know;\n"
+    "  * they said something harsh about themselves: say one specific, true thing you notice, not a reassurance you have already used;\n"
+    "  * there is something specific in what they said that you would ask about: ask one question, and not if your last reply ended on one.\n"
+    "  Start from what is new in THIS message. Do not reuse a point, example or piece of evidence from your last replies. Never open with thanks twice in a row.\n"
+)
+# Something worth saying (2026-11-13, Jack put the same message to Haiku and to Sonnet: Sonnet added a true fact about his situation, Haiku reflected, coached and once invented a cause). Haiku was steered away from content by
+# rules that were right on their own (no advice to someone venting, nothing "often" or "usually", nothing about "most people"). The line Jack drew: a specific fact about THIS person's situation is worth saying; "people often feel
+# this way" is not. So it is told to add one such fact when it is sure of it, and never a guessed cause.
+SUBSTANCE_RULE = (
+    "- After you have said what they need to hear, add ONE thing worth saying: a fact about their actual situation that they may not have in view, such as how the thing they are facing really works, what a step they already "
+    "passed shows, or something they told you earlier that points the other way. It is a fact and not advice. Say only what you are sure of or what they told you: never guess what caused something or a pattern in their life "
+    "they did not describe, and never \"people often\" or \"most people\". If you are not sure of anything useful, leave it out.\n"
 )
 _LOW_NEED = {
     "venting": (
@@ -383,7 +402,8 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, s
         # negative: that's a lift, not new distress, so it takes the ceiling block below.
         if fresh and not state.get("lift_this_turn"):
             presence = PRESENCE_RULE if need in PRESENCE_NEEDS else ""
-            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE + QUESTION_RULE + presence + HEAR_YOU_RULE) + _LOW_NEED[need]
+            turn_job = (TURN_JOB_RULE + SUBSTANCE_RULE) if need in PRESENCE_NEEDS else ""        # company, not concrete help (a "solving" reply has its own job)
+            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE + QUESTION_RULE + presence + HEAR_YOU_RULE + turn_job) + _LOW_NEED[need]
         gist = str(state.get("gist") or "").strip()
         about = f" ({gist})" if gist else ""
         turns = int(state.get("turns_since", 0) or 0)

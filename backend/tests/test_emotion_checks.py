@@ -272,7 +272,7 @@ def test_a_low_reading_regenerates_a_scripted_reply_whatever_the_need_and_a_good
 
 
 def test_every_attunement_tag_has_a_revision_reason_the_model_is_told():
-    for tag in ("probing_question", "two_questions", "template_phrase", "thin_comfort", "hedged", "generalizing", "restating"):
+    for tag in ("probing_question", "two_questions", "template_phrase", "thin_comfort", "hedged", "generalizing", "restating", "repeated_presence"):
         assert ec._REVISION_REASONS[tag].strip(), tag
 
 
@@ -327,5 +327,53 @@ def test_the_restating_check_is_off_in_the_app_because_regenerating_did_not_beat
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
     call = source[source.index('emotional_issue = None if safety_plan.active else emotional_reply_issue('):]
     call = call.split(chr(10))[0]
-    assert 'emotional_reply_issue(final_state.get("emotional_state"), checked_reply)' in call and "plain_quotes(question)" not in call
+    assert 'emotional_reply_issue(final_state.get("emotional_state"), checked_reply, earlier_replies=' in call and "plain_quotes(question)" not in call      # the earlier replies are the one thing added after (2026-11-13)
+    assert "earlier_ai_replies(chat_sessions[history_key])" in call
     assert ec.emotional_reply_issue(_state("low", "venting"), "Every time my phone buzzes you check it. Nothing from her yet is its own kind of ache.") is None
+
+
+# ---- a presence line said again within the last two replies (2026-11-13: it closed 8 of 10 replies in one real hour) -------------------------------------------------------------------------------------------------------
+STAMPED = "That was a heavy afternoon to carry out of a room. I'm right here with you."
+PLAIN = "That was a heavy afternoon to carry out of a room, and the last line you did not get to finish is the one still open."
+
+
+def test_a_presence_line_is_repeated_only_when_one_of_the_last_two_replies_said_one():
+    assert ec.reply_repeats_presence(STAMPED, [PLAIN, STAMPED]) is True
+    assert ec.reply_repeats_presence(STAMPED, [STAMPED, PLAIN]) is True
+    assert ec.reply_repeats_presence(STAMPED, [STAMPED, PLAIN, PLAIN]) is False                 # three replies back is far enough
+    assert ec.reply_repeats_presence(STAMPED, [PLAIN, PLAIN]) is False and ec.reply_repeats_presence(STAMPED, []) is False and ec.reply_repeats_presence(STAMPED, None) is False
+    assert ec.reply_repeats_presence(PLAIN, [STAMPED, STAMPED]) is False                        # a reply without one is never the repeat
+
+
+def test_the_presence_lines_it_knows_and_the_ones_it_leaves_alone():
+    for line in ("I'm right here with you.", "i am right here.", "I’m right here with you", "I'll be right here.", "I'm here with you.", "I am still here for you.", "I've got you."):
+        assert ec.PRESENCE_LINE_RE.search(line), line
+    for line in ("You are not alone in this.", "The right answer is here.", "Here is the file you asked for.", "I got the file you asked for."):
+        assert not ec.PRESENCE_LINE_RE.search(line), line
+    assert ec.reply_repeats_presence("Something specific. I’m right here with you.", ["I'm right here with you."]) is True            # typographic apostrophes
+    assert ec.reply_repeats_presence("Something specific.\n<<<FOLLOW_UP: I'm right here with you>>>", [STAMPED]) is False                # the follow-up tag is not the reply
+
+
+def test_earlier_ai_replies_reads_the_assistant_messages_of_a_real_history_oldest_first():
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    history = [HumanMessage(content="one"), AIMessage(content="reply one"), HumanMessage(content="two"), AIMessage(content="reply two"), HumanMessage(content="three"), AIMessage(content="reply three"), HumanMessage(content="four")]
+    assert ec.earlier_ai_replies(history) == ["reply two", "reply three"]
+    assert ec.earlier_ai_replies(history, 1) == ["reply three"] and ec.earlier_ai_replies([]) == [] and ec.earlier_ai_replies(None) == []
+    assert ec.earlier_ai_replies([AIMessage(content=[{"type": "text", "text": "not plain"}]), AIMessage(content="plain")]) == ["plain"]
+
+
+def test_a_hurting_person_gets_a_presence_line_regenerated_only_when_it_was_just_said_and_the_older_checks_come_first():
+    earlier = [PLAIN, STAMPED]
+    assert ec.emotional_reply_issue(_state("low", "venting"), STAMPED, earlier_replies=earlier) == "repeated_presence"
+    assert ec.emotional_reply_issue(_state("low", "venting"), STAMPED) is None and ec.emotional_reply_issue(_state("low", "venting"), STAMPED, earlier_replies=[PLAIN, PLAIN]) is None
+    assert ec.emotional_reply_issue(_state("positive", "connection"), STAMPED, earlier_replies=earlier) is None                           # a good mood is not held to it
+    assert ec.emotional_reply_issue(_state("low", "venting"), "It sounds like a lot. I'm right here with you.", earlier_replies=earlier) == "template_phrase"
+    assert ec.build_emotional_revision_prompt("PROMPT", STAMPED, "repeated_presence")[1] == ec._REVISION_REASONS["repeated_presence"]
+
+
+def test_the_app_hands_the_check_the_replies_already_in_the_history():
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    assert "from backend.utils.emotion_checks import earlier_ai_replies, emotional_reply_issue" in source

@@ -211,7 +211,33 @@ def reply_attunement_issue(reply: str, message: Optional[str] = None) -> Optiona
     return None
 
 
+# "I'm right here with you" said again and again (2026-11-13, Jack read the real hour: it closed 8 of 10 replies to a hurting person). The line comes from PRESENCE_RULE (emotion_utils.py), which Jack asked for, but that
+# rule has no limit, so a long low conversation ended every reply on it and it read as a stamp. This is the cross-reply limit: a presence line is regenerated when one of the last PRESENCE_WINDOW replies already said one.
+PRESENCE_LINE_RE = re.compile(
+    r"\bi(?:'|’)?(?:m| am| will|ll)(?: be)?(?: still)? right here\b|\bi(?:'|’)?(?:m| am)(?: still)? here (?:with|for) you\b|\bi(?:'|’)?(?:ve| have) got you\b",
+    re.IGNORECASE,
+)
+PRESENCE_WINDOW = 2
+
+
+def reply_repeats_presence(reply: str, earlier_replies) -> bool:
+    """True when the reply says a presence line ("I'm right here with you", "I'm here for you", "I've got you") and one of the last PRESENCE_WINDOW earlier replies (oldest first) said one too. Pure."""
+    if not PRESENCE_LINE_RE.search(reply_body(reply)):
+        return False
+    return any(PRESENCE_LINE_RE.search(reply_body(earlier)) for earlier in list(earlier_replies or [])[-PRESENCE_WINDOW:])
+
+
+def earlier_ai_replies(history, count: int = PRESENCE_WINDOW):
+    """The text of the last `count` assistant messages of a chat history (LangChain messages), oldest first; a message whose content is not plain text is skipped. Pure."""
+    texts = [m.content for m in history or [] if getattr(m, "type", "") == "ai" and isinstance(getattr(m, "content", None), str)]
+    return texts[-count:]
+
+
 _REVISION_REASONS = {
+    "repeated_presence": (
+        "the draft closes on a line saying you are right here with them, and one of your last two replies already said one. Said again it reads as a stamp, not as being with them. Write it again without any "
+        "presence line: say something specific to what they just told you instead, in different words from your earlier replies."
+    ),
     "venting_advice": (
         "the person mainly wants to be heard right now, and the draft gave advice or suggestions. Write it "
         "again so it stays with what they are feeling and what they actually said: no advice, tips, "
@@ -252,7 +278,7 @@ _REVISION_REASONS = {
 }
 
 
-def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str, message: Optional[str] = None) -> Optional[str]:
+def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str, message: Optional[str] = None, earlier_replies=None) -> Optional[str]:
     """The tag of the emotional need this reply failed to honor, or None when it is fine (or when
     nothing here applies). Only a need read from THIS message is checked: a feeling carried over from
     earlier turns doesn't oblige the reply to anything in particular."""
@@ -265,7 +291,8 @@ def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str, message: 
     if need == "celebration" and valence in POSITIVE_VALENCES and not reply_shows_curiosity(reply):
         return "celebration_no_question"
     if valence in NEGATIVE_VALENCES:
-        return reply_attunement_issue(reply, message)       # a low person, whatever the need: hedged, scripted, thin or interviewing replies are regenerated once
+        # a low person, whatever the need: hedged, scripted, thin or interviewing replies are regenerated once, and so is a presence line said again within the last two replies
+        return reply_attunement_issue(reply, message) or ("repeated_presence" if reply_repeats_presence(reply, earlier_replies) else None)
     return None
 
 

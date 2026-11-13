@@ -225,4 +225,18 @@ def test_the_four_question_ending_hurting_examples_are_approved_and_pass_the_liv
         assert example["tone"] == "hurting" and example_id in registry.APPROVED_IDS and example["approved"] and example["reply"].rstrip().endswith("?")
         assert ec.reply_attunement_issue(example["reply"]) is None, example_id          # the examples obey the check the live reply is held to
         assert not ec.GENERAL_RE.search(example["reply"]), example_id              # and teach none of the 'how such things go' talk Jack dislikes
-    assert len([e for e in registry.EXAMPLES if e["tone"] == "hurting"]) == 11
+    assert len([e for e in registry.EXAMPLES if e["tone"] == "hurting"]) == 23       # 11 + the twelve Sonnet-written ones approved 2026-11-13 (below)
+
+
+def test_the_twelve_sonnet_written_hurting_examples_are_approved_hold_the_live_checks_and_do_not_teach_an_interview():
+    """Written by Sonnet on made-up situations, edited, approved by Jack 2026-11-13 (docs/voice-examples-sonnet-drafts.md): each says what they said and adds one sure fact about their situation."""
+    from backend.utils import emotion_checks as ec
+
+    new = [e for e in registry.EXAMPLES if e["id"].startswith("sub_")]
+    assert len(new) == 12 and all(e["tone"] == "hurting" and e["approved"] and e["id"] in registry.APPROVED_IDS for e in new)
+    for example in new:
+        assert ec.reply_attunement_issue(example["reply"]) is None, example["id"]                       # the check a live reply is held to
+        assert not ec.GENERAL_RE.search(example["reply"]) and not ec.CAUSE_GENERAL_RE.search(example["reply"]), example["id"]
+        assert not ec.PRESENCE_LINE_RE.search(example["reply"]), example["id"]                           # no stamp line is taught
+    assert sum(e["reply"].rstrip().endswith("?") for e in new) <= 6                                      # about half, as in Jack's blind test: not an interview
+    assert ve.check_registry() == [] and ve.check_set() == []

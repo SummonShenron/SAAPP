@@ -747,3 +747,37 @@ def test_the_fresh_low_block_gives_sonic_its_own_i_hear_you_for_something_raw_an
         assert rule in eu.build_emotional_context(_fresh("low", 0.6, need), NOW), need
     assert rule not in eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW, safety=True)
     assert rule not in eu.build_emotional_context(_carried(turns_since=2), NOW) and rule not in eu.build_emotional_context(_fresh("positive", 0.7), NOW)
+
+
+def test_the_fresh_low_block_gives_each_reply_one_job_unlike_the_last_for_company_and_not_for_help_a_safety_plan_or_a_carried_mood():
+    rule = eu.TURN_JOB_RULE
+    assert "Each reply has ONE job, and it is not the job your last reply did." in rule and "Never open with thanks twice in a row." in rule
+    for line in ("thank them for telling you, in plain words, about the telling and not the feeling", "say what it changes or explains for them, building on what you already know",
+                 "say one specific, true thing you notice, not a reassurance you have already used", "ask one question, and not if your last reply ended on one", "Do not reuse a point, example or piece of evidence from your last replies."):
+        assert line in rule, line
+    for need in eu.PRESENCE_NEEDS:
+        assert rule in eu.build_emotional_context(_fresh("low", 0.6, need), NOW), need
+        assert rule in eu.build_emotional_context(_fresh("distressed", 0.8, need), NOW), need
+    assert rule not in eu.build_emotional_context(_fresh("low", 0.6, "solving"), NOW)                                   # they want concrete help, not company
+    assert rule not in eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW, safety=True)                     # a safety plan shapes its own reply
+    assert rule not in eu.build_emotional_context(_carried(turns_since=2), NOW) and rule not in eu.build_emotional_context(_fresh("positive", 0.7), NOW)
+    context = eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW)
+    assert context.index(eu.HEAR_YOU_RULE) < context.index(rule)                                                          # it follows the other two rules, in the same list
+
+
+def test_the_presence_rule_also_says_never_in_two_replies_in_a_row_as_the_check_does():
+    assert "But never in two replies in a row: if either of your last two replies said it" in eu.PRESENCE_RULE
+    assert "Present tense only: no promise about later." in eu.PRESENCE_RULE and "\"I'm right here with you.\"" in eu.PRESENCE_RULE
+
+
+def test_the_fresh_low_block_asks_for_one_sure_fact_about_their_situation_and_never_a_guessed_cause_with_the_same_gates_as_the_job_rule():
+    rule = eu.SUBSTANCE_RULE
+    assert "add ONE thing worth saying: a fact about their actual situation" in rule and "It is a fact and not advice." in rule
+    assert "never guess what caused something or a pattern in their life they did not describe" in rule and "never \"people often\" or \"most people\"" in rule and "leave it out" in rule
+    for need in eu.PRESENCE_NEEDS:
+        assert rule in eu.build_emotional_context(_fresh("low", 0.6, need), NOW), need
+    assert rule not in eu.build_emotional_context(_fresh("low", 0.6, "solving"), NOW)
+    assert rule not in eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW, safety=True)
+    assert rule not in eu.build_emotional_context(_carried(turns_since=2), NOW) and rule not in eu.build_emotional_context(_fresh("positive", 0.7), NOW)
+    context = eu.build_emotional_context(_fresh("low", 0.6, "venting"), NOW)
+    assert context.index(eu.TURN_JOB_RULE) < context.index(rule)
