@@ -34,6 +34,7 @@ from backend.components.sonic_leanings import LEANINGS  # noqa: E402  (plain dat
 from backend.components.sonic_people_notes import NOTES as PEOPLE_NOTES  # noqa: E402  (plain data)
 from backend.components.sonic_voice_examples import EXAMPLES as VOICE_EXAMPLES  # noqa: E402  (plain data)
 from backend.components.sonic_situation_facts import FACTS as SITUATION_FACTS  # noqa: E402  (plain data)
+from backend.components.sonic_shapes import SHAPES as SHAPE_STORIES  # noqa: E402  (plain data)
 from backend.utils.feeling_questions import KINDS as FEELING_KINDS  # noqa: E402  (a plain tuple of names; that module imports nothing from here)
 from backend.utils.code_plan import PLAN_STOP_REASONS  # noqa: E402  (a plain tuple of names)
 from backend.utils.reading_waste import OPENING_KINDS, ORIENT_RANKS  # noqa: E402  (plain tuples of names)
@@ -53,6 +54,8 @@ _GROUPS: Dict[str, tuple] = {
     "voice_example_used": tuple(example["id"] for example in VOICE_EXAMPLES),
     # Which reviewed situation facts were put in a reply's prompt (backend/utils/situation_facts.py): one count per fact, so one that never matches can be reworded or removed.
     "situation_fact_used": tuple(fact["id"] for fact in SITUATION_FACTS),
+    # Which reviewed shape story was put in a reply's prompt (backend/utils/shape_stories.py): one count per shape, so one that never matches, or is never used, can be reworded or removed.
+    "shape_story_used": tuple(shape["id"] for shape in SHAPE_STORIES),
     # What happened after a reply that used a leaning (backend/utils/leanings.py): a message followed, it read as pushback, it praised, or the turn hit its step limit. Evidence of which leanings earn their place, never a target.
     "leaning_followed": tuple(entry["id"] for entry in LEANINGS),
     "leaning_pushback": tuple(entry["id"] for entry in LEANINGS),
@@ -82,6 +85,8 @@ _GROUPS: Dict[str, tuple] = {
     # Which voice wrote each reply and why (backend/utils/reply_tier.py REASONS; counts only): lite_setting and auto_plain are lite replies, the rest stayed on the standard voice.
     "reply_tier": ("standard_setting", "lite_setting", "haiku_setting", "auto_plain", "not_offered", "safety", "emotional", "checkin", "companion", "identity", "frustration"),
     "proactive_quiet": ("guest", "risk", "closing", "energy", "route", "rate_limit", "nothing_matched"),
+    # How much each turn mattered, whatever model wrote it (backend/utils/reply_tier.py STAKES, plus "none" for a plain turn): sizes the turns a stronger reply voice would be spent on. Counts only.
+    "reply_stakes": ("safety", "emotional", "checkin", "companion", "identity", "frustration", "none"),
 }
 _PLAIN_KEYS = ("turns_total", "self_model_used", "experience_captured", "experience_capture_merged", "experience_capture_invalid", "experience_offered", "experience_cited", "native_runs", "native_calls", "native_chars_sent", "native_chars_results", "native_chars_instructions", "native_chars_tools", "native_chars_preferences", "native_chars_architecture", "native_chars_memory", "native_chars_history", "native_chars_leanings", "leaning_turns", "native_chars_environment", "native_chars_request", "code_plan_turns", "code_plan_exec_tool_steps", "code_plan_exec_early", "code_plan_fed_next", "code_plan_turn_cap_hit", "code_plan_submitted", "code_plan_invalid", "code_plan_approved", "code_plan_cancelled", "code_plan_stalled", "code_plan_halted", "code_plan_marked_done", "claim_unproven", "claim_sent_back", "claim_edit_unbacked", "code_plan_exec_turns", "code_plan_exec_cap_hit", "code_plan_exec_edited", "code_plan_steps_done", "code_plan_prefetched", "code_plan_deviation", "code_pushback", "code_frustrated", "code_proposals", "code_proposal_rework", "code_edit_calls", "code_edit_errors", "code_test_runs", "code_edit_applied", "code_edit_declined", "code_edit_undone", "code_edit_applied_small", "code_edit_applied_large", "code_edit_declined_small", "code_edit_declined_large", "code_edit_undone_small", "code_edit_undone_large", "working_notes_updated", "working_notes_item_added", "working_notes_item_dropped", "working_notes_injected", "working_notes_chat_read", "reply_fit_checked", "reward_evaluated", "relatable_offered", "self_mention", "observations_injected", "encouragement_offered", "open_loop_captured", "open_loop_offered", "open_loop_resolved", "callback_offered", "self_history_offered", "initiation_offered", "initiation_fallback", "initiation_answered", "initiation_interest_offered", "initiation_interest_answered", "duration_offered", "curiosity_offered", "curiosity_taken", "shelf_offered", "shelf_taken", "shelf_listed", "finding_selected", "lean_offered", "guardrail_applied", "routines_offered", "followups_offered", "task_results_offered", "meeting_turns", "headsup_offered", "clarify_noted", "clarify_asked", "clarify_answered", "memory_note_dropped", "memory_note_trimmed", "status_offered", "offer_made", "offer_taken", "offer_passed", "offer_held_back", "code_turns", "code_cap_hit", "code_edited", "code_verified", "code_followed", "code_redo")
 # The rhythm of a coding turn (backend/utils/loop_rhythm.py): turns it was followed on, turns that acted at all, reads before the first act (summed), edits applied, applied edits checked in the next
@@ -148,7 +153,7 @@ REASONER_KEYS = ("reasoner_on_haiku", "reasoner_on_lite")
 # The private note written before a reply to someone who is hurting (backend/utils/substance_note.py, off unless SUBSTANCE_NOTE=on): notes asked for, notes that came back empty or unusable, notes put in the prompt, and notes that
 # carried something the person said earlier. Counts only.
 # Replies that were shown a reviewed situation fact (backend/utils/situation_facts.py): a share of turns_total. Counts only.
-SUBSTANCE_KEYS = ("substance_note_asked", "substance_note_empty", "substance_note_used", "substance_note_earlier", "situation_facts_offered")
+SUBSTANCE_KEYS = ("substance_note_asked", "substance_note_empty", "substance_note_used", "substance_note_earlier", "situation_facts_offered", "shape_stories_offered", "shape_stories_cited")
 # A runner sending a project's files so Sonic can read them (backend/utils/runner_files.py): batches taken, batches refused (nobody had asked, or the project is not the runner's), and batches that failed. Counts only.
 # Notes the record's pattern templates wrote from a finished day's counters (backend/utils/pattern_notes.py), and days a template would have written one but the weekly cap held it back. Counts only.
 PATTERN_KEYS = ("pattern_note_written", "pattern_note_capped")

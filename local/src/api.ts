@@ -1121,6 +1121,12 @@ export interface FeedbackSummary {
     notes: { id: string; positive: number; negative: number }[];
     /** Thumbs-downs whose reason was about the voice itself, by the voice that wrote the reply. Absent from an older server. */
     reasons?: { label: string; repeated_me: number; nothing_new: number; didnt_attune: number }[];
+    /** Thumbs by how much the turn mattered (safety, emotional, check-in, companion, identity, frustration, or none), whichever model wrote it. Absent from an older server. */
+    stakes?: { label: string; positive: number; negative: number }[];
+    /** Thumbs by whether a case from Sonic's own record was in the prompt ("offered") and used by the reply ("cited"), or not there ("none"). Absent from an older server. */
+    record?: { label: string; positive: number; negative: number }[];
+    /** Thumbs by the situation fact (an id) the reply was shown. Absent from an older server. */
+    facts?: { id: string; positive: number; negative: number }[];
   };
 }
 
@@ -1331,7 +1337,7 @@ export function getExperiences(): Promise<ExperiencesView> {
   return adminRequest<ExperiencesView>('/api/admin/experiences', 'GET');
 }
 /** One voice example or situation fact for review (backend/utils/voice_review.py): what it says, whether it may be used now, the registry's own setting, whether a person overrode it here, and how often it was used in the last `days` days. */
-export interface VoiceReviewItem { kind: 'example' | 'fact'; id: string; situation: string; asks: string[]; approved: boolean; default: boolean; decision: 'approved' | 'removed' | null; used: number; tone: string; text: string[]; }
+export interface VoiceReviewItem { kind: 'example' | 'fact' | 'shape'; id: string; situation: string; asks: string[]; approved: boolean; default: boolean; decision: 'approved' | 'removed' | null; used: number; tone: string; text: string[]; }
 export interface VoiceReviewView { items: VoiceReviewItem[]; days: number; }
 export type VoiceReviewAction = 'approve' | 'remove' | 'reset';
 export function getVoiceReview(): Promise<VoiceReviewView> {

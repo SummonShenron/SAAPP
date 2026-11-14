@@ -2,16 +2,16 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api, type VoiceReviewAction, type VoiceReviewItem, type VoiceReviewView } from '../api';
 import { ACTION_LABELS, FILTERS, FIRST_ROWS, actionsFor, filterItems, stateLine, summaryLine, thinWarning, usageLine, type VoiceFilter } from './voiceReviewLogic';
 
-const HELP_VOICE = { example: 'voice.examples', fact: 'voice.facts' };           // the help-mode tip each card carries (components/helpTips.ts)
-const TONE_LABELS: Record<string, string> = { light: 'light moment', hurting: 'someone hurting', any: 'any moment' };
+const HELP_VOICE = { example: 'voice.examples', fact: 'voice.facts', shape: 'voice.shapes' };           // the help-mode tip each card carries (components/helpTips.ts)
+const TONE_LABELS: Record<string, string> = { light: 'light moment', hurting: 'someone hurting', any: 'any moment', stuck: 'anyone who is not hurt (never someone low or distressed)', good: 'a good moment or an ordinary conversation (never someone low or frustrated)' };
 
 /** Sonic Health, "Its voice": the voice examples and the situation facts Sonic may show itself when it answers, who approved each, and how often each one was matched to a message (backend/utils/voice_review.py). */
 export const VoiceTab: React.FC = () => {
   const [view, setView] = useState<VoiceReviewView | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const [filters, setFilters] = useState<Record<VoiceReviewItem['kind'], VoiceFilter>>({ example: 'all', fact: 'all' });
-  const [expanded, setExpanded] = useState<Record<VoiceReviewItem['kind'], boolean>>({ example: false, fact: false });
+  const [filters, setFilters] = useState<Record<VoiceReviewItem['kind'], VoiceFilter>>({ example: 'all', fact: 'all', shape: 'all' });
+  const [expanded, setExpanded] = useState<Record<VoiceReviewItem['kind'], boolean>>({ example: false, fact: false, shape: false });
 
   const load = useCallback(async () => {
     try {
@@ -45,7 +45,7 @@ export const VoiceTab: React.FC = () => {
         <div className="sh-row-body">
           {item.text.map(line => <div key={line} className="sh-row-text">{line}</div>)}
           <div className="sh-row-meta">
-            {item.kind === 'example' ? `${TONE_LABELS[item.tone] ?? item.tone}. ` : ''}Matched by messages like: &ldquo;{item.asks[0] ?? item.situation}&rdquo;
+            {item.kind !== 'fact' ? `${TONE_LABELS[item.tone] ?? item.tone}. ` : ''}Matched by messages like: &ldquo;{item.asks[0] ?? item.situation}&rdquo;
           </div>
           <div className="sh-row-meta">{`${stateLine(item)} ${usageLine(item, view.days)}`.trim()}</div>
           <div className="sh-row-buttons">
@@ -90,6 +90,8 @@ export const VoiceTab: React.FC = () => {
       {error && <div className="account-error" role="alert">{error}</div>}
       {card('example', 'Voice examples',
         'Invented examples of how Sonic answers, shown next to a message that resembles the one it was written for, so the reply matches the feel and not the wording. Removing one here stops it being used straight away (within a minute); it does not edit the registry file, and "Back to the registry" undoes your decision.')}
+      {card('shape', 'Shape stories',
+        'One sentence from the record Sonic keeps of its own work, said once, at any mood level, when what someone says has the same shape: something that went wrong for them, or something that went right in a good moment or an ordinary conversation. It is told as a record, never as a memory or a feeling, and a story marked for people who are not hurt is never told to someone low or distressed. Every story starts as a draft: none is told until you approve it here.')}
       {card('fact', 'Situation facts',
         'One-sentence facts about how a kind of situation works (an interview loop, a hiring queue, a review), shown only to a hurting person facing that situation, so Sonic can say something true and not guess. Every fact starts as a draft: none is used until you approve it here.')}
     </>

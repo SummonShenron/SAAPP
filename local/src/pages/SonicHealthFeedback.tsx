@@ -21,6 +21,10 @@ const TAG_LABELS: Record<string, string> = {
 };
 
 const VOICE_LABELS: Record<string, string> = { flash: 'Standard voice (Flash)', haiku: 'Claude Haiku', lite: 'Gemini Lite', gpt: 'GPT', other: 'Other' };
+/** How much the turn mattered, whichever model wrote the reply (backend/utils/reply_tier.py STAKES). */
+const STAKES_LABELS: Record<string, string> = { safety: 'Safety context', emotional: 'Hurting or low', checkin: 'A check-in', companion: 'Personal or companion', identity: 'Asked about its feelings', frustration: 'Frustrated with it', none: 'A plain turn' };
+/** Whether a case from Sonic's own record was used (backend/utils/experiences.py). */
+const RECORD_LABELS: Record<string, string> = { none: 'No record case in the prompt', offered: 'Record case in the prompt, not used', cited: 'Record case used in the reply' };
 
 const VoiceTable: React.FC<{ rows: { id?: string; label?: string; positive: number; negative: number }[]; first: string; name: (row: { id?: string; label?: string }) => string }> = ({ rows, first, name }) => (
   <table className="sh-table sh-table-tight">
@@ -99,6 +103,21 @@ export const FeedbackTab: React.FC<{ feedback: FeedbackSummary | null | undefine
                 {feedback.by_voice.examples.length === 0 ? <div className="sh-hint">No example was shown on a rated reply yet.</div> : <VoiceTable rows={feedback.by_voice.examples} first="Example" name={row => row.id ?? ''} />}
                 <h3 className="sh-subhead">By people note</h3>
                 {feedback.by_voice.notes.length === 0 ? <div className="sh-hint">No note was shown on a rated reply yet.</div> : <VoiceTable rows={feedback.by_voice.notes} first="Note" name={row => row.id ?? ''} />}
+              </div>
+            </div>
+          )}
+          {feedback.by_voice.stamped > 0 && (
+            <div className="sh-two">
+              <div>
+                <h3 className="sh-subhead">By how much the turn mattered</h3>
+                {!feedback.by_voice.stakes || feedback.by_voice.stakes.length === 0 ? <div className="sh-hint">No rated reply carries this yet.</div> : <VoiceTable rows={feedback.by_voice.stakes} first="Turn" name={row => STAKES_LABELS[row.label ?? ''] ?? row.label ?? ''} />}
+                <div className="sh-hint">Whichever model wrote the reply: a hurting person's turns are counted here even on the Haiku setting, which never routes them.</div>
+              </div>
+              <div>
+                <h3 className="sh-subhead">By use of a case from its own record</h3>
+                {!feedback.by_voice.record || feedback.by_voice.record.length === 0 ? <div className="sh-hint">No rated reply carries this yet.</div> : <VoiceTable rows={feedback.by_voice.record} first="Record" name={row => RECORD_LABELS[row.label ?? ''] ?? row.label ?? ''} />}
+                <h3 className="sh-subhead">By situation fact</h3>
+                {!feedback.by_voice.facts || feedback.by_voice.facts.length === 0 ? <div className="sh-hint">No fact was shown on a rated reply yet.</div> : <VoiceTable rows={feedback.by_voice.facts} first="Fact" name={row => row.id ?? ''} />}
               </div>
             </div>
           )}

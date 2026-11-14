@@ -1591,4 +1591,19 @@ CHANGELOG = [
         "keywords": ["multiple choice", "options", "ask me", "which one", "clarify", "choose", "question", "pick one", "coding"],
         "volunteer": [],
     },
+    {
+        "id": "shape_stories",
+        "requires": [
+            "backend/utils/shape_stories.py::def insert_story",
+            "backend/components/sonic_shapes.py::APPROVED_IDS",
+            "app.py::shape_stories_utils.insert_story",
+        ],
+        "month": "2026-11",
+        "title": "A real thing from my own record",
+        "line": (
+            "When what you tell me has the same shape as something in my own record, I can now add one short note about it, said as a record and followed by a line that connects it to you, never as a memory or a feeling."
+        ),
+        "keywords": ["my record", "something similar", "happened to me", "relate", "same thing happened", "you too", "have you ever", "experience"],
+        "volunteer": [],
+    },
 ]

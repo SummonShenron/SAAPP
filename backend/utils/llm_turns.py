@@ -117,6 +117,8 @@ class Turn:
         self.checkpoints_acted = 0  # ... and, on a change to a folder, where it made the proposal there
         self.leanings: list = []  # the working leanings put in this turn's prompt (ids only: backend/utils/leanings.py)
         self.experience_offered = False  # a real case from its own record was offered to this turn's reply (backend/utils/experiences.py)
+        self.shape_offered = False  # a reviewed shape story from its record was offered to a person who is venting (backend/utils/shape_stories.py)
+        self.shape_entry = None  # ... and which one (the entry), so the reply can be given its approved sentence once it is written
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self.paid = False  # this turn is paid for out of the person's own credit (backend/utils/credits.py): its model calls are counted under a paid: label (kept out of the shared budget) and its cost is charged when it finishes
