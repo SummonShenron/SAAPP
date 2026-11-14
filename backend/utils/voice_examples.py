@@ -17,7 +17,7 @@ import threading
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.components import sonic_voice_examples as registry
-from backend.utils import leanings
+from backend.utils import leanings, voice_review
 from backend.utils.emotion_checks import PROBE_RE, STATE_ASK_RE
 from backend.utils.identity_checks import identity_reply_issue
 
@@ -67,7 +67,9 @@ def select(
     try:
         if not enabled() or risk_active or source_type not in ALLOWED_ROUTES:
             return []
-        approved = [e for e in live(examples) if not (emotional_active and e.get("tone") == "light")]
+        # A person's decisions on the dashboard (backend/utils/voice_review.py) win over the registry's own approved flags: a removed example is never used, an approved draft is.
+        pool = voice_review.apply(registry.EXAMPLES if examples is None else examples, "example", voice_review.overrides(db))
+        approved = [e for e in live(pool) if not (emotional_active and e.get("tone") == "light")]
         text = (request or "").strip()[:MAX_REQUEST_CHARS]
         if not approved or len(text) < MIN_REQUEST_CHARS:
             return []

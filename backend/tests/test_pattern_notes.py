@@ -193,13 +193,15 @@ def test_a_second_pass_writes_nothing_new_and_a_deleted_note_is_not_written_agai
     assert pn.run_pass(db, NOW + timedelta(days=1))["written"] == 0 and pn.run_pass(db, NOW + timedelta(days=1), backfill=True)["written"] == 0 and notes(db) == []
 
 
-def test_at_most_two_notes_a_week_and_the_held_back_day_is_counted_and_can_be_written_later():
-    days = {"2026-11-04": ROUGH["2026-10-28"], "2026-11-06": ROUGH["2026-10-30"], "2026-11-08": ROUGH["2026-11-08"]}
-    db = database(days)
+def test_at_most_the_weekly_cap_of_notes_a_week_and_the_held_back_day_is_counted_and_can_be_written_later():
+    """The cap is Jack's to set (7 on 2026-11-13: he wants as much of the behaviour as possible); the test follows pn.WEEKLY_CAP so it does not pin a number."""
+    cap = pn.WEEKLY_CAP
+    finished = sorted(f"2026-11-{11 - back:02d}" for back in range(cap + 1))                           # the cap plus one finished days ending the day before NOW, all inside the daily pass's window
+    db = database({day: ROUGH["2026-10-28"] for day in finished})
     pn.approve(db, "rough_day", "jack@example.com", NOW)
-    assert pn.run_pass(db, NOW) == {"written": 2, "capped": 1}
-    assert [n["on"] for n in notes(db)] == ["2026-11-04", "2026-11-06"]
-    assert pn.run_pass(db, NOW + timedelta(days=8))["written"] == 1 and [n["on"] for n in notes(db)][-1] == "2026-11-08"          # a week later, within the window, the held-back day is written
+    assert pn.run_pass(db, NOW) == {"written": cap, "capped": 1}
+    assert [n["on"] for n in notes(db)] == finished[:cap]                                                    # oldest first; the newest day is the one held back
+    assert pn.run_pass(db, NOW + timedelta(days=8))["written"] == 1 and [n["on"] for n in notes(db)][-1] == finished[-1]          # a week later, within the window, the held-back day is written
 
 
 def test_the_daily_pass_reads_only_the_last_two_weeks_and_backfill_reads_every_earlier_day_up_to_ten():
@@ -228,10 +230,10 @@ def test_a_database_that_is_missing_changes_nothing():
 
 def test_the_counters_are_registered_and_every_one_is_incremented(counted):
     assert set(sc.PATTERN_KEYS) == {"pattern_note_written", "pattern_note_capped"} and set(sc.PATTERN_KEYS) <= sc.KEYS
-    db = database({"2026-11-04": ROUGH["2026-10-28"], "2026-11-06": ROUGH["2026-10-30"], "2026-11-08": ROUGH["2026-11-08"]})
+    db = database({f"2026-11-{day:02d}": ROUGH["2026-10-28"] for day in range(1, pn.WEEKLY_CAP + 2)})
     pn.approve(db, "rough_day", "jack@example.com", NOW)
     pn.run_pass(db, NOW)
-    assert {"pattern_note_written": 2} in counted and {"pattern_note_capped": 1} in counted
+    assert {"pattern_note_written": pn.WEEKLY_CAP} in counted and {"pattern_note_capped": 1} in counted
 
 
 # ---- the record ----------------------------------------------------------------------------------------------------------------------------------

@@ -16,7 +16,7 @@ import threading
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.components import sonic_situation_facts as registry
-from backend.utils import leanings
+from backend.utils import leanings, voice_review
 from backend.utils.emotion_checks import GENERAL_RE
 from backend.utils.identity_checks import identity_reply_issue
 
@@ -63,7 +63,8 @@ def select(
     try:
         if not enabled() or risk_active or not emotional_active or source_type not in ALLOWED_ROUTES:
             return []
-        approved = live(entries)
+        # A person's decisions on the dashboard (backend/utils/voice_review.py) win over the registry's own approved flags.
+        approved = live(voice_review.apply(registry.FACTS if entries is None else entries, "fact", voice_review.overrides(db)))
         text = (request or "").strip()[:MAX_REQUEST_CHARS]
         if not approved or len(text) < MIN_REQUEST_CHARS:
             return []

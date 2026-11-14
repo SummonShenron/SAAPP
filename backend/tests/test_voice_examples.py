@@ -225,7 +225,7 @@ def test_the_four_question_ending_hurting_examples_are_approved_and_pass_the_liv
         assert example["tone"] == "hurting" and example_id in registry.APPROVED_IDS and example["approved"] and example["reply"].rstrip().endswith("?")
         assert ec.reply_attunement_issue(example["reply"]) is None, example_id          # the examples obey the check the live reply is held to
         assert not ec.GENERAL_RE.search(example["reply"]), example_id              # and teach none of the 'how such things go' talk Jack dislikes
-    assert len([e for e in registry.EXAMPLES if e["tone"] == "hurting" and e["approved"]]) == 23       # 11 + the twelve Sonnet-written ones approved 2026-11-13 (below); the second batch of 36 are drafts
+    assert len([e for e in registry.EXAMPLES if e["tone"] == "hurting" and e["approved"]]) == 59       # 11 + the twelve Sonnet-written ones + the second batch of 36, both approved by Jack 2026-11-13 (below)
 
 
 def test_the_twelve_sonnet_written_hurting_examples_are_approved_hold_the_live_checks_and_do_not_teach_an_interview():
@@ -265,12 +265,12 @@ def test_every_shipped_example_is_grounded_in_its_shown_message_but_one_that_jac
     assert flagged <= {"hurting_friend_silence_choice"}, flagged
 
 
-def test_the_second_batch_of_thirty_six_hurting_drafts_is_sound_unapproved_and_not_an_interview():
+def test_the_second_batch_of_thirty_six_hurting_examples_is_sound_approved_and_not_an_interview():
     from backend.utils import emotion_checks as ec
 
-    batch = [e for e in registry.EXAMPLES if e["id"].startswith("sub2_")]
+    batch = [e for e in registry.EXAMPLES if e["id"].startswith("more_")]
     assert len(batch) == 36 and all(e["tone"] == "hurting" for e in batch)
-    assert not any(e["approved"] or e["id"] in registry.APPROVED_IDS for e in batch)                       # drafts: Jack approves by adding ids
+    assert all(e["approved"] and e["id"] in registry.APPROVED_IDS for e in batch)                           # approved by Jack 2026-11-13 (docs/voice-examples-sonnet-drafts-2.md)
     assert registry.MAX_ASK_CHARS == 220
     assert ve.check_registry(batch) == [] and ve.check_grounding(batch) == [] and ve.check_set() == []
     for example in batch:

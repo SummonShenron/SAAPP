@@ -1330,6 +1330,16 @@ export interface ExperiencesView {
 export function getExperiences(): Promise<ExperiencesView> {
   return adminRequest<ExperiencesView>('/api/admin/experiences', 'GET');
 }
+/** One voice example or situation fact for review (backend/utils/voice_review.py): what it says, whether it may be used now, the registry's own setting, whether a person overrode it here, and how often it was used in the last `days` days. */
+export interface VoiceReviewItem { kind: 'example' | 'fact'; id: string; situation: string; asks: string[]; approved: boolean; default: boolean; decision: 'approved' | 'removed' | null; used: number; tone: string; text: string[]; }
+export interface VoiceReviewView { items: VoiceReviewItem[]; days: number; }
+export type VoiceReviewAction = 'approve' | 'remove' | 'reset';
+export function getVoiceReview(): Promise<VoiceReviewView> {
+  return adminRequest<VoiceReviewView>('/api/admin/voice-review', 'GET');
+}
+export function decideVoiceReview(kind: VoiceReviewItem['kind'], id: string, action: VoiceReviewAction): Promise<VoiceReviewView> {
+  return adminRequest<VoiceReviewView>(`/api/admin/voice-review/${kind}/${encodeURIComponent(id)}/${action}`, 'POST');
+}
 /** A template for notes that code writes from a finished day's counters (backend/utils/pattern_notes.py): approved once, never note by note. */
 export interface PatternTemplate { id: string; name: string; rule: string; key: string; careful: string; example: string; approved: boolean; approved_at?: string | null; notes: number; latest: string | null; }
 export interface PatternTemplatesView { templates: PatternTemplate[]; limits: { per_week: number; recent_days: number; backfill: number }; }
@@ -2847,6 +2857,8 @@ export const api = {
   approvePatternTemplate,
   revokePatternTemplate,
   backfillPatternNotes,
+  getVoiceReview,
+  decideVoiceReview,
   writeExperienceReflections,
   decideExperienceReflection,
   approveExperience,

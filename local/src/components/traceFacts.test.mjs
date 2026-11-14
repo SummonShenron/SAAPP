@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { cleanExcerpt, searchSummary, splitAroundTerm, cleanFacts, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toggleExpanded, toolStepLabel } from './traceFacts.ts';
+import { GENERIC_REVISION_WORDS, REVISION_WORDS, revisionWords, cleanExcerpt, searchSummary, splitAroundTerm, cleanFacts, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toggleExpanded, toolStepLabel } from './traceFacts.ts';
 
 test('tool steps get plain-words titles, browser tools share one, unknown tools get a generic one, no tool means no label', () => {
   assert.equal(toolStepLabel('web_search'), 'Searched the web');
@@ -154,8 +154,8 @@ test('the summary says how many matches in how many files, and what was left out
 test('the steps show a search as plain text and mark the term with mark elements, never as HTML, and the panel and the steps under a reply draw them with the same component', () => {
   const panel = readFileSync(new URL('./TraceSteps.tsx', import.meta.url), 'utf8');
   assert.match(readFileSync(new URL('./TracePanel.tsx', import.meta.url), 'utf8'), /<TraceSteps [^>]*steps=\{steps\} running=\{running\} \/>/);
-  assert.match(readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8'), /<TraceSteps steps=\{steps\} running=\{false\}/);       // under a reply; a running turn draws the same component with the ring as its newest node
-  assert.match(readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8'), /<TraceSteps [\s\S]*?running spinner/);
+  assert.match(readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8'), /<TraceSteps steps=\{steps\} running=\{false\}/);       // under a reply; a running turn draws the same component with a fork under its newest node
+  assert.match(readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8'), /<TraceSteps [\s\S]*?running live/);
   assert.match(panel, /excerpt\.kind === 'search' && <SearchResults excerpt=\{excerpt\} \/>/);
   assert.match(panel, /<mark key=\{index\} className="trace-search-hit">\{part\.text\}<\/mark>/);
   assert.doesNotMatch(panel, /dangerouslySetInnerHTML/);
@@ -213,10 +213,13 @@ test('the steps draw list and count excerpts', () => {
   assert.match(source, /remembered \{excerpt\.count === 1 \? 'item' : 'items'\} found/);
 });
 
-test('the first step of a running turn is the full-size ring, and nodes begin at the second', () => {
+test('before the first step of a running turn there is the vertical start graph beside "Thinking...", not a ring, and the steps begin at the first', () => {
   const source = readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8');
-  assert.match(source, /steps\.length === 0 \|\| \(steps\.length === 1 && steps\[0\]\.status !== 'complete'\)/);
-  assert.match(source, /sonic-ring-loader/);
+  assert.match(source, /const waiting = steps\.length === 0;/);
+  assert.match(source, /\(waiting \|\| landing\) && <StartGraph /);
+  assert.match(source, /const WAITING_TEXT = 'Thinking\.\.\.';/);
+  assert.doesNotMatch(source, /sonic-ring-loader|sonic-loader-container/);
+  assert.doesNotMatch(readFileSync(new URL('./TraceSteps.tsx', import.meta.url), 'utf8'), /trace-node-ring|trace-node-spinning/);
 });
 
 // ---- the last tool step and how a turn ended (backend/utils/loop_progress.py) --------------------------------------------------------------
@@ -251,4 +254,35 @@ test('the page carries the markers from the stream to the step to the header, wi
   assert.match(steps, /\{finalLabel && <div className="trace-final-header" data-status=\{step\.lastStep\}>\{finalLabel\}<\/div>\}/);
   assert.match(steps, /step\.turnEnd \? endingWords\(step\.detail\) : stepWords\(step\)/);
   assert.match(steps, /trace-node-end trace-end-\$\{step\.turnEnd\}/);
+});
+
+// ---- a reply-fit rewrite step says what it did in plain words, never the server's code word (2026-11-13: the trace showed "repeated_presence" and, before it, every other tag) ----
+test('a reply-fit rewrite step is told in plain words for every tag, and an unknown tag gets one generic line and never the code word', () => {
+  assert.equal(revisionWords('repeated_presence'), 'The draft said the same reassurance as a recent reply, so it was written again');
+  assert.equal(revisionWords('venting_advice'), 'The draft gave advice when you wanted to be heard, so it was written again');
+  for (const unknown of ['something_new', '', undefined, null, 7, '__proto__', 'constructor', 'toString']) assert.equal(revisionWords(unknown), GENERIC_REVISION_WORDS, String(unknown));
+  for (const [tag, words] of Object.entries(REVISION_WORDS)) {
+    assert.ok(!words.includes('_') && words !== tag, `${tag} must not be printed as a code word`);
+    assert.match(words, /^The draft .*, so it was written again$/, tag);          // it describes the draft, never what the person said
+  }
+});
+
+test('every tag the server can send for a rewrite has words: the emotional check tags, the other rewrite kinds and the celebration one', () => {
+  const checks = readFileSync(new URL('../../../backend/utils/emotion_checks.py', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const block = checks.slice(checks.indexOf('_REVISION_REASONS = {'));
+  const reasons = block.slice(0, block.indexOf('\n}\n'));
+  const emotional = [...reasons.matchAll(/^    "([a-z_]+)": \(/gm)].map(m => m[1]);
+  assert.ok(emotional.length >= 10 && emotional.includes('repeated_presence') && emotional.includes('venting_advice'), `read only ${emotional.length} tags from emotion_checks.py`);
+  const app = readFileSync(new URL('../../../app.py', import.meta.url), 'utf8');
+  const kinds = [...app.matchAll(/revision_tag = "([a-z_]+)"/g)].map(m => m[1]);
+  assert.deepEqual([...new Set(kinds)].sort(), ['closing_engagement', 'encouragement', 'identity', 'safety']);
+  for (const tag of [...emotional, ...kinds]) assert.ok(Object.prototype.hasOwnProperty.call(REVISION_WORDS, tag), `no words for the rewrite tag ${tag}`);
+});
+
+test('the chat page gives the reply-fit step a label and says its detail in plain words, in the step and in the loader line', () => {
+  const chat = readFileSync(new URL('../pages/Chat.tsx', import.meta.url), 'utf8');
+  assert.match(chat, /case 'reply_fit_check': return 'Checking the reply fits this moment\.\.\.';/);
+  assert.match(chat, /const stepDetail = item\.node === 'reply_fit_check' \? revisionWords\(item\.detail\) : item\.detail;/);
+  assert.match(chat, /const displayTitle = stepDetail \|\| friendlyLabel;/);
+  assert.match(chat, /detail: stepDetail \|\| `Node: \$\{item\.node\}`,/);
 });

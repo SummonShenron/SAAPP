@@ -21,6 +21,7 @@ import { isTab, labelOf, type Badges, type TabId } from './sonicHealthTabs';
 import { ShelfTab } from './SonicHealthShelf';
 import { LearnedTab } from './SonicHealthLearned';
 import { ExperiencesTab } from './SonicHealthExperiences';
+import { VoiceTab } from './SonicHealthVoice';
 import { SelfModelTab } from './SonicHealthSelfModel';
 import { FeedbackTab, KnowledgeTab } from './SonicHealthFeedback';
 import { RoutinesTab } from './SonicHealthRoutines';
@@ -428,6 +429,7 @@ export const SonicHealthPage: React.FC = () => {
         {tab === 'shelf' && <ShelfTab />}
         {tab === 'learned' && <LearnedTab />}
         {tab === 'experiences' && <ExperiencesTab />}
+        {tab === 'voice' && <VoiceTab />}
         {tab === 'selfmodel' && <SelfModelTab />}
         {tab === 'suggestions' && (
           <SuggestionsCard

@@ -20,8 +20,8 @@ test('a group id never collides with a section id of another group (their elemen
   }
 });
 
-test('the menu shrinks sixteen flat tabs to six items, with Home and Safety opening directly', () => {
-  assert.equal(TABS.length, 16);
+test('the menu shrinks seventeen flat tabs to six items, with Home and Safety opening directly', () => {
+  assert.equal(TABS.length, 17);
   assert.equal(GROUPS.length, 6);
   assert.deepEqual(GROUPS.filter(g => g.tabs.length === 1).map(g => g.id), ['home', 'safety']);
   assert.equal(GROUPS[0].id, 'home');
@@ -34,6 +34,8 @@ test('a section finds its group and its label, and only real sections are accept
   assert.equal(groupOf('safety').id, 'safety');
   assert.equal(labelOf('knowledge'), 'Knowledge graph');
   assert.equal(labelOf('experiences'), 'Its record');
+  assert.equal(labelOf('voice'), 'Its voice');
+  assert.equal(groupOf('voice').id, 'sonic');
   assert.equal(isTab('home'), true);
   for (const bad of ['', 'spend', 'Home', null, undefined, 'usage ']) assert.equal(isTab(bad), false);
 });
