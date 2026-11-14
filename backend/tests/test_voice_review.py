@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.components import sonic_shapes as shape_registry
 from backend.components import sonic_situation_facts as fact_registry
 from backend.components import sonic_voice_examples as example_registry
 from backend.tests.fake_runner_db import FakeDB
@@ -98,7 +99,7 @@ def test_the_view_lists_every_item_with_what_it_says_whether_it_may_be_used_and_
     })
     vr.set_state(db, "fact", DRAFT_FACT, "approved", "jack@example.com", NOW)
     shown = vr.view(db, NOW)
-    assert shown["days"] == 30 and len(shown["items"]) == len(example_registry.EXAMPLES) + len(fact_registry.FACTS)
+    assert shown["days"] == 30 and len(shown["items"]) == len(example_registry.EXAMPLES) + len(fact_registry.FACTS) + len(shape_registry.SHAPES)
     example = next(i for i in shown["items"] if i["kind"] == "example" and i["id"] == EXAMPLE_ID)
     assert example["approved"] is True and example["default"] is True and example["decision"] is None and example["used"] == 5
     assert example["text"] and example["tone"] == "light" and len(example["asks"]) == 1                      # the reply, the tone and the ONE message shown beside it

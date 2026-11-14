@@ -11,7 +11,7 @@ from backend.utils import reply_stamp as rs
 from backend.utils import reply_tier
 
 ROOT = Path(__file__).resolve().parents[2]
-STAMP = {"label": "haiku", "tier": "haiku", "reason": "auto_plain", "choice": "auto", "examples": ["big_win_energy"], "notes": ["went_quiet_after_something_vulnerable"]}
+STAMP = {"label": "haiku", "tier": "haiku", "reason": "auto_plain", "choice": "auto", "examples": ["big_win_energy"], "notes": ["went_quiet_after_something_vulnerable"], "stakes": "none", "record": "none", "facts": []}
 
 
 def ai(text, stamp=None):
@@ -20,7 +20,7 @@ def ai(text, stamp=None):
 
 def test_the_stamp_names_the_voice_the_tier_the_reason_the_setting_and_what_it_was_shown_and_nothing_else():
     built = rs.build(reply_tier.HAIKU, "auto_plain", "auto", ["big_win_energy"], ["went_quiet_after_something_vulnerable"])
-    assert built == STAMP and set(built) == {"label", "tier", "reason", "choice", "examples", "notes"}      # labels and ids only: no field could hold text
+    assert built == STAMP and set(built) == {"label", "tier", "reason", "choice", "examples", "notes", "stakes", "record", "facts"}      # labels and ids only: no field could hold text
     assert rs.build(reply_tier.STANDARD, "standard_setting", "gemini")["label"] == "flash"
     assert rs.build(reply_tier.STANDARD, "standard_setting", "gpt")["label"] == "gpt"
     assert rs.build(reply_tier.LITE, "lite_setting", "lite")["label"] == "lite"
@@ -110,7 +110,26 @@ def test_the_summary_counts_thumbs_by_voice_example_and_note_and_counts_the_unst
     assert summary["labels"] == [{"label": "haiku", "positive": 2, "negative": 1}, {"label": "flash", "positive": 1, "negative": 1}]
     assert summary["examples"] == [{"id": "big_win_energy", "positive": 2, "negative": 1}]
     assert summary["notes"] == [{"id": "went_quiet_after_something_vulnerable", "positive": 2, "negative": 1}]
-    assert rs.summarize([]) == {"stamped": 0, "unstamped": 0, "labels": [], "examples": [], "notes": [], "reasons": []}
+    assert rs.summarize([]) == {"stamped": 0, "unstamped": 0, "labels": [], "examples": [], "notes": [], "reasons": [], "stakes": [], "record": [], "facts": []}
+
+
+def test_the_stamp_also_says_how_much_the_turn_mattered_whether_a_case_from_the_record_was_used_and_which_facts_it_was_shown():
+    built = rs.build(reply_tier.HAIKU, "haiku_setting", "haiku", [], [], stakes="emotional", record="cited", fact_ids=["a_fact_one", "a_fact_two", "a_fact_three"])
+    assert built["stakes"] == "emotional" and built["record"] == "cited" and built["facts"] == ["a_fact_one", "a_fact_two"]          # ids only, at most two
+    junk = rs.build(reply_tier.HAIKU, "haiku_setting", "haiku", stakes="whatever I typed", record="maybe", fact_ids=["Not An Id", 5, None])
+    assert (junk["stakes"], junk["record"], junk["facts"]) == ("none", "none", [])                                  # nothing outside the fixed lists is stored
+    assert rs.clean({**STAMP, "stakes": "frustration", "record": "offered", "facts": ["a_fact_one"]}) | {} == {**STAMP, "stakes": "frustration", "record": "offered", "facts": ["a_fact_one"]}
+    old = rs.clean({k: v for k, v in STAMP.items() if k not in ("stakes", "record", "facts")})                   # a stamp saved before these fields existed still reads
+    assert (old["stakes"], old["record"], old["facts"]) == ("none", "none", [])
+
+
+def test_the_summary_counts_thumbs_by_how_much_the_turn_mattered_and_by_whether_the_record_was_used():
+    def row(kind, stakes="none", record="none", facts=()):
+        return {"kind": kind, "voice": {**STAMP, "stakes": stakes, "record": record, "facts": list(facts)}}
+    summary = rs.summarize([row("positive", "emotional", "cited"), row("positive", "emotional", "offered"), row("negative", "emotional", "none"), row("positive"), row("negative", "safety", facts=["a_fact_one"])])
+    assert {r["label"]: (r["positive"], r["negative"]) for r in summary["stakes"]} == {"emotional": (2, 1), "none": (1, 0), "safety": (0, 1)}
+    assert {r["label"]: (r["positive"], r["negative"]) for r in summary["record"]} == {"cited": (1, 0), "offered": (1, 0), "none": (1, 2)}
+    assert summary["facts"] == [{"id": "a_fact_one", "positive": 0, "negative": 1}]
 
 
 def test_the_feedback_page_summary_counts_a_persons_thumbs_only_and_asks_for_the_stamp(monkeypatch):

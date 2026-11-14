@@ -83,7 +83,10 @@ test('the tab is mounted in Sonic Health under the Sonic menu, and each card car
   assert.match(page, /\{tab === 'voice' && <VoiceTab \/>\}/);
   assert.ok(TABS.some(t => t.id === 'voice' && t.label === 'Its voice'));
   assert.ok(GROUPS.find(g => g.id === 'sonic').tabs.includes('voice'));
-  assert.match(tab, /const HELP_VOICE = \{ example: 'voice\.examples', fact: 'voice\.facts' \}/);
+  assert.match(tab, /const HELP_VOICE = \{ example: 'voice\.examples', fact: 'voice\.facts', shape: 'voice\.shapes' \}/);
+  assert.ok(HELP_TIPS['voice.shapes'].what.includes('Every story is a draft until you approve it here'));
+  assert.match(tab, /card\('shape', 'Shape stories',/);
+  assert.match(readFileSync(new URL('./voiceReviewLogic.ts', import.meta.url), 'utf8'), /kind === 'shape' \? 'shape stories'/);
   assert.ok(HELP_TIPS['voice.examples'].what.includes('Approve or remove one here'));
   assert.ok(HELP_TIPS['voice.facts'].what.includes('Every fact is a draft until you approve it here'));
 });

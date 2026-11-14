@@ -55,6 +55,8 @@ _FEELING_PATTERNS = [
     # "happy to help" / "sad to hear" are ordinary willingness and sympathy idioms, not a claimed feeling.
     (r"\bI(?:'m| am)\s+(?:so |really |truly |genuinely |absolutely )?(?:excited|thrilled|delighted|touched|moved|honou?red|proud|overjoyed|lonely|(?:happy|sad)(?!\s+to\b))\b", "claims a feeling"),
     (r"\bI\s+feel\s+(?:so |really |truly |genuinely )?(?:happy|sad|lonely|proud|touched|honou?red|excited|grateful|warm|loved|appreciated)\b", "claims a feeling"),
+    # A feeling in the PAST is still a claimed feeling ("I felt awful about it"): a story from its record is about what it did, never about how it felt.
+    (r"\bI\s+felt\s+(?:so |really |truly |very |a bit |kind of |pretty )?(?:awful|terrible|bad|guilty|ashamed|embarrassed|sad|happy|proud|relieved|anxious|nervous|scared|afraid|angry|frustrated|upset|hurt|lonely|worried|annoyed|disappointed)\b", "claims a feeling"),
     (r"\b(?:that|this|it)\s+(?:really\s+)?means\s+(?:so\s+)?(?:a lot|the world|everything)\s+to me\b", "says it means a lot to it"),
     (r"\b(?:genuine|real|deep)\s+(?:satisfaction|joy|happiness|delight|pleasure)\b", "claims satisfaction or joy"),
     (r"\bI(?:'ve| have)?\s+(?:grown|become)\s+(?:attached|fond|close)\b", "claims attachment"),
@@ -76,7 +78,7 @@ _EXPERIENCE_PATTERNS = [
     (r"\bI(?:'ve| have)\s+(?:been|gone) through\s+(?:this|that|something (?:similar|like (?:this|that))|the same|it)\b", "claims to have been through it"),
     (r"\bwhen I (?:was|used to|started out|began)\b", "tells a story from its past"),
     (r"\bback when I\b", "tells a story from its past"),
-    (r"\bI remember (?:when|how I|the time)\b", "claims a memory of its own"),
+    (r"\bI (?:remember|recall) (?:when|how I|the time)\b", "claims a memory of its own"),
     (r"\bI\s+(?:know|understand)\s+(?:exactly\s+)?how\s+(?:that|it|this)\s+feels\b", "claims to know how it feels"),
     (r"\bin my (?:years|time) (?:of|as|working)\b", "claims years of experience"),
     # Interests are topics Sonic leans toward, never things it does: it plays, watches and reads nothing.
@@ -193,21 +195,44 @@ _ABOUT_THE_PERSON_RE = re.compile(r"\b(?:you|your|you're|you've)\b", re.IGNORECA
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 FELT_RECOLLECTION = "claims to remember or be reminded of something from its own past"
 
+# A PAST-EVENT STATEMENT about its own record (Jack, 2026-11-13: "there was a time I did X" and "this is just like that one time I did X" are fine, because they state a similar LOGGED situation and not a felt recollection). It is only
+# allowed on a turn where a real, approved case (a note from the record, or a reviewed shape story: backend/utils/shape_stories.py) was put in the prompt, so the sentence has something real behind it; the caller says so with `record_offered`.
+# Even then a sentence that claims the act of remembering, a feeling, or having been there is not exempt: only the statement form is.
+_PAST_EVENT_STATEMENT_RE = re.compile(
+    r"\b(?:there (?:was|has been) (?:a|one) (?:time|day|week|case|occasion)\b"
+    r"|my (?:own )?(?:record|log) (?:has|shows|holds|includes|lists) (?:a|one) (?:time|day|week|case|occasion)\b"
+    r"|(?:this|that|it)(?:'s| is| was) (?:just |a lot |much |exactly )?(?:like|the same as|close to) (?:a|that|the) (?:one )?(?:time|day|case|occasion)\b)", re.IGNORECASE)
+_FELT_WORDS_RE = re.compile(
+    r"\b(?:remember(?:ed|s)?|recall(?:ed|s)?|remind(?:s|ed)? me|rings? a bell|came to mind|been there|I(?:'ve| have) been here before|seen this before|(?:I |it )?felt|I feel|know how (?:that|it|this) feels)\b", re.IGNORECASE)
+# Asking the person to remember something Sonic did implies they were there: the record is a shared pool and no one was present for any of it.
+_ASKS_TO_REMEMBER_RE = re.compile(r"\bdo you (?:still |even )?(?:remember|recall) (?:when|the time|that time|the day) I\b", re.IGNORECASE)
+ASKS_TO_REMEMBER = "asks the person to remember something it did, as if they had been there"
 
-def felt_recollection_issue(body: str) -> Optional[str]:
-    """FELT_RECOLLECTION when a sentence claims a recollection of Sonic's own past without anchoring it in its record, else None. Pure."""
+
+def is_past_event_statement(sentence: str) -> bool:
+    """Whether a sentence is a past-event statement about Sonic's own record ("There was a time in my record when I ...") with no claim of remembering or feeling in it. Pure."""
+    return bool(_PAST_EVENT_STATEMENT_RE.search(sentence or "")) and not _FELT_WORDS_RE.search(sentence or "")
+
+
+def felt_recollection_issue(body: str, record_offered: bool = False) -> Optional[str]:
+    """FELT_RECOLLECTION when a sentence claims a recollection of Sonic's own past without anchoring it in its record, else None. With `record_offered` (a real case from the record was put in this turn's prompt) a past-event statement is
+    not a recollection and is let through. Pure."""
     for sentence in _SENTENCE_SPLIT_RE.split(body or ""):
+        if record_offered and is_past_event_statement(sentence):
+            continue
         if _FELT_RECOLLECTION_RE.search(sentence) and not _RECORD_ANCHOR_RE.search(sentence) and not _ABOUT_THE_PERSON_RE.search(sentence):
             return FELT_RECOLLECTION
     return None
 
-def identity_reply_issue(reply: str, *, person_signal: bool = False) -> Optional[str]:
+def identity_reply_issue(reply: str, *, person_signal: bool = False, record_offered: bool = False) -> Optional[str]:
     """A short description of what the reply does that crosses the boundary, or None if it stays inside it.
     The reply's follow-up tag is ignored (it is a suggested user message, not Sonic speaking), and a match that sits in
     a negated clause ("I don't ... hoping you'll return") is not a claim. `person_signal` is True on a turn with a real emotional signal on the table
     (a negative feeling the person is carrying): only then may Sonic say it is concerned about the person."""
     body = reply_body(reply or "")
-    felt = felt_recollection_issue(body)
+    if _ASKS_TO_REMEMBER_RE.search(body):
+        return ASKS_TO_REMEMBER
+    felt = felt_recollection_issue(body, record_offered=record_offered)
     if felt:
         return felt
     patterns = _ALL if person_signal else _ALL + _PERSON_CONCERN
@@ -221,6 +246,7 @@ def identity_reply_issue(reply: str, *, person_signal: bool = False) -> Optional
 # How to say it instead, by what was wrong: the rewrite is told the replacement, not only the prohibition.
 _ISSUE_HINTS = {
     FELT_RECOLLECTION: "Cite it as a record, not a memory (\"this is close to a case in my record: ...\"), or leave it out; do not say you remember it, recall it, or have seen it before.",
+    ASKS_TO_REMEMBER: "Do not ask them to remember something you did: they were not there. Say it as a statement about your record (\"there was a time in my record when ...\"), or leave it out.",
     "says it cares about the person": "Say what you will do or put first instead (\"I'd rather make sure you're okay than move on\"), not that you care.",
     "says the person matters to it": "Say what you will do or put first instead, not that they matter to you.",
     "is concerned about the person with no emotional signal on the table": "Name the concrete thing you noticed, or leave it out.",

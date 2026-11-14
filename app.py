@@ -152,6 +152,7 @@ from backend.utils import read_log as read_log_utils
 from backend.utils import reply_stamp
 from backend.utils import character as character_utils
 from backend.utils import experiences as experiences_utils
+from backend.utils import shape_stories as shape_stories_utils
 from backend.utils import experience_capture
 from backend.utils import pattern_notes
 from backend.utils import experience_reflections
@@ -1713,6 +1714,21 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         if self_model_block:
                             prompt = prompt + self_model_block
                             tally(turn_counts, "self_model_used")
+            # A message about something of a shape Sonic has a real, approved story for (backend/utils/shape_stories.py): the story is ONE sentence about its own record, placed in the reply once it is written. A separate path from the record
+            # cases above (which need an open mood): this one works at ANY mood level (Jack, 2026-11-14), never under a safety plan, never when another proactive item holds the turn's slot, never twice in ten messages.
+            if question and source_type == "conversational" and risk_level == RISK_NONE and not slot["proactive_taken"]:
+                vent_tones = shape_stories_utils.tones_for(final_state.get("emotional_state"), datetime.now(timezone.utc))
+                if vent_tones and shape_stories_utils.allowed(chat_sessions[history_key], risk_active=False, closing=is_closing_message(question), proactive_taken=slot["proactive_taken"]):
+                    shape_entry = await asyncio.to_thread(
+                        shape_stories_utils.select, final_state.get("original_question", question), get_db(), embed_text,
+                        tones=vent_tones, source_type=source_type, risk_active=False, vector=question_embedding,
+                    )
+                    if shape_entry:
+                        slot["proactive_taken"] = True
+                        llm_turn.shape_offered = True
+                        llm_turn.shape_entry = shape_entry
+                        prompt = prompt + shape_stories_utils.build_block(shape_entry)          # "" in the default (insert) mode: nothing is asked of the model
+                        shape_stories_utils.tally_turn(turn_counts, shape_entry, tally)
             # "How are things going on your end / how was your day / any downtime?": answered from what the server really did (backend/utils/self_report.py),
             # for everyone, guests included. The routines answer above already covers "what have you been up to", so it is not stacked with this one.
             self_report_kind, self_report_snap = None, None
@@ -1736,6 +1752,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             turn_llm = response_llm if risk_level == RISK_NONE else get_stream_llm(username)
             # Lite and Auto (backend/utils/reply_tier.py): a cheaper model writes the turns it is safe to hand it, never inside a safety context. The decision reads the finished prompt, and only its reason is counted.
             tier, tier_reason = reply_tier.pick(reply_choice, lite_ready=lite_reply_available(), haiku_ready=haiku_reply_available(), risk_active=risk_level != RISK_NONE, prompt=prompt, question=question)
+            # How much the turn matters, whatever the setting (Haiku and Lite are never routed, so their count above cannot say): counted, and stamped on the reply below. Backend/utils/reply_tier.py STAKES.
+            reply_stakes = reply_tier.stakes_of(prompt, risk_active=risk_level != RISK_NONE, question=question)
+            tally(turn_counts, "reply_stakes", reply_stakes)
             if tier in (reply_tier.LITE, reply_tier.HAIKU):
                 lite_voice = get_haiku_stream_llm(username) if tier == reply_tier.HAIKU else get_lite_stream_llm(username)
                 if lite_voice is None:
@@ -1813,7 +1832,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # whether the person stays or comes back. Not applied while a safety context is in force, which has
                 # its own rules for what the reply must do.
                 identity_issue = None if safety_plan.active else identity_reply_issue(
-                    checked_reply, person_signal=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) != "open")  # concern for the person only with a real emotional signal
+                    checked_reply, person_signal=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) != "open",  # concern for the person only with a real emotional signal
+                    record_offered=bool(llm_turn.experience_offered or llm_turn.shape_offered))      # a past-event statement about its record is only let through when a real case was put in this turn's prompt
                 if identity_issue is None and not safety_plan.active:
                     # An invented read, or a verdict on a piece on the reading shelf: also a matter of what Sonic is (backend/utils/reading_shelf.py).
                     identity_issue = shelf_utils.shelf_reply_issue(
@@ -1948,6 +1968,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if claim_check.claims_edit(full_response) and not claim_check.edit_made(llm_turn.tools):
                     full_response = f"{full_response}\n\n{claim_check.NO_EDIT_NOTE}"                    # it says it changed something and nothing was proposed this turn: said plainly, in code
                     tally(turn_counts, "claim_edit_unbacked")
+            if llm_turn.shape_offered and shape_stories_utils.mode() == "insert" and not safety_plan.active:
+                # The approved shape sentence is placed in the reply by code, word for word, after its first paragraph (backend/utils/shape_stories.py insert_story): asking the model to say it got it said in 1 reply of 20 (blind test 2026-11-14).
+                full_response = shape_stories_utils.insert_story(full_response, llm_turn.shape_entry)
             context_view = context_window.view(llm_turn.peak_input, llm_turn.peak_model)      # how full the biggest request of this turn was (counts only): the session column's context ring
             if context_view:
                 yield f"data: {json.dumps({'event': 'context', **context_view})}\n\n"
@@ -1956,6 +1979,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             try:
                 ai_message.additional_kwargs[reply_stamp.KEY] = reply_stamp.build(
                     written_tier, tier_reason, reply_choice, [e["id"] for e in voice_example_entries], [n["id"] for n in people_note_entries],
+                    stakes=reply_stakes, record=("cited" if (llm_turn.experience_offered or llm_turn.shape_offered) and experiences_utils.cited(full_response) else "offered" if (llm_turn.experience_offered or llm_turn.shape_offered) else "none"),
+                    fact_ids=[f["id"] for f in situation_fact_entries],
                 )   # which voice wrote it and what it was shown (ids and labels only), so a thumb can be counted by voice: backend/utils/reply_stamp.py
             except Exception:
                 logger.warning("[reply_stamp] could not stamp the reply.", exc_info=True)
@@ -2019,6 +2044,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if llm_turn.experience_offered and experiences_utils.cited(str(ai_message.content)):
                 ai_message.additional_kwargs[experiences_utils.EXPERIENCE_MARK] = True       # rate-limits the next citation (backend/utils/experiences.py)
                 tally(turn_counts, "experience_cited")
+            if llm_turn.shape_offered and shape_stories_utils.cited(str(ai_message.content)):
+                ai_message.additional_kwargs[experiences_utils.EXPERIENCE_MARK] = True       # the same spacing: a shape story and a record case never follow each other within ten messages
+                tally(turn_counts, "shape_stories_cited")
             if ai_message.additional_kwargs.get(curiosity_utils.CURIOSITY_MARK):
                 tally(turn_counts, "offer_made")  # whatever kind of offer it was, once: the volume the welcome goal's guardrail reads (backend/utils/goals.py)
             # A turn where Sonic brought nothing up of its own is counted with the first gate that held it back (backend/utils/proactive_gates.py), so the numbers say what is in the way.

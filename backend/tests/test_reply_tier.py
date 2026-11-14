@@ -118,7 +118,26 @@ def test_the_reasons_are_the_counter_keys_and_the_turn_counts_the_one_that_appli
     self_counters.tally(counts, "reply_tier", "something else")                          # an unknown word is dropped, never recorded
     assert {k: v for k, v in counts.items() if k.startswith("reply_tier")} == {"reply_tier_auto_plain": 1}
     start = APP.index("tier, tier_reason = reply_tier.pick(")
-    assert 'tally(turn_counts, "reply_tier", tier_reason)' in APP[start: start + 900]
+    assert 'tally(turn_counts, "reply_tier", tier_reason)' in APP[start: start + 1500]
+
+
+def test_how_much_a_turn_matters_is_read_whatever_the_setting_and_counted_and_stamped():
+    assert rt.STAKES == (rt.R_SAFETY, rt.R_EMOTIONAL, rt.R_CHECKIN, rt.R_COMPANION, rt.R_IDENTITY, rt.R_FRUSTRATION)
+    assert self_counters._GROUPS["reply_stakes"] == rt.STAKES + (rt.NO_STAKES,)
+    for name in rt.STAKES + (rt.NO_STAKES,):
+        assert f"reply_stakes_{name}" in self_counters.KEYS
+    heavy = "EMOTIONAL CONTEXT\nthe person is low\nCURRENT USER INPUT: ok\nASSISTANT RESPONSE:"
+    plain = "CURRENT USER INPUT: how do I rename a branch\nASSISTANT RESPONSE:"
+    assert rt.stakes_of(heavy) == rt.R_EMOTIONAL and rt.stakes_of(plain) == rt.NO_STAKES
+    assert rt.stakes_of(plain, risk_active=True) == rt.R_SAFETY
+    assert rt.stakes_of("CURRENT USER INPUT: do you actually care about me\nASSISTANT RESPONSE:") == rt.R_IDENTITY
+    # the Haiku setting never routes, so its own reason says nothing about the turn: the stakes still do
+    assert rt.pick("haiku", lite_ready=False, haiku_ready=True, risk_active=False, prompt=heavy) == (rt.HAIKU, rt.R_HAIKU_SETTING)
+    # the app reads it from the finished prompt, counts it, and stamps it with the record and the facts
+    start = APP.index("reply_stakes = reply_tier.stakes_of(")
+    assert 'tally(turn_counts, "reply_stakes", reply_stakes)' in APP[start: start + 400]
+    stamp_at = APP.index("reply_stamp.build(")
+    assert "stakes=reply_stakes" in APP[stamp_at: stamp_at + 900] and "fact_ids=[f[\"id\"] for f in situation_fact_entries]" in APP[stamp_at: stamp_at + 900]
 
 
 # ---- the setting ------------------------------------------------------------------------------------------------------------------------------------------------------------------

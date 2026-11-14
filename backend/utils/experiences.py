@@ -25,7 +25,7 @@ import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from backend.components.sonic_leanings import LEANINGS
-from backend.utils import leanings
+from backend.utils import identity_checks, leanings
 
 logger = logging.getLogger("SASS Logger")
 
@@ -202,8 +202,12 @@ def build_block(item: Dict[str, Any], reflection: str = "") -> str:
 
 
 def cited(reply: str) -> bool:
-    """Whether the reply cites the record ("in my record", "my record shows"). Pure."""
-    return bool(CITES_RE.search(reply or ""))
+    """Whether the reply cites the record: "in my record", "my record shows", or (Jack, 2026-11-13) a past-event statement about its own record ("there was a time when I ...", "this is just like that one time I ...",
+    identity_checks.is_past_event_statement). Only ever read on a turn where a case was offered, so the statement form has a real case behind it. Pure."""
+    text = reply or ""
+    if CITES_RE.search(text):
+        return True
+    return any(identity_checks.is_past_event_statement(sentence) for sentence in re.split(r"(?<=[.!?])\s+|\n+", text))
 
 
 def admin_view(db: Any) -> Dict[str, Any]:

@@ -379,6 +379,8 @@ _FIRST_PERSON_RE = re.compile(r"\b(?:I|I'm|I've|I'll|I'd|me|my|mine|we|our|us)\b
 _NAME_RE = re.compile(r"\b[A-Z][a-zA-Z0-9]+\b")
 _NUMBER_RE = re.compile(r"\d[\d,.]*")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+# Capitalised ordinary words (sentence starters and common English) that are not names, so the name check skips them.
+_COMMON_CAPITALISED = frozenset({"throughout", "defeated", "however", "although", "during", "after", "before", "when", "while", "today", "also", "today", "this", "these", "those", "there", "here", "they", "their", "then", "finally", "first", "second", "later", "early", "many", "some", "most", "each", "every", "both", "because", "since", "until", "under", "over", "between", "among", "across", "against", "without", "within", "instead", "overall", "similarly", "additionally", "meanwhile", "eventually", "ultimately", "notably", "generally", "often", "unlike", "like", "each"})
 
 
 def page_is_sensitive(page_text: str, terms_needed: int = 1) -> bool:
@@ -412,6 +414,8 @@ def summary_issue(summary: str, page_text: str, *, min_words: int = SUMMARY_MIN_
         return "reads as an instruction"
     haystack = page_text.lower()
     for name in _NAME_RE.findall(text.split(" ", 1)[1] if " " in text else ""):
+        if name.lower() in _COMMON_CAPITALISED:
+            continue
         if name.lower() not in haystack:
             return f"names something the page does not contain ({name})"
     for number in _NUMBER_RE.findall(text):

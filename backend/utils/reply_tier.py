@@ -34,6 +34,10 @@ R_COMPANION = "companion"
 R_IDENTITY = "identity"
 R_FRUSTRATION = "frustration"
 REASONS = (R_STANDARD_SETTING, R_LITE_SETTING, R_HAIKU_SETTING, R_AUTO_PLAIN, R_NOT_OFFERED, R_SAFETY, R_EMOTIONAL, R_CHECKIN, R_COMPANION, R_IDENTITY, R_FRUSTRATION)
+# HOW MUCH THE TURN MATTERS, apart from which model was chosen: the reasons a turn would stay on the standard voice under Auto. A person on the Haiku setting is never routed (every turn is "haiku_setting"), so without this
+# the turns that carry a hurting person or a bond question were invisible inside that setting's count. Counted on every turn (self_counters.py `reply_stakes`), and stamped on the reply (reply_stamp.py).
+STAKES = (R_SAFETY, R_EMOTIONAL, R_CHECKIN, R_COMPANION, R_IDENTITY, R_FRUSTRATION)
+NO_STAKES = "none"
 
 CHECKIN_MARKER = "CHECK-IN (this reply only"
 
@@ -114,6 +118,11 @@ def _message_of(prompt: str) -> str:
         return ""
     end = prompt.find("ASSISTANT RESPONSE:", start)
     return prompt[start + len("CURRENT USER INPUT:"): end if end > 0 else None].strip()
+
+
+def stakes_of(prompt: object, *, risk_active: bool = False, question: object = "") -> str:
+    """How much this turn matters, as one of STAKES, or NO_STAKES for a plain turn: the same reading Auto uses to keep a turn on the standard voice, made whatever the person's setting. Pure."""
+    return full_reason(prompt, risk_active=risk_active, question=question) or NO_STAKES
 
 
 def pick(choice: Optional[str], *, lite_ready: bool, risk_active: bool, prompt: object, question: object = "", haiku_ready: bool = False) -> Tuple[str, str]:

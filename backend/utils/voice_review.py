@@ -1,4 +1,4 @@
-"""A person's approvals of the voice examples and the situation facts, kept in the database on top of the registry's own settings, with how often each one has been used.
+"""A person's approvals of the voice examples, the situation facts and the shape stories, kept in the database on top of the registry's own settings, with how often each one has been used.
 
 WHY (2026-11-13). An example or a fact is approved by adding its id to APPROVED_IDS in a Python file (backend/components/sonic_voice_examples.py, sonic_situation_facts.py): one place, but only someone with the code open can do it, and nothing shows
 whether an approved one is ever matched. This is the dashboard's side of it: an admin approves a draft, removes an approved one, or goes back to the registry's setting, and sees the counts the counters already record (voice_example_used_*, situation_fact_used_*).
@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from backend.components import sonic_shapes as shape_registry
 from backend.components import sonic_situation_facts as fact_registry
 from backend.components import sonic_voice_examples as example_registry
 from backend.utils import self_counters
@@ -21,16 +22,16 @@ from backend.utils import self_counters
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "sonic_voice_review"
-KINDS = ("example", "fact")
+KINDS = ("example", "fact", "shape")
 STATES = ("approved", "removed")
 OVERRIDE_TTL_SECONDS = 60
 USAGE_DAYS = 30
-_USED_KEY = {"example": "voice_example_used_", "fact": "situation_fact_used_"}
+_USED_KEY = {"example": "voice_example_used_", "fact": "situation_fact_used_", "shape": "shape_story_used_"}
 _cache: Dict[str, Any] = {"at": 0.0, "map": {}}
 
 
 def _entries(kind: str) -> List[Dict[str, Any]]:
-    return list(example_registry.EXAMPLES if kind == "example" else fact_registry.FACTS)
+    return list({"example": example_registry.EXAMPLES, "fact": fact_registry.FACTS, "shape": shape_registry.SHAPES}[kind])
 
 
 def known(kind: str, entry_id: str) -> bool:
@@ -123,6 +124,8 @@ def view(db: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
             }
             if kind == "example":
                 item.update({"tone": entry.get("tone", ""), "text": [entry.get("reply", "")]})
+            elif kind == "shape":
+                item.update({"tone": entry.get("tone", ""), "text": [" ".join(part for part in (entry.get("story", ""), entry.get("bridge", "")) if part)]})          # what would be said: the story and its bridge
             else:
                 item.update({"tone": "", "text": list(entry.get("facts") or [])})
             items.append(item)
