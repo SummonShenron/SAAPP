@@ -198,6 +198,53 @@ def check_registry(examples: Optional[List[Dict[str, Any]]] = None) -> List[str]
     return problems
 
 
+_CITE_RE = re.compile(r"\b(?:you (?:said|told me|mentioned|called|wrote|noted|listed|described)|you've (?:said|told me|mentioned))\b", re.IGNORECASE)
+_UNITS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "hundred": 100,
+          "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "once": 1, "twice": 2, "thrice": 3}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
+_CARDINALS = [w for w in _UNITS if w not in ("first", "second", "third", "fourth", "fifth", "sixth", "once", "twice", "thrice")]      # "the first day" is an idiom, not a count
+_NUMBER_TOKEN = r"(?:\d+|%s)(?:-(?:%s))?" % ("|".join(_UNITS), "|".join(w for w in _UNITS if _UNITS[w] < 10))
+_COUNTED_TOKEN = r"(?:\d+|%s)(?:-(?:%s))?" % ("|".join(_CARDINALS), "|".join(w for w in _CARDINALS if _UNITS[w] < 10))
+_COUNTED_RE = re.compile(r"\b(%s)\s+(?:days?|weeks?|months?|years?|times?|hours?|minutes?|nights?|likes?|comments?|texts?|messages?|calls?|people|dollars?)\b" % _COUNTED_TOKEN, re.IGNORECASE)
+_ANY_NUMBER_RE = re.compile(r"\b%s\b" % _NUMBER_TOKEN, re.IGNORECASE)
+
+
+def _value(token: str):
+    token = token.lower()
+    if token.isdigit():
+        return int(token)
+    first, _, second = token.partition("-")
+    if first in _TENS and second in _UNITS:
+        return _TENS[first] + _UNITS[second]
+    return _UNITS.get(first)
+
+
+def _prefixes(text: str) -> set:
+    from backend.utils.emotion_checks import _content, _stems
+
+    return {w[:4] for w in _content(_stems(text))}
+
+
+def check_grounding(examples: Optional[List[Dict[str, Any]]] = None) -> List[str]:
+    """Problems of an example's reply leaning on something its SHOWN message does not hold ([] when sound). The app shows only the first `asks` entry beside an example (build_block), so a reply that says "you said X" with X not in that message, or
+    counts something the message does not ("six years", "two likes", "thirty messages"), teaches the model to say "you said X" about things nobody said (found 2026-11-13: 27 of 36 Sonnet drafts did, because they leaned on the other two messages).
+    Numbers are compared by value ("30" and "thirty", "twice" and "two", "third" and "three"). Pure."""
+    problems: List[str] = []
+    for example in registry.EXAMPLES if examples is None else examples:
+        shown = str((example.get("asks") or [""])[0])
+        reply = str(example.get("reply", ""))
+        for sentence in re.split(r"(?<=[.!?])\s+", reply):
+            if _CITE_RE.search(sentence):
+                words = _prefixes(_CITE_RE.split(sentence, maxsplit=1)[-1])
+                if words and len(words & _prefixes(shown)) / len(words) < 0.5:
+                    problems.append(f"{example.get('id')}: the reply says what they said, and the shown message does not hold it ({sentence[:50]}...)")
+        held = {_value(token) for token in _ANY_NUMBER_RE.findall(shown)}
+        for token in _COUNTED_RE.findall(reply):
+            if _value(token) not in held:
+                problems.append(f"{example.get('id')}: the reply counts '{token}' and the shown message does not")
+    return problems
+
+
 def check_set(examples: Optional[List[Dict[str, Any]]] = None) -> List[str]:
     """Problems with the examples AS A SET, because the set is what teaches the voice: at most half end on a question, and of the HURTING ones between 30% and 70% do (Jack's blind A/B, 2026-11-10: the replies he chose ended on a
     question 9 of 14 times, and a set that never did taught Haiku to end every reply on a statement); no example asks a probe (what happened, what was said, why) or how they are; "I'm right here" and "I hear you" together at most twice (they were overused); at least 6 light and 5 hurting ones; and most light

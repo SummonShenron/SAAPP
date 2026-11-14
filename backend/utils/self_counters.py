@@ -33,6 +33,7 @@ FAILURE_KINDS = ("quota", "overloaded", "other")
 from backend.components.sonic_leanings import LEANINGS  # noqa: E402  (plain data)
 from backend.components.sonic_people_notes import NOTES as PEOPLE_NOTES  # noqa: E402  (plain data)
 from backend.components.sonic_voice_examples import EXAMPLES as VOICE_EXAMPLES  # noqa: E402  (plain data)
+from backend.components.sonic_situation_facts import FACTS as SITUATION_FACTS  # noqa: E402  (plain data)
 from backend.utils.feeling_questions import KINDS as FEELING_KINDS  # noqa: E402  (a plain tuple of names; that module imports nothing from here)
 from backend.utils.code_plan import PLAN_STOP_REASONS  # noqa: E402  (a plain tuple of names)
 from backend.utils.reading_waste import OPENING_KINDS, ORIENT_RANKS  # noqa: E402  (plain tuples of names)
@@ -50,6 +51,8 @@ _GROUPS: Dict[str, tuple] = {
     "people_note_used": tuple(note["id"] for note in PEOPLE_NOTES),
     # Which voice examples were put in a reply's prompt (backend/utils/voice_examples.py): one count per example, so one that never matches can be reworded or removed.
     "voice_example_used": tuple(example["id"] for example in VOICE_EXAMPLES),
+    # Which reviewed situation facts were put in a reply's prompt (backend/utils/situation_facts.py): one count per fact, so one that never matches can be reworded or removed.
+    "situation_fact_used": tuple(fact["id"] for fact in SITUATION_FACTS),
     # What happened after a reply that used a leaning (backend/utils/leanings.py): a message followed, it read as pushback, it praised, or the turn hit its step limit. Evidence of which leanings earn their place, never a target.
     "leaning_followed": tuple(entry["id"] for entry in LEANINGS),
     "leaning_pushback": tuple(entry["id"] for entry in LEANINGS),
@@ -142,6 +145,10 @@ VERIFY_KEYS = ("coding_turns_can_verify", "coding_turns_no_runner")
 ADVISOR_KEYS = ("keep_going_sent_back", "advisor_early_answer", "advisor_repeat", "advisor_no_proposal", "advisor_reading_streak", "advisor_failing_check", "advisor_handback", "advisor_failed")
 # Which model read each turn's routing and risk (agent_workflow.reasoner_node via models.reasoner_llm_for): Claude Haiku for a person whose base model is Haiku or Auto, the Gemini lite model for everyone else. Counts only.
 REASONER_KEYS = ("reasoner_on_haiku", "reasoner_on_lite")
+# The private note written before a reply to someone who is hurting (backend/utils/substance_note.py, off unless SUBSTANCE_NOTE=on): notes asked for, notes that came back empty or unusable, notes put in the prompt, and notes that
+# carried something the person said earlier. Counts only.
+# Replies that were shown a reviewed situation fact (backend/utils/situation_facts.py): a share of turns_total. Counts only.
+SUBSTANCE_KEYS = ("substance_note_asked", "substance_note_empty", "substance_note_used", "substance_note_earlier", "situation_facts_offered")
 # A runner sending a project's files so Sonic can read them (backend/utils/runner_files.py): batches taken, batches refused (nobody had asked, or the project is not the runner's), and batches that failed. Counts only.
 # Notes the record's pattern templates wrote from a finished day's counters (backend/utils/pattern_notes.py), and days a template would have written one but the weekly cap held it back. Counts only.
 PATTERN_KEYS = ("pattern_note_written", "pattern_note_capped")
@@ -157,7 +164,7 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   # Later check-ins on a feeling still being carried (backend/utils/emotion_checkin.py): turns that were told to end with one, replies that really did, and on the next message whether the person's
                   # ceiling had eased or they were still low. Counts only.
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
-_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + VERIFY_KEYS + ADVISOR_KEYS + REASONER_KEYS + RUNNER_FILES_KEYS + PATTERN_KEYS + STEPS_KEYS + PROACTIVE_KEYS
+_PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + VERIFY_KEYS + ADVISOR_KEYS + REASONER_KEYS + SUBSTANCE_KEYS + RUNNER_FILES_KEYS + PATTERN_KEYS + STEPS_KEYS + PROACTIVE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

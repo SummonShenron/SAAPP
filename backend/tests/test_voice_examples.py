@@ -225,7 +225,7 @@ def test_the_four_question_ending_hurting_examples_are_approved_and_pass_the_liv
         assert example["tone"] == "hurting" and example_id in registry.APPROVED_IDS and example["approved"] and example["reply"].rstrip().endswith("?")
         assert ec.reply_attunement_issue(example["reply"]) is None, example_id          # the examples obey the check the live reply is held to
         assert not ec.GENERAL_RE.search(example["reply"]), example_id              # and teach none of the 'how such things go' talk Jack dislikes
-    assert len([e for e in registry.EXAMPLES if e["tone"] == "hurting"]) == 23       # 11 + the twelve Sonnet-written ones approved 2026-11-13 (below)
+    assert len([e for e in registry.EXAMPLES if e["tone"] == "hurting" and e["approved"]]) == 23       # 11 + the twelve Sonnet-written ones approved 2026-11-13 (below); the second batch of 36 are drafts
 
 
 def test_the_twelve_sonnet_written_hurting_examples_are_approved_hold_the_live_checks_and_do_not_teach_an_interview():
@@ -240,3 +240,43 @@ def test_the_twelve_sonnet_written_hurting_examples_are_approved_hold_the_live_c
         assert not ec.PRESENCE_LINE_RE.search(example["reply"]), example["id"]                           # no stamp line is taught
     assert sum(e["reply"].rstrip().endswith("?") for e in new) <= 6                                      # about half, as in Jack's blind test: not an interview
     assert ve.check_registry() == [] and ve.check_set() == []
+
+
+def _ex(asks, reply, example_id="t"):
+    return {"id": example_id, "asks": asks, "reply": reply}
+
+
+def test_the_grounding_check_catches_a_reply_that_leans_on_what_its_shown_message_does_not_hold():
+    """The app shows only the FIRST message beside an example, so a reply that cites things from the other messages teaches the model to say "you said X" about things nobody said (2026-11-13: 27 of 36 drafts did)."""
+    assert ve.check_grounding([_ex(["i hate my job"], "You said your roommate sat with you for an hour. That matters.")])                  # a citation the message does not hold
+    assert ve.check_grounding([_ex(["i hate my job"], "Six years is a long time to carry that.")])                                          # a count it does not hold
+    assert len(ve.check_grounding([_ex(["nobody commented on my post"], "You got two likes, so two people stopped.")])) == 2
+    assert ve.check_grounding([_ex(["i hate my job and i can't quit"], "You said you can't quit, and that is real.")]) == []              # a citation it does hold
+    assert ve.check_grounding([_ex(["that's the third time she cancelled"], "Three times is a lot.")]) == []                               # "third" is three
+    assert ve.check_grounding([_ex(["failed it twice now"], "Two times in a row is a lot.")]) == []                                         # "twice" is two
+    assert ve.check_grounding([_ex(["i texted her like 30 times"], "Thirty messages is a lot.")]) == []                                     # digits and words compare by value
+    assert ve.check_grounding([_ex(["smoked after 41 days"], "Forty-one days happened.")]) == []
+    assert ve.check_grounding([_ex(["whatever"], "Those two sentences don't match, and the first day is the worst.")]) == []                 # an idiom is not a count
+
+
+def test_every_shipped_example_is_grounded_in_its_shown_message_but_one_that_jack_approved_before_the_check_existed():
+    flagged = {p.split(":")[0] for p in ve.check_grounding()}
+    # approved 2026-11-10: its reply says "Four days" while the shown message does not (the four days are in its second message). Reword its first message to hold it and drop it from this set.
+    assert flagged <= {"hurting_friend_silence_choice"}, flagged
+
+
+def test_the_second_batch_of_thirty_six_hurting_drafts_is_sound_unapproved_and_not_an_interview():
+    from backend.utils import emotion_checks as ec
+
+    batch = [e for e in registry.EXAMPLES if e["id"].startswith("sub2_")]
+    assert len(batch) == 36 and all(e["tone"] == "hurting" for e in batch)
+    assert not any(e["approved"] or e["id"] in registry.APPROVED_IDS for e in batch)                       # drafts: Jack approves by adding ids
+    assert registry.MAX_ASK_CHARS == 220
+    assert ve.check_registry(batch) == [] and ve.check_grounding(batch) == [] and ve.check_set() == []
+    for example in batch:
+        shown = example["asks"][0]
+        assert 40 <= len(shown) <= 220 and 200 <= len(example["reply"]) <= 450, example["id"]
+        assert ec.reply_attunement_issue(example["reply"]) is None, example["id"]                            # the check a live reply is held to
+        assert not ec.GENERAL_RE.search(example["reply"]) and not ec.PRESENCE_LINE_RE.search(example["reply"]), example["id"]
+    asking = sum(e["reply"].rstrip().endswith("?") for e in batch)
+    assert 8 <= asking <= 18, asking                                                                          # about a third: not an interview, and not a voice that never asks

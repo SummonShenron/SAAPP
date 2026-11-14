@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from backend.models.models import llm, get_stream_llm, get_lite_stream_llm, get_haiku_stream_llm, haiku_reply_available, lite_prompt, lite_reply_available, claude_available, sonnet_available, openai_available
+from backend.models.models import reasoner_llm_for, llm, get_stream_llm, get_lite_stream_llm, get_haiku_stream_llm, haiku_reply_available, lite_prompt, lite_reply_available, claude_available, sonnet_available, openai_available
 from backend.models.attachment import Attachment
 from backend.services.github_service import (
     process_pr_summary, verify_and_store_github_token, GitHubTokenRejected, GitHubUnreachable,
@@ -116,6 +116,7 @@ from backend.utils.encouragement_utils import (
 )
 from backend.utils.relatable_utils import RELATABLE_MARK, build_relatable_block, entry_vectors, mentions_itself, recently_offered, select_relatable
 from backend.utils.self_observations import asks_about_itself, build_self_knowledge_block, observations_for_turn
+from backend.utils import situation_facts as situation_facts_utils, substance_note
 from backend.utils.emotion_checks import earlier_ai_replies, emotional_reply_issue, build_emotional_revision_prompt
 from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, closing_reply_issue, build_closing_revision_prompt
 from backend.utils.identity_checks import identity_reply_issue, build_identity_revision_prompt
@@ -1262,6 +1263,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if checkin_offered:
                 emotional_context += emotion_checkin.build_block()
                 tally(turn_counts, "emotion_checkin_offered")
+            # A private note written before the reply to someone who is hurting (backend/utils/substance_note.py): OFF unless SUBSTANCE_NOTE=on, and only for the Claude Haiku base model, whose reasoner model writes it.
+            if substance_note.enabled() and substance_note.applies(final_state.get("emotional_state"), datetime.now(timezone.utc), safety_active=safety_plan.active, source_type=source_type):
+                _note_llm, _note_kind = reasoner_llm_for(reply_choice)
+                if _note_kind == "haiku":
+                    _note = await substance_note.write_note(_note_llm, format_history_as_text(messages_state), final_state.get("original_question", question))
+                    substance_note.tally_turn(turn_counts, _note, tally)
+                    emotional_context += substance_note.build_block(_note)
             user_tz = await asyncio.to_thread(get_user_timezone, username)
             today_local = local_today(user_tz)
             # A meeting the person started in THIS conversation with the Start office hours button (backend/utils/meetings.py): its agenda, last notes and prep, for as long as it runs.
@@ -1344,6 +1352,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 source_type=source_type, risk_active=risk_level != RISK_NONE, emotional_active=bool(emotional_context), vector=question_embedding,
             )
             voice_examples_utils.tally_turn(turn_counts, voice_example_entries, tally)
+            # Reviewed facts about how this kind of situation works (backend/utils/situation_facts.py), for a hurting person only; none is used until a person approves it. They ride in the emotional context.
+            situation_fact_entries = await asyncio.to_thread(
+                situation_facts_utils.select, final_state.get("original_question", question), get_db(), embed_text,
+                source_type=source_type, risk_active=risk_level != RISK_NONE, emotional_active=bool(emotional_context), vector=question_embedding,
+            )
+            situation_facts_utils.tally_turn(turn_counts, situation_fact_entries, tally)
+            emotional_context += situation_facts_utils.build_block(situation_fact_entries)
             # Sonic's own measured track record (backend/utils/self_observations.py): only the approved observations
             # that apply to this turn, and only a few. Nothing under a safety context.
             self_knowledge_lines = await asyncio.to_thread(
