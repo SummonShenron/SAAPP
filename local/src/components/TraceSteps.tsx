@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import Icon from './icons';
-import { PagedFork } from './LoaderGraphs';
+import { StartGraph } from './LoaderGraphs';
 import { useReducedMotion } from './useReducedMotion';
-import { MERGE_END_AT, arrivalOf } from './graphLoader';
+import { LAND_END_AT, arrivalOf } from './graphLoader';
 import { endingWords, finalStepLabel, searchSummary, splitAroundTerm, stepWords, toggleExpanded, type LastStepStatus, type SearchExcerpt, type TraceExcerpt, type TurnEnd } from './traceFacts';
 import './__styles__/TracePanel.css';
 
@@ -54,16 +54,17 @@ function SearchResults({ excerpt }: { excerpt: SearchExcerpt }) {
  * dashed stub flows on from the last node toward whatever comes next. Each step with something to show is a button: press it (or Enter / Space) to see what the step measured and read.
  * Shared by the trace panel (the live request) and the steps kept under each reply (components/StepsDisclosure.tsx), so both show exactly the same thing.
  *
- * With `live` (the steps in the conversation while a turn runs) the newest step is also the loader: a fork hangs under it (components/LoaderGraphs.tsx, rules in graphLoader.ts), and when the next step lands the
- * fork is held, merges into it and fades, and the space it held closes. `landing`: this is the first step, and the vertical start graph above it is running on into its node.
+ * With `live` (the steps in the conversation while a turn runs) the newest step is also the loader: a vertical graph hangs under it, in the gap before the next step (components/LoaderGraphs.tsx, rules in
+ * graphLoader.ts), and when the next step lands the light carries on to the graph's last node, which is that step's dot; the graph fades and the space it held closes. `landing`: this is the first step, and the
+ * vertical start graph above it is running on into its node.
  */
 const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: string; live?: boolean; landing?: boolean; reducedMotion?: boolean; hold?: boolean }> = ({ steps, running, idPrefix = 'trace', live = false, landing = false, reducedMotion, hold = false }) => {
   // Which steps are open. A new request starts a fresh list, so a caller that reuses this for the next request gives it a new key (the old expansions mean nothing then).
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const reduced = useReducedMotion(reducedMotion);
-  // Which step's fork is merging into the one that has just landed. Worked out DURING the render that first has the new step (React lets a component set its own state while rendering and renders again before
-  // anything is drawn): set in an effect it would draw one frame with the new step and no merge, which destroyed the fork and rebuilt it a moment later (a flicker the mock-up caught). It goes by ids, not by a
-  // count, because only the newest few steps are drawn while a turn runs.
+  // Which step's graph is landing in the one that has just arrived (`merging` holds that earlier step's id). Worked out DURING the render that first has the new step (React lets a component set its own state while
+  // rendering and renders again before anything is drawn): set in an effect it would draw one frame with the new step and no landing, which destroyed the graph and rebuilt it a moment later (a flicker the mock-up
+  // caught). It goes by ids, not by a count, because only the newest few steps are drawn while a turn runs.
   const lastId = steps.length > 0 ? steps[steps.length - 1].id : null;
   const [lastSeen, setLastSeen] = useState<string | null>(lastId);
   const [merging, setMerging] = useState<string | null>(null);
@@ -74,7 +75,7 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
   }
   useEffect(() => {
     if (merging === null || hold) return undefined;
-    const timer = window.setTimeout(() => setMerging(null), MERGE_END_AT);
+    const timer = window.setTimeout(() => setMerging(null), LAND_END_AT);
     return () => window.clearTimeout(timer);
   }, [merging, hold]);
 
@@ -103,7 +104,7 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
             {words.detail && <span className="trace-node-detail">{words.detail}</span>}
           </span>
         );
-        // In the steps under a running reply the newest node IS the loader: a fork hangs under it until the next step lands (the trace panel keeps its pulsing dot). The first step waits for the start graph to finish landing.
+        // In the steps under a running reply the newest node IS the loader: the graph hangs under it until the next step lands (the trace panel keeps its pulsing dot). The first step waits for the start graph to finish landing.
         const loaderNode = live && running && last && !done;
         const forking = live && ((loaderNode && merging === null && !landing) || merging === step.id);
         const arriving = live && ((merging !== null && last) || (landing && i === 0));
@@ -164,7 +165,7 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
                 </div>
               )}
             </div>
-            {forking && <span className="gl-below" aria-hidden="true"><PagedFork merging={merging === step.id} reducedMotion={reduced} hold={hold} /></span>}
+            {forking && <span className="gl-below" aria-hidden="true"><StartGraph stem landing={merging === step.id} reducedMotion={reduced} hold={hold} /></span>}
           </li>
         );
       })}

@@ -2,13 +2,13 @@ import React, { useEffect, useState } from 'react';
 import TraceSteps, { type TraceStep } from './TraceSteps';
 import { StartGraph } from './LoaderGraphs';
 import { useReducedMotion } from './useReducedMotion';
-import { START_END_AT, START_SPACE_PX, firstStepLanded } from './graphLoader';
+import { LAND_END_AT, START_SPACE_PX, firstStepLanded } from './graphLoader';
 import { stepsAreOpen, stepsLabel } from './traceFacts';
 import './__styles__/TracePanel.css';
 
 interface Props {
   steps: TraceStep[];
-  /** True while the turn is running: before the first step the vertical start graph, then the steps as they come with a fork under the newest. */
+  /** True while the turn is running: before the first step the vertical start graph, then the steps as they come with the same graph under the newest. */
   running: boolean;
   /** Keeps the ids of two lists that show the same steps (this one and the panel's) apart. */
   idPrefix: string;
@@ -16,7 +16,7 @@ interface Props {
   latest?: boolean;
   /** Draw as if the person had asked for reduced motion (the dev preview and tests; the app leaves it to the system setting). */
   reducedMotion?: boolean;
-  /** Keep a landing or a merge on screen instead of letting it finish (the dev preview only). */
+  /** Keep a landing on screen instead of letting it finish (the dev preview only). */
   hold?: boolean;
 }
 
@@ -26,8 +26,8 @@ const WAITING_TEXT = 'Thinking...';
 
 /**
  * The steps of one turn. While the turn runs there is no line to open: the steps are right there as nodes, each keeping its own words (its title and what it is doing underneath), and the loader is a graph
- * (components/graphLoader.ts): before the first step a vertical graph runs down the left beside "Thinking...", the first step lands into its last node, and under the newest step a fork explores until the next
- * step lands and the fork merges into it. Anything a step measured or read opens under that step.
+ * (components/graphLoader.ts): before the first step a vertical graph runs down the left beside "Thinking...", the first step lands into its last node, and under the newest step the same graph runs in the
+ * gap until the next step lands into its last node. Anything a step measured or read opens under that step.
  * When the turn ends they settle into a "7 steps" line above the reply and stay there: open for the newest reply until the next request starts, then folded, opening to the same steps the trace panel shows
  * (components/TraceSteps.tsx). Kept in the page for as long as it is open; the read excerpts are never stored, so a reloaded conversation has none of this.
  */
@@ -49,7 +49,7 @@ const StepsDisclosure: React.FC<Props> = ({ steps, running, idPrefix, latest = f
   }
   useEffect(() => {
     if (!landing || hold) return undefined;
-    const timer = window.setTimeout(() => setLanding(false), START_END_AT);
+    const timer = window.setTimeout(() => setLanding(false), LAND_END_AT);
     return () => window.clearTimeout(timer);
   }, [landing, hold]);
 

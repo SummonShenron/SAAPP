@@ -65,6 +65,11 @@ import { CODE_BOX_STYLE } from '../components/codeBoxStyle';
 import { useAuth } from '@clerk/clerk-react';
 import { describeChatError, toChatSendError } from '../chatErrors';
 import { formatMessageTime, fullMessageTime } from '../messageTime';
+import { rehypeStreamWords } from '../components/streamFade';
+import { startInitialPin } from './initialPin';
+
+// While a reply is still arriving its words fade in one at a time (components/streamFade.ts). Defined once so ReactMarkdown is handed the same list on every token.
+const STREAM_REHYPE = [rehypeStreamWords];
 
 // A guest's base-model choice, kept in this browser (the shared guest has no settings record of their own). Only the cheaper choices are ever honoured by the server.
 const GUEST_REPLY_MODEL_KEY = 'guest-reply-model';
@@ -93,6 +98,7 @@ interface Message {
   id: string;
   sender: 'user' | 'ai' | 'system';
   text: string;
+  streaming?: boolean; // true while this reply's tokens are still arriving: its words fade in one at a time (STREAM_REHYPE); cleared when the turn ends, however it ends
   feedback?: 'like' | 'dislike' | null;
   sentAt?: string; // ISO time the message was sent: the server's stamp for a saved message, the browser's clock for one sent now (shown beside the feedback hearts on hover)
   images?: MessageImage[];
@@ -417,6 +423,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
               <div className="message-text">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
+                  rehypePlugins={msg.streaming ? STREAM_REHYPE : undefined}
                   components={{
                     // A language-less fenced block (bare ```) gets no className at all —
                     // identical to a true inline `code` span — so neither className nor
@@ -1179,7 +1186,10 @@ useEffect(() => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(0);
   const prevLoadingRef = useRef(false);
-  
+  // After the thread first fills (a load or a refresh) the view is pinned to the bottom for a moment while late layout settles (pages/initialPin.ts); this stops it.
+  const cancelInitialPinRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelInitialPinRef.current?.(), []);
+
   useEffect(() => {
     if (!isLoaded) return;
     const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
@@ -1775,6 +1785,15 @@ useEffect(() => {
     const justFinishedLoading = prevLoadingRef.current && !loading;
     prevLoadingRef.current = loading;
 
+    // A thread that fills from empty with no turn running is a load or a refresh: keep landing on the bottom until the layout has settled or the person scrolls. (The first message of a new chat is a turn running,
+    // and sending a message ends the pin: the page is following the conversation then.)
+    if (isInitialLoad && !loading) {
+      cancelInitialPinRef.current?.();
+      cancelInitialPinRef.current = startInitialPin(() => chatWindowRef.current);
+    } else if (isNewMessage && messages[messages.length - 1]?.sender === 'user') {
+      cancelInitialPinRef.current?.();
+    }
+
     // Older messages were just prepended (loadEarlier) — not a new message; keep the viewport put.
     if (skipAutoScrollRef.current) {
       skipAutoScrollRef.current = false;
@@ -2083,6 +2102,7 @@ useEffect(() => {
                   if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
                     updated[lastIndex] = {
                       ...updated[lastIndex],
+                      streaming: true,
                       text: (updated[lastIndex].text || '') + payload.text
                     };
                   }
@@ -2162,7 +2182,7 @@ useEffect(() => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
                   if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
-                    updated[lastIndex] = { ...updated[lastIndex], text: payload.text };
+                    updated[lastIndex] = { ...updated[lastIndex], streaming: false, text: payload.text };
                   }
                   return updated;
                 });
@@ -2262,6 +2282,8 @@ useEffect(() => {
       awaitedProposalRef.current = null;
       lostTurnRef.current = false;
       setLoading(false);
+      // However the turn ended (answered, failed, stopped), the reply is no longer arriving: its words stop fading in.
+      setMessages(prev => (prev.some(m => m.streaming) ? prev.map(m => (m.streaming ? { ...m, streaming: false } : m)) : prev));
       // This turn's steps go onto its reply (see attachTurnSteps): now with what is drawn, once the page has rendered the last of it, and again when the replay of late steps catches up.
       endedTurnRef.current = aiMessageId;
       window.setTimeout(() => attachTurnSteps(!isProcessingQueue.current && nodeQueueRef.current.length === 0), 80);
