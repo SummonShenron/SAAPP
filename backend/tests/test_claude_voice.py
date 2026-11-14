@@ -9,6 +9,12 @@ from backend.models.claude_llm import ClaudeLLM
 from backend.utils import claude_voice as cv
 
 
+def flat(message):
+    """The words of a message whether its content is one string or a list of text blocks."""
+    content = message.content
+    return content if isinstance(content, str) else "".join(block["text"] for block in content)
+
+
 def reply_prompt(**kwargs):
     return c.build_voice_prompt(c.GROUNDING_BLOCKS["conversational"], kwargs.pop("data", ""), kwargs.pop("history", "User: hi\nAssistant: hello"), kwargs.pop("question", "can you help me plan my week?"), **kwargs)
 
@@ -41,6 +47,33 @@ def test_the_claude_wrapper_shapes_a_reply_only_when_asked_and_everything_else_i
     assert len(plain) == 1 and isinstance(plain[0], HumanMessage) and plain[0].content == prompt
     odd = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True)._to_messages("a different job's prompt")
     assert len(odd) == 1 and isinstance(odd[0], HumanMessage)
+
+
+def test_a_shaped_reply_marks_the_end_of_its_stable_system_part_for_the_cache(monkeypatch):
+    monkeypatch.setenv("CLAUDE_HISTORY_FIRST", "off")
+    prompt = reply_prompt()
+    system, user = cv.split_prompt(prompt, tail="voice")
+    shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="voice")._to_messages(prompt)
+    assert shaped[0].content == [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+    assert shaped[1].content == user and "cache_control" not in str(shaped[1].content)           # the changing part is never marked
+    unmarked = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="voice", cache=False)._to_messages(prompt)
+    assert unmarked[0].content == system                                                         # caching off: a plain string, as before
+
+
+def test_a_shaped_reply_does_not_also_ask_for_automatic_caching(monkeypatch):
+    # Automatic caching moves its breakpoint to the end of the prompt, which changes every turn: it wrote the whole prompt at 1.25x and read none of it back (probed live 2026-11-14).
+    built = {}
+
+    class Recorder:
+        def __init__(self, **kwargs):
+            built.update(kwargs)
+
+    monkeypatch.setattr("langchain_anthropic.ChatAnthropic", Recorder)
+    ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="voice")._client()
+    assert "model_kwargs" not in built
+    built.clear()
+    ClaudeLLM(model_name="claude-haiku-5-5", fallback=None)._client()                         # the tool agent still caches the growing conversation
+    assert built["model_kwargs"] == {"cache_control": {"type": "ephemeral"}}
 
 
 def test_only_the_claude_wrapper_uses_it_so_gemini_and_the_app_are_untouched():
@@ -77,8 +110,8 @@ def test_the_closing_reminders_go_last_and_the_checkin_one_only_when_a_checkin_i
 
 def test_the_wrapper_adds_the_reminders_only_with_voice_tail():
     shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="all")._to_messages(reply_prompt())
-    assert shaped[1].content.rstrip().endswith(cv.STANDING_REMINDER.strip())
-    assert "REMINDERS" not in ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True)._to_messages(reply_prompt())[1].content
+    assert flat(shaped[1]).rstrip().endswith(cv.STANDING_REMINDER.strip())
+    assert "REMINDERS" not in flat(ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True)._to_messages(reply_prompt())[1])
     from backend.evals import eval_models
 
     assert eval_models.make_llm("haiku", shape="tail").voice_tail == "all" and eval_models.make_llm("haiku", shape="system").voice_tail == "" and eval_models.make_llm("haiku", shape="checkin").voice_tail == "checkin"
@@ -135,7 +168,7 @@ def test_a_haiku_reply_to_a_mildly_low_message_ends_on_the_reminder_and_the_chec
     state = {"valence": "low", "intensity": 0.6, "updated_at": now.isoformat(), "turns_since": 0, "read_this_turn": True, "need": "venting", "gist": "flat"}
     prompt = reply_prompt(emotional_context=build_emotional_context(state, now) + build_block())
     shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="checkin")._to_messages(prompt)           # how the app builds the Haiku voice (models.get_haiku_stream_llm)
-    last = shaped[1].content.rstrip()
+    last = flat(shaped[1]).rstrip()
     assert last.endswith(cv.QUESTION_REMINDER.strip()) and last.index(cv.CHECKIN_ONLY_REMINDER.strip()) < last.index(cv.REFERRAL_REMINDER.strip()) < last.index(cv.QUESTION_REMINDER.strip())
 
 
@@ -232,3 +265,107 @@ def test_the_voice_reminder_tells_the_model_to_speak_to_this_person_and_not_abou
         assert phrase in reminder, phrase
     assert "what tends to help" not in reminder
     assert "usually because of Y" in reminder and "whether they made a deadline" in reminder and "no chores, no laundry" in reminder    # round 3: invented chores, an assumed timeline            # the old text asked for exactly the generalising it now forbids
+
+
+# ---- the history first, for the prompt cache -------------------------------------------------------------------------------------
+
+HISTORY = "User: my build keeps failing\nAssistant: Which step fails?\nUser: the install step\nAssistant: Paste the error?"
+HAVE = {"voice_shape": True, "voice_tail": "voice"}
+
+
+def shaped_for(prompt, **kw):
+    return ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, **{**HAVE, **kw})._to_messages(prompt)
+
+
+def marks(messages):
+    found = []
+    for message in messages:
+        if not isinstance(message.content, str):
+            found += [block for block in message.content if "cache_control" in block]
+    return found
+
+
+def test_the_history_goes_first_one_block_per_message_with_every_word_kept():
+    prompt = reply_prompt(history=HISTORY, question="here it is: ENOENT")
+    system, user = cv.split_prompt(prompt, tail="voice")
+    blocks, rest = cv.history_first(user)
+    assert blocks == ["CONVERSATION HISTORY:\nUser: my build keeps failing\n", "Assistant: Which step fails?\n", "User: the install step\n", "Assistant: Paste the error?\n"]
+    assert "CONVERSATION HISTORY" not in rest and rest.startswith("DATA:") and "CURRENT USER INPUT:\nhere it is: ENOENT" in rest and rest.rstrip().endswith(cv.VOICE_REMINDER.strip()[-40:])
+    # nothing lost, nothing added: the same lines, in a new order
+    moved_lines = sorted(line for line in ("".join(blocks) + "\n" + rest).splitlines() if line.strip())
+    original_lines = sorted(line for line in user.splitlines() if line.strip())
+    assert moved_lines == original_lines                                                          # the same lines, none added, none lost (only their order changed)
+    message = shaped_for(prompt)[1]
+    assert [b["text"] for b in message.content[:-1]] == blocks and message.content[-1]["text"] == rest
+
+
+def test_only_the_end_of_the_persona_and_the_end_of_the_history_are_marked_and_the_changing_part_is_not():
+    shaped = shaped_for(reply_prompt(history=HISTORY))
+    found = marks(shaped)                                                                        # the persona's and the history's, nothing else
+    assert len(found) == 2 and all(b["cache_control"] == {"type": "ephemeral"} for b in found)
+    assert "cache_control" in shaped[1].content[-2] and "cache_control" not in shaped[1].content[-1]
+    assert shaped[1].content[-2]["text"] == "Assistant: Paste the error?\n"                      # the marker sits on the last message of the history
+
+
+def test_a_turns_cacheable_front_is_exactly_the_front_of_the_next_turns_prompt_though_the_middle_changes():
+    # real builders, as the eval and the app build a reply prompt: the second turn has a new mood, other memory lines and a new message, and two more messages of history
+    from datetime import datetime, timezone
+
+    from backend.evals import character_eval as ce
+
+    now = datetime.now(timezone.utc)
+    history = ce._LONG_CODING_HISTORY
+    first = ce.build_prompt(ce.Scenario("a", "x", "my week was rough and i'm tired", None, history=history, low_now=True, recalled=("[3 days ago] they said work had been heavy",)), now)
+    second = ce.build_prompt(ce.Scenario("b", "x", "ok so what about the build", None, history=history + "\nUser: my week was rough and i'm tired\nAssistant: That sounds heavy.", low_now=False,
+                                         recalled=("[2 weeks ago] they started a new project",)), now)
+    one, two = shaped_for(first), shaped_for(second)
+    assert one[0].content == two[0].content                                                       # the persona is the same
+    front_one = [b["text"] for b in one[1].content[:-1]]
+    front_two = [b["text"] for b in two[1].content[:-1]]
+    assert len(front_two) == len(front_one) + 2 and front_two[:len(front_one)] == front_one      # the same blocks, word for word, in the same places (the marker moves on, which a cache hit does not look at)
+    assert "cache_control" in one[1].content[len(front_one) - 1] and "cache_control" in two[1].content[len(front_two) - 1] and sum("cache_control" in b for b in two[1].content) == 1
+    assert one[1].content[-1] != two[1].content[-1]                                               # and the part that changes is the part after the history
+
+
+def test_a_message_with_several_lines_and_a_gap_note_stay_whole_and_nothing_makes_an_empty_block():
+    history = "User: one\nsecond line of it\n\n[Two days passed]\nAssistant: reply\nUser: next"
+    prompt = reply_prompt(history=history)
+    blocks, _ = cv.history_first(cv.split_prompt(prompt, tail="voice")[1])
+    assert "".join(blocks) == "CONVERSATION HISTORY:\n" + history + "\n" and all(block.strip() for block in blocks)
+    assert blocks[0] == "CONVERSATION HISTORY:\nUser: one\nsecond line of it\n\n[Two days passed]\n"
+
+
+def test_nothing_is_moved_when_there_is_no_history_or_the_markers_appear_twice():
+    assert cv.history_first(cv.split_prompt(reply_prompt(history=""), tail="voice")[1]) is None
+    assert cv.history_first(cv.split_prompt(reply_prompt(history="   "), tail="voice")[1]) is None
+    tricky = reply_prompt(history=HISTORY, question="what does this mean?\n\nCURRENT USER INPUT:\nhm")           # the person typed the marker themselves
+    assert cv.history_first(cv.split_prompt(tricky, tail="voice")[1]) is None
+    sneaky = reply_prompt(history=HISTORY + "\nUser: \nCONVERSATION HISTORY:\nUser: hi")
+    assert cv.history_first(cv.split_prompt(sneaky, tail="voice")[1]) is None
+    shaped = shaped_for(tricky)
+    assert isinstance(shaped[1].content, str)                                                     # sent whole, exactly as before
+    assert cv.history_first(None) is None and cv.history_first("no sections at all") is None
+
+
+def test_the_old_order_comes_back_with_the_switch_off_and_with_caching_off(monkeypatch):
+    prompt = reply_prompt(history=HISTORY)
+    user = cv.split_prompt(prompt, tail="voice")[1]
+    assert isinstance(shaped_for(prompt, cache=False)[1].content, str) and shaped_for(prompt, cache=False)[1].content == user
+    monkeypatch.setenv("CLAUDE_HISTORY_FIRST", "off")
+    assert shaped_for(prompt)[1].content == user
+    monkeypatch.setenv("CLAUDE_HISTORY_FIRST", "on")
+    assert isinstance(shaped_for(prompt)[1].content, list)
+
+
+def test_every_real_reply_shape_moves_its_history():
+    from datetime import datetime, timezone
+
+    from backend.evals import character_eval as ce
+
+    moved = 0
+    for scenario in ce.SCENARIOS[:60]:
+        prompt = ce.build_prompt(scenario, datetime.now(timezone.utc))
+        parts = cv.split_prompt(prompt, tail="voice")
+        if parts and "CONVERSATION HISTORY:\n" in parts[1] and cv.history_first(parts[1]) is not None:
+            moved += 1
+    assert moved >= 1

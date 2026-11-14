@@ -7,7 +7,9 @@ rules) as the system prompt, and the rest (the data, this turn's blocks, the his
 
 Pure and Claude-only: nothing in the app calls this for Gemini, and a prompt that does not have the usual shape (an opening message, a different job) is left whole, as one user message.
 """
-from typing import Optional, Tuple
+import os
+import re
+from typing import List, Optional, Tuple
 
 DATA_MARKER = "\nDATA:\n"
 CHECKIN_MARKER = "CHECK-IN (this reply only"
@@ -72,6 +74,46 @@ CHECKIN_REMINDER = (
     "- A CHECK-IN is due this reply (the CHECK-IN section above). It is not an optional follow-up and the follow-up rule does not apply to it: answer fully first, then END the reply with one short, warm "
     "question to them about how they are doing, in plain words, specific to what they went through earlier.\n"
 )
+
+
+# The conversation history, moved to the front of the user message for the prompt cache (backend/models/claude_llm.py _to_messages). A turn's prompt changes in the middle every turn (the mood, the memory lines, the
+# data), which ends a cache hit at the persona; the history is the biggest part of the prompt and between folds only ever grows at its end, so with it FIRST everything up to the previous reply is the same
+# as the last turn's and can be read from the cache. Only the order changes, never a word. CLAUDE_HISTORY_FIRST=off puts it back where the flat prompt has it.
+HISTORY_HEAD = "\nCONVERSATION HISTORY:\n"
+HISTORY_END = "\n\nCURRENT USER INPUT:\n"
+_MESSAGE_START = re.compile(r"(?m)^(?=(?:User|Assistant): )")
+
+
+def history_first_enabled() -> bool:
+    return os.getenv("CLAUDE_HISTORY_FIRST", "on").strip().lower() not in ("0", "false", "no", "off")
+
+
+def history_first(user: str) -> Optional[Tuple[List[str], str]]:
+    """(history_blocks, rest) for a reply prompt's user part, or None when it should be sent as it is. `history_blocks` is the "CONVERSATION HISTORY:" section as one text per message (a cache hit is found
+    only where an earlier request had a block boundary, and the history grows by whole messages), each ending in a newline so a message is the same text whether or not another follows it; `rest` is everything else,
+    in its old order. None when the section is not there exactly once, the history is empty, or the person's own message contains the markers (then nothing is moved: a wrong cut would reorder their words). Pure."""
+    if not isinstance(user, str) or user.count(HISTORY_HEAD) != 1 or user.count(HISTORY_END) != 1:
+        return None
+    start = user.index(HISTORY_HEAD)
+    end = user.index(HISTORY_END)
+    if end < start:
+        return None
+    history = user[start + len(HISTORY_HEAD): end]
+    if not history.strip() or "\nASSISTANT RESPONSE:\n" not in user[end:]:
+        return None
+    pieces = [piece for piece in _MESSAGE_START.split(history) if piece]
+    blocks: List[str] = []
+    for piece in pieces:
+        text = piece if piece.endswith("\n") else piece + "\n"
+        if blocks and not text.strip():
+            blocks[-1] += text                 # a blank piece never becomes a block of its own (the API refuses an empty one)
+        else:
+            blocks.append(text)
+    if not blocks or not blocks[0].strip():
+        return None
+    blocks[0] = HISTORY_HEAD.lstrip("\n") + blocks[0]
+    rest = (user[:start] + "\n" + user[end:].lstrip("\n")).strip()
+    return blocks, rest
 
 
 def voice_reminder_for(text: str) -> str:

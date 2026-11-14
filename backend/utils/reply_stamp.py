@@ -25,6 +25,7 @@ RECORD_STATES = ("none", "offered", "cited")
 SEARCH_LAST_MESSAGES = 80
 MATCH_CHARS = 160
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{2,60}$")
+_JOKE_ID_RE = re.compile(r"^[a-z][a-z_]{2,60}$")
 _TAG_RE = re.compile(r"<<<.*?>>>", re.DOTALL)
 
 
@@ -43,7 +44,7 @@ def _ids(raw: Any) -> List[str]:
     return [i for i in (raw or []) if isinstance(i, str) and _ID_RE.match(i)][:MAX_IDS]
 
 
-def build(tier: Any, reason: Any, choice: Any, example_ids: Iterable[Any] = (), note_ids: Iterable[Any] = (), stakes: Any = reply_tier.NO_STAKES, record: Any = "none", fact_ids: Iterable[Any] = ()) -> Dict[str, Any]:
+def build(tier: Any, reason: Any, choice: Any, example_ids: Iterable[Any] = (), note_ids: Iterable[Any] = (), stakes: Any = reply_tier.NO_STAKES, record: Any = "none", fact_ids: Iterable[Any] = (), joke: Any = "none") -> Dict[str, Any]:
     """The stamp for a reply. Anything outside the fixed lists becomes "other" (or "none" for the three added fields), so nothing but a label and an id can be stored. Pure."""
     tier = tier if tier in TIERS else "other"
     choice = choice if choice in CHOICES else "other"
@@ -57,6 +58,7 @@ def build(tier: Any, reason: Any, choice: Any, example_ids: Iterable[Any] = (), 
         "stakes": stakes if stakes in reply_tier.STAKES else reply_tier.NO_STAKES,
         "record": record if record in RECORD_STATES else "none",
         "facts": _ids(list(fact_ids or [])),
+        "joke": joke if isinstance(joke, str) and (joke == "none" or _JOKE_ID_RE.match(joke)) else "none",          # the id of the joke told in this reply (backend/utils/jokes.py), or "none"
     }
 
 
@@ -64,7 +66,7 @@ def clean(raw: Any) -> Optional[Dict[str, Any]]:
     """A stamp read back from storage or from a message, made safe again, or None when it is not one. Pure."""
     if not isinstance(raw, dict) or raw.get("label") not in LABELS:
         return None
-    return build(raw.get("tier"), raw.get("reason"), raw.get("choice"), raw.get("examples"), raw.get("notes"), raw.get("stakes"), raw.get("record"), raw.get("facts")) | {"label": raw["label"]}
+    return build(raw.get("tier"), raw.get("reason"), raw.get("choice"), raw.get("examples"), raw.get("notes"), raw.get("stakes"), raw.get("record"), raw.get("facts"), raw.get("joke")) | {"label": raw["label"]}
 
 
 def _head(text: Any) -> str:
@@ -123,6 +125,7 @@ def summarize(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     stakes: Dict[str, Dict[str, int]] = {}
     record: Dict[str, Dict[str, int]] = {}
     facts: Dict[str, Dict[str, int]] = {}
+    jokes: Dict[str, Dict[str, int]] = {}
     stamped = unstamped = 0
     for row in rows:
         kind = row.get("kind")
@@ -143,6 +146,7 @@ def summarize(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             notes.setdefault(note_id, {"positive": 0, "negative": 0})[kind] += 1
         stakes.setdefault(stamp["stakes"], {"positive": 0, "negative": 0})[kind] += 1
         record.setdefault(stamp["record"], {"positive": 0, "negative": 0})[kind] += 1
+        jokes.setdefault(stamp["joke"], {"positive": 0, "negative": 0})[kind] += 1
         for fact_id in stamp["facts"]:
             facts.setdefault(fact_id, {"positive": 0, "negative": 0})[kind] += 1
 
@@ -152,5 +156,5 @@ def summarize(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     reason_rows = sorted(({"label": name, **counts} for name, counts in reasons.items()), key=lambda r: (-sum(r[t] for t in VOICE_QUALITY_TAGS), r["label"]))
     return {
         "stamped": stamped, "unstamped": unstamped, "labels": listed(labels, "label"), "examples": listed(examples, "id"), "notes": listed(notes, "id"), "reasons": reason_rows,
-        "stakes": listed(stakes, "label"), "record": listed(record, "label"), "facts": listed(facts, "id"),
+        "stakes": listed(stakes, "label"), "record": listed(record, "label"), "facts": listed(facts, "id"), "jokes": listed(jokes, "id"),
     }

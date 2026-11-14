@@ -38,15 +38,15 @@ def reply(input_tokens=10, output_tokens=5, reasoning=None, cache_read=None, mod
 # ---- reading usage out of a response ----------------------------------------------------------------------------------------
 
 def test_a_response_reports_input_output_thinking_and_cached_tokens():
-    assert lu.usage_of(reply(100, 40, reasoning=25, cache_read=60)) == {"input": 100, "output": 40, "reasoning": 25, "cached": 60}
-    assert lu.usage_of(reply(7, 1)) == {"input": 7, "output": 1, "reasoning": 0, "cached": 0}
+    assert lu.usage_of(reply(100, 40, reasoning=25, cache_read=60)) == {"input": 100, "output": 40, "reasoning": 25, "cached": 60, "cache_write": 0}
+    assert lu.usage_of(reply(7, 1)) == {"input": 7, "output": 1, "reasoning": 0, "cached": 0, "cache_write": 0}
 
 
 @pytest.mark.parametrize("message", [None, "text", AIMessage(content="no usage"), SimpleNamespace(usage_metadata="nope"),
                                      SimpleNamespace(usage_metadata={"input_tokens": "x", "output_tokens": -4}),
                                      SimpleNamespace(usage_metadata={"input_token_details": "bad", "output_token_details": None})])
 def test_anything_that_reports_nothing_usable_counts_as_zero(message):
-    assert lu.usage_of(message) == {"input": 0, "output": 0, "reasoning": 0, "cached": 0}
+    assert lu.usage_of(message) == {"input": 0, "output": 0, "reasoning": 0, "cached": 0, "cache_write": 0}
 
 
 def test_the_model_that_answered_is_the_one_named_in_the_response_and_the_default_otherwise():
@@ -118,7 +118,7 @@ def test_calls_are_counted_per_day_model_and_caller():
     lu.record("m1", "node.b", {"input": 1, "output": 1, "reasoning": 0, "cached": 0}, day="2026-10-10")
     lu.record("m2", "node.a", {"input": 7, "output": 7, "reasoning": 0, "cached": 0}, day="2026-10-11")
     snap = lu.snapshot()
-    assert snap[("2026-10-10", "m1", "node.a")] == {"calls": 2, "input": 150, "output": 15, "reasoning": 4, "cached": 60}
+    assert snap[("2026-10-10", "m1", "node.a")] == {"calls": 2, "input": 150, "output": 15, "reasoning": 4, "cached": 60, "cache_write": 0}
     assert len(snap) == 3
 
 
@@ -128,7 +128,7 @@ def test_flush_writes_one_increment_per_row_and_a_second_flush_adds_to_it():
     assert lu.flush(db) == 1 and lu.snapshot() == {}
     lu.record("m1", "node.a", {"input": 5, "output": 1, "reasoning": 0, "cached": 0}, day="2026-10-10")
     assert lu.flush(db) == 1
-    assert db.col.docs == [{"day": "2026-10-10", "model": "m1", "label": "node.a", "calls": 2, "input": 15, "output": 3, "reasoning": 0, "cached": 0}]
+    assert db.col.docs == [{"day": "2026-10-10", "model": "m1", "label": "node.a", "calls": 2, "input": 15, "output": 3, "reasoning": 0, "cached": 0, "cache_write": 0}]
     assert lu.flush(db) == 0  # nothing new, nothing written
 
 
@@ -158,7 +158,7 @@ def test_calls_are_also_counted_by_minute_and_model_without_the_caller_label(mon
     lu.record("m1", "node.b", {"input": 50, "output": 5, "reasoning": 0, "cached": 0}, day="2026-10-14")
     lu.record("m2", "node.a", {"input": 7, "output": 7, "reasoning": 0, "cached": 0}, day="2026-10-14")
     minutes = lu.minute_snapshot()
-    assert minutes[("2026-10-14T09:05", "m1")] == {"calls": 2, "input": 150, "output": 15, "reasoning": 0, "cached": 0}
+    assert minutes[("2026-10-14T09:05", "m1")] == {"calls": 2, "input": 150, "output": 15, "reasoning": 0, "cached": 0, "cache_write": 0}
     assert len(minutes) == 2
 
 
@@ -167,7 +167,7 @@ def test_the_minute_rows_are_saved_with_the_daily_ones_and_kept_when_the_write_f
     db = _DB()
     lu.record("m1", "node.a", {"input": 10, "output": 2, "reasoning": 0, "cached": 0}, day="2026-10-14")
     lu.flush(db)
-    assert db.minutes.docs == [{"minute": "2026-10-14T09:05", "model": "m1", "calls": 1, "input": 10, "output": 2, "reasoning": 0, "cached": 0}]
+    assert db.minutes.docs == [{"minute": "2026-10-14T09:05", "model": "m1", "calls": 1, "input": 10, "output": 2, "reasoning": 0, "cached": 0, "cache_write": 0}]
     db.col.fail = db.minutes.fail = True
     lu.record("m1", "node.a", {"input": 5, "output": 1, "reasoning": 0, "cached": 0}, day="2026-10-14")
     assert lu.flush(db) == 0
@@ -348,7 +348,7 @@ def test_invoke_and_ainvoke_are_counted_under_the_calling_function():
     invoke_from_here(llm)
     model, label, counts = only_row()
     assert model == "primary-model" and label.endswith(".invoke_from_here")
-    assert counts == {"calls": 1, "input": 100, "output": 20, "reasoning": 5, "cached": 50}
+    assert counts == {"calls": 1, "input": 100, "output": 20, "reasoning": 5, "cached": 50, "cache_write": 0}
     run(ainvoke_from_here(llm))
     assert lu.snapshot()[next(k for k in lu.snapshot() if k[2].endswith(".ainvoke_from_here"))]["input"] == 100
 
@@ -379,7 +379,7 @@ def test_a_stream_that_is_stopped_early_is_still_counted_for_what_it_reported():
 
 def test_a_call_that_reports_no_usage_still_counts_as_a_call_and_a_failed_one_is_not_counted_at_all():
     invoke_from_here(llm_with(FakeClient(AIMessage(content="no usage"))))
-    assert only_row()[2] == {"calls": 1, "input": 0, "output": 0, "reasoning": 0, "cached": 0}  # visible as calls with no tokens
+    assert only_row()[2] == {"calls": 1, "input": 0, "output": 0, "reasoning": 0, "cached": 0, "cache_write": 0}  # visible as calls with no tokens
     lu.reset()
     busy = invoke_from_here(llm_with(FakeClient(error=TimeoutError("slow"))))
     assert "high traffic" in busy.content and lu.snapshot() == {}
@@ -501,3 +501,78 @@ def test_the_code_names_the_model_google_actually_serves_and_the_health_page_rep
     assert source.count('"gemini-3.6-flash"') >= 4 and 'model_name="gemini-3.5-flash"' not in source
     health = (ROOT / "backend" / "utils" / "sonic_health.py").read_text(encoding="utf-8")
     assert '"routes": summarize_routes(fetch_route_docs(db, days, now))' in health
+
+
+# ---- cache writes -----------------------------------------------------------------------------------------------------------
+# Shapes copied from a live call (2026-11-14, claude-haiku-5-5 through langchain-anthropic): the write is reported under its lifetime, and `cache_creation` stays 0.
+
+def reply_with_details(details, input_tokens=8243):
+    usage = {"input_tokens": input_tokens, "output_tokens": 4, "total_tokens": input_tokens + 4, "input_token_details": details}
+    return AIMessage(content="ok", usage_metadata=usage)
+
+
+def test_a_cache_write_is_read_from_the_lifetime_keys_langchain_actually_fills():
+    counted = lu.usage_of(reply_with_details({"cache_read": 0, "cache_creation": 0, "ephemeral_5m_input_tokens": 8234, "ephemeral_1h_input_tokens": 0}))
+    assert counted["cache_write"] == 8234 and counted["cached"] == 0 and counted["input"] == 8243
+    both = lu.usage_of(reply_with_details({"ephemeral_5m_input_tokens": 100, "ephemeral_1h_input_tokens": 50}))
+    assert both["cache_write"] == 150
+
+
+def test_a_total_in_cache_creation_is_not_added_to_the_lifetime_breakdown_of_the_same_write():
+    # a version that fills both reports the total and its split: the write is the total, not the two summed
+    counted = lu.usage_of(reply_with_details({"cache_creation": 8234, "ephemeral_5m_input_tokens": 8234, "ephemeral_1h_input_tokens": 0}))
+    assert counted["cache_write"] == 8234
+    assert lu.usage_of(reply_with_details({"cache_creation": 300}))["cache_write"] == 300
+
+
+def test_a_call_that_wrote_nothing_or_reports_nothing_counts_no_write():
+    assert lu.usage_of(reply_with_details({"cache_read": 8234, "cache_creation": 0, "ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}))["cache_write"] == 0
+    assert lu.usage_of(reply(100, 10))["cache_write"] == 0
+    assert lu.usage_of(reply_with_details({"ephemeral_5m_input_tokens": "x", "ephemeral_1h_input_tokens": -5}))["cache_write"] == 0
+
+
+def test_writes_add_up_across_a_stream_and_are_saved_with_the_other_counts():
+    total = lu.empty_usage()
+    lu.add_into(total, {"input": 9, "output": 2, "cache_write": 700})
+    lu.add_into(total, {"output": 3})
+    assert total["cache_write"] == 700 and "cache_write" in lu.FIELDS
+    lu.record("m1", "node.a", {"input": 1000, "output": 10, "reasoning": 0, "cached": 0, "cache_write": 900}, day="2026-10-10")
+    assert lu.snapshot()[("2026-10-10", "m1", "node.a")]["cache_write"] == 900
+    db = _DB()
+    lu.flush(db)
+    assert db.col.docs[0]["cache_write"] == 900
+
+
+def test_a_claude_write_costs_one_and_a_quarter_times_the_input_price_and_another_providers_costs_the_input_price():
+    prices = {"claude-x": {"input": 1.0, "output": 2.0, "cached_input": 0.1}, "gemini-x": {"input": 1.0, "output": 2.0, "cached_input": 0.1}}
+    counts = {"input": 1_000_000, "output": 0, "cached": 200_000, "cache_write": 300_000}
+    assert lu.estimate_cost("claude-x", counts, prices) == pytest.approx(0.5 * 1.0 + 0.2 * 0.1 + 0.3 * 1.25)
+    assert lu.estimate_cost("gemini-x", counts, prices) == pytest.approx(0.5 * 1.0 + 0.2 * 0.1 + 0.3 * 1.0)
+    assert lu.estimate_cost("claude-x", {"input": 1_000_000, "output": 0}, prices) == pytest.approx(1.0)               # rows saved before writes were counted
+    explicit = {"claude-x": {"input": 1.0, "output": 2.0, "cached_input": 0.1, "cache_write_input": 2.0}}
+    assert lu.estimate_cost("claude-x", counts, lu.load_prices(json.dumps(explicit))) == pytest.approx(0.5 * 1.0 + 0.2 * 0.1 + 0.3 * 2.0)
+
+
+def test_a_write_larger_than_the_input_cannot_make_the_estimate_negative():
+    prices = {"claude-x": {"input": 1.0, "output": 0.0, "cached_input": 0.1}}
+    assert lu.estimate_cost("claude-x", {"input": 100, "cached": 40, "cache_write": 500}, prices) == pytest.approx((40 * 0.1 + 60 * 1.25) / 1_000_000)
+
+
+def test_the_summary_shows_how_much_of_the_input_was_written_to_the_cache():
+    docs = [{"day": "d", "model": "claude-x", "label": "reply", "calls": 2, "input": 20_000, "output": 100, "reasoning": 0, "cached": 0, "cache_write": 15_000}]
+    row = lu.summarize_usage(docs)["by_model"][0]
+    assert row["cache_write"] == 15_000 and row["write_rate"] == 0.75 and row["cache_rate"] == 0.0
+    cost = lu.summarize_usage(docs, {"claude-x": {"input": 1.0, "output": 1.0, "cached_input": 0.1}})["estimated_cost"]
+    assert cost == pytest.approx((5_000 * 1.0 + 15_000 * 1.25 + 100 * 1.0) / 1_000_000, abs=1e-4)
+    assert lu.summarize_usage([])["total"]["write_rate"] is None
+
+
+def test_a_chat_turn_is_charged_for_its_cache_writes(monkeypatch):
+    from backend.utils import llm_turns
+
+    monkeypatch.setattr(lu, "cached_prices", lambda: {"claude-x": {"input": 1.0, "output": 0.0, "cached_input": 0.1}})
+    llm_turns.reset()
+    turn = llm_turns.begin()
+    llm_turns.note_call({"input": 1_000_000, "output": 0, "cached": 0, "cache_write": 400_000}, "claude-x")
+    assert turn.cost_micro == int(round((600_000 * 1.0 + 400_000 * 1.25))), turn.cost_micro
+    llm_turns.reset()

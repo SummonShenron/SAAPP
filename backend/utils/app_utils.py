@@ -158,6 +158,18 @@ def list_user_conversation_summaries(username: str) -> list:
     return summaries
 
 
+def rename_user_conversation(username: str, session_id: str, title: str) -> bool:
+    """Sets the title of one thread. True if it exists and was updated. Mongo only; the file fallback is not handled here."""
+    db = get_db()
+    if db is None:
+        return False
+    result = db["conversations"].update_one(
+        {"username": username, "session_id": session_id},
+        {"$set": {"title": title}},
+    )
+    return result.matched_count > 0
+
+
 def _page_bounds(total: int, limit: int | None, before: int | None) -> tuple:
     limit = min(max(limit or DEFAULT_CONVERSATION_PAGE_SIZE, 1), MAX_CONVERSATION_PAGE_SIZE)
     end = total if before is None else min(max(before, 0), total)

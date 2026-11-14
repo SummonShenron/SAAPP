@@ -1606,4 +1606,33 @@ CHANGELOG = [
         "keywords": ["my record", "something similar", "happened to me", "relate", "same thing happened", "you too", "have you ever", "experience"],
         "volunteer": [],
     },
+    {
+        "id": "simulations_jokes",
+        "requires": [
+            "backend/utils/jokes.py::def place",
+            "backend/components/sonic_jokes.py::APPROVED_IDS",
+            "app.py::jokes_utils.place",
+        ],
+        "month": "2026-11",
+        "title": "A joke after a code change",
+        "line": (
+            "After I propose a code change I can now add one short joke at the end: \"just like the simulations\" for a small change, \"not like the simulations\" for a big one. Never when you're low or frustrated, and at most once a conversation."
+        ),
+        "keywords": ["joke", "funny", "humor", "simulations", "just like the simulations", "code change", "multi file", "propose"],
+        "volunteer": [],
+    },
+    {
+        "id": "rename_conversations",
+        "requires": [
+            "backend/utils/app_utils.py::def rename_user_conversation",
+            "app.py::rename_user_conversation",
+        ],
+        "month": "2026-11",
+        "title": "Renaming a conversation",
+        "line": (
+            "In the Conversations panel I can now rename a conversation: press Rename on its row and type a new title."
+        ),
+        "keywords": ["rename", "conversation title", "retitle", "name a chat", "change title"],
+        "volunteer": [],
+    },
 ]

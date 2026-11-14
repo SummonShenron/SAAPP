@@ -6,7 +6,7 @@ cost what. LazyLLM (backend/models/models.py) reports every call here; this modu
 
 - WHAT IS RECORDED. For each call: the model that actually answered (the fallback's name when the fallback served it), a label for
   the code that asked ("agent_workflow.reasoner_node"), and the token counts the API reports: input, output, thinking (a part of
-  output, billed as output) and cached input (a part of input, billed at a discount). Nothing else: no prompt, no reply, no user.
+  output, billed as output), cached input (a part of input, billed at a discount) and cache writes (a part of input, billed at a premium by Claude). Nothing else: no prompt, no reply, no user.
 - THE LABEL COMES FROM THE CALL STACK, so no call site had to change and a new one is counted automatically.
 - STREAMING reports usage in pieces (the input count on the first chunk, output counts on later ones), so a stream's pieces are
   summed; a stream that is cut short is counted for what it reported.
@@ -46,7 +46,10 @@ EVAL_PREFIX = "eval:"
 # A call made during a PAID turn (backend/utils/credits.py: the person pays for it out of their own credit) is counted under this label prefix, which the shared budget leaves out the way it leaves out an eval:
 # Jack is not paying for it. The usage page still shows it, and the person's own counts (backend/utils/user_usage.py) still include it, which is what their paid daily ceiling is judged on.
 PAID_PREFIX = "paid:"
-FIELDS = ("calls", "input", "output", "reasoning", "cached")
+FIELDS = ("calls", "input", "output", "reasoning", "cached", "cache_write")
+# What a cache WRITE costs, as a multiple of the model's normal input price, when LLM_PRICES gives no "cache_write_input" for it: Anthropic bills a write at 1.25x (5-minute lifetime); the other providers charge
+# nothing extra for what they cache, so a write there costs the normal input price.
+CLAUDE_WRITE_MULTIPLE = 1.25
 FLUSH_AFTER_CALLS = 40
 FLUSH_AFTER_SECONDS = 120
 MAX_STACK_DEPTH = 14
@@ -80,11 +83,11 @@ def _count(value: Any) -> int:
 
 
 def usage_of(message: Any) -> Dict[str, int]:
-    """The token counts one response (or one streamed chunk) reports, as `{input, output, reasoning, cached}`. Zeros for anything
-    that reports nothing. `reasoning` and `cached` are parts of `output` and `input`, not additions to them."""
+    """The token counts one response (or one streamed chunk) reports, as `{input, output, reasoning, cached, cache_write}`. Zeros for anything
+    that reports nothing. `reasoning` is a part of `output`; `cached` (read from the cache) and `cache_write` (written to it) are parts of `input`, not additions to it."""
     meta = getattr(message, "usage_metadata", None)
     if not isinstance(meta, dict):
-        return {"input": 0, "output": 0, "reasoning": 0, "cached": 0}
+        return {"input": 0, "output": 0, "reasoning": 0, "cached": 0, "cache_write": 0}
     input_details = meta.get("input_token_details") if isinstance(meta.get("input_token_details"), dict) else {}
     output_details = meta.get("output_token_details") if isinstance(meta.get("output_token_details"), dict) else {}
     return {
@@ -92,8 +95,15 @@ def usage_of(message: Any) -> Dict[str, int]:
         "output": _count(meta.get("output_tokens")),
         "reasoning": _count(output_details.get("reasoning")),
         "cached": _count(input_details.get("cache_read")),
+        "cache_write": cache_write_of(input_details),
     }
 
+
+def cache_write_of(input_details: Dict[str, Any]) -> int:
+    """Tokens written to the prompt cache by one call. langchain-anthropic leaves `cache_creation` at 0 and reports the write only under the lifetime it was written for (`ephemeral_5m_input_tokens`,
+    `ephemeral_1h_input_tokens`; probed live 2026-11-14), while other versions fill `cache_creation` with the total: the larger of the two readings is the write, never their sum."""
+    by_lifetime = _count(input_details.get("ephemeral_5m_input_tokens")) + _count(input_details.get("ephemeral_1h_input_tokens"))
+    return max(_count(input_details.get("cache_creation")), by_lifetime)
 
 def served_by(message: Any, default: str) -> str:
     """The model that actually answered: a fallback's name when the fallback served the call."""
@@ -103,7 +113,7 @@ def served_by(message: Any, default: str) -> str:
 
 
 def add_into(total: Dict[str, int], part: Dict[str, int]) -> None:
-    for field in ("input", "output", "reasoning", "cached"):
+    for field in ("input", "output", "reasoning", "cached", "cache_write"):
         total[field] = total.get(field, 0) + _count(part.get(field))
 
 
@@ -442,7 +452,7 @@ def load_prices(raw: Optional[str] = None) -> Dict[str, Dict[str, float]]:
         if not isinstance(entry, dict):
             continue
         try:
-            parsed = {key: float(entry[key]) for key in ("input", "output", "cached_input") if key in entry}
+            parsed = {key: float(entry[key]) for key in ("input", "output", "cached_input", "cache_write_input") if key in entry}
         except (TypeError, ValueError):
             continue
         if "input" in parsed and "output" in parsed:
@@ -467,8 +477,10 @@ def estimate_cost(model: str, counts: Dict[str, int], prices: Dict[str, Dict[str
     if price is None:
         return None
     cached = min(counts.get("cached", 0), counts.get("input", 0))
-    uncached = counts.get("input", 0) - cached
-    return (uncached * price["input"] + cached * price["cached_input"] + counts.get("output", 0) * price["output"]) / 1_000_000
+    written = min(counts.get("cache_write", 0) or 0, counts.get("input", 0) - cached)
+    uncached = counts.get("input", 0) - cached - written
+    write_price = price.get("cache_write_input", price["input"] * (CLAUDE_WRITE_MULTIPLE if "claude" in model else 1.0))
+    return (uncached * price["input"] + cached * price["cached_input"] + written * write_price + counts.get("output", 0) * price["output"]) / 1_000_000
 
 
 def _share(part: float, whole: float) -> Optional[float]:
@@ -482,6 +494,7 @@ def _with_rates(counts: Dict[str, int], total_tokens: int) -> Dict[str, Any]:
         "tokens": tokens,
         "share": _share(tokens, total_tokens),
         "cache_rate": _share(counts["cached"], counts["input"]),
+        "write_rate": _share(counts["cache_write"], counts["input"]),
         "thinking_rate": _share(counts["reasoning"], counts["output"]),
     }
 

@@ -32,5 +32,17 @@ export function useConversationList(enabled: boolean, refreshKey: number) {
     }
   }, []);
 
-  return { items, loading, remove };
+  /** Renames one on the server and changes its title in the list. Resolves true when it worked. */
+  const rename = useCallback(async (sessionId: string, title: string): Promise<boolean> => {
+    try {
+      const saved = await api.renameConversation(sessionId, title);
+      setItems(prev => prev.map(c => (c.session_id === sessionId ? { ...c, title: saved?.title || title } : c)));
+      return true;
+    } catch (err) {
+      console.error('Failed to rename conversation:', err);
+      return false;
+    }
+  }, []);
+
+  return { items, loading, remove, rename };
 }

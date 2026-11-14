@@ -95,8 +95,11 @@ class ClaudeLLM:
                 if self.thinking_off:
                     kwargs["effort"] = "low"
                 kwargs["thinking"] = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
-            if self.cache:
+            if self.cache and not self.voice_shape:
                 # Automatic caching: one top-level field, and the API keeps the cache breakpoint at the end of the conversation as it grows.
+                # Not for a shaped reply (voice_shape): a reply's prompt changes before its end every turn (the mood, the memory lines, the message), so the
+                # moving breakpoint wrote the whole prompt at 1.25x and never read it back (probed live 2026-11-14: a different turn of one conversation read 0).
+                # A shaped reply marks the end of its stable system part instead (_to_messages).
                 kwargs["model_kwargs"] = {"cache_control": {"type": "ephemeral"}}
             self._chat = ChatAnthropic(**kwargs)        # no temperature: the model rejects it
         return self._chat
@@ -126,7 +129,16 @@ class ClaudeLLM:
 
             parts = claude_voice.split_prompt(prompt, tail=self.voice_tail)
             if parts:
-                return [SystemMessage(content=parts[0]), HumanMessage(content=parts[1])]
+                mark = {"type": "ephemeral"}
+                system = [{"type": "text", "text": parts[0], "cache_control": mark}] if self.cache else parts[0]
+                moved = claude_voice.history_first(parts[1]) if self.cache and claude_voice.history_first_enabled() else None
+                if moved:
+                    # The history first, one block per message, the last one marked: the next turn's prompt starts with this one's history, so that much is read from the cache (claude_voice.history_first).
+                    blocks = [{"type": "text", "text": text} for text in moved[0]]
+                    blocks[-1]["cache_control"] = mark
+                    blocks.append({"type": "text", "text": moved[1]})
+                    return [SystemMessage(content=system), HumanMessage(content=blocks)]
+                return [SystemMessage(content=system), HumanMessage(content=parts[1])]
         return _messages(prompt)
 
     def _metered(self, response: Any, label: str) -> Any:

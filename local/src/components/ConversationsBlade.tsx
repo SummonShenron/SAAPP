@@ -36,6 +36,18 @@ const ConversationsBlade: React.FC<ConversationsBladeProps> = ({ activeSessionId
     return () => { cancelled = true; };
   }, [refreshKey]);
 
+  const handleRename = async (e: React.MouseEvent, sessionId: string, title: string) => {
+    e.stopPropagation();
+    const next = window.prompt("Rename conversation", title || "")?.trim().slice(0, 200);
+    if (!next || next === title) return;                 // cancelled, left empty or unchanged: nothing to save
+    try {
+      const saved = await api.renameConversation(sessionId, next);
+      setConversations(prev => prev.map(c => c.session_id === sessionId ? { ...c, title: saved?.title || next } : c));
+    } catch (err) {
+      console.error("Failed to rename conversation:", err);
+    }
+  };
+
   const handleDelete = async (e: React.MouseEvent, sessionId: string, title: string) => {
     e.stopPropagation();
     if (!window.confirm(`Delete "${title || 'this conversation'}"? This can't be undone.`)) return;
@@ -81,6 +93,18 @@ const ConversationsBlade: React.FC<ConversationsBladeProps> = ({ activeSessionId
               <div className="conversation-row-title">{c.title}</div>
               <div className="conversation-row-time">{formatRelativeTime(c.updated_at)}</div>
             </div>
+            <button
+              type="button"
+              className="conversation-rename-btn"
+              title="Rename conversation"
+              aria-label={`Rename ${c.title || 'conversation'}`}
+              onClick={(e) => handleRename(e, c.session_id, c.title)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
             <button
               type="button"
               className="conversation-delete-btn"

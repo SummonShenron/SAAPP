@@ -83,7 +83,12 @@ test('the tab is mounted in Sonic Health under the Sonic menu, and each card car
   assert.match(page, /\{tab === 'voice' && <VoiceTab \/>\}/);
   assert.ok(TABS.some(t => t.id === 'voice' && t.label === 'Its voice'));
   assert.ok(GROUPS.find(g => g.id === 'sonic').tabs.includes('voice'));
-  assert.match(tab, /const HELP_VOICE = \{ example: 'voice\.examples', fact: 'voice\.facts', shape: 'voice\.shapes' \}/);
+  assert.match(tab, /const HELP_VOICE = \{ example: 'voice\.examples', fact: 'voice\.facts', shape: 'voice\.shapes', joke: 'voice\.jokes' \}/);
+  assert.ok(HELP_TIPS['voice.jokes'].what.includes('Every joke is a draft until you approve it here'));
+  assert.match(tab, /card\('joke', 'Jokes',/);
+  assert.match(tab, /item\.kind === 'joke' \? `Told \$\{TONE_LABELS\[item\.tone\] \?\? item\.tone\}\.`/);          // a joke is told in a situation: it is not matched by messages like one
+  assert.match(tab, /big_change: 'after a change that touches three or more files', small_change: 'after a small change to one file'/);
+  assert.match(readFileSync(new URL('./voiceReviewLogic.ts', import.meta.url), 'utf8'), /kind === 'joke' \? 'jokes'/);
   assert.ok(HELP_TIPS['voice.shapes'].what.includes('Every story is a draft until you approve it here'));
   assert.match(tab, /card\('shape', 'Shape stories',/);
   assert.match(readFileSync(new URL('./voiceReviewLogic.ts', import.meta.url), 'utf8'), /kind === 'shape' \? 'shape stories'/);

@@ -56,6 +56,7 @@ from backend.utils.app_utils import (
     load_user_conversation,
     load_user_conversation_page,
     list_user_conversation_summaries,
+    rename_user_conversation,
     paginate_messages,
     load_session_messages,
     sync_session_messages,
@@ -153,6 +154,7 @@ from backend.utils import reply_stamp
 from backend.utils import character as character_utils
 from backend.utils import experiences as experiences_utils
 from backend.utils import shape_stories as shape_stories_utils
+from backend.utils import jokes as jokes_utils
 from backend.utils import experience_capture
 from backend.utils import pattern_notes
 from backend.utils import experience_reflections
@@ -1146,6 +1148,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # (backend/services/local_edits.py). The browser renders it as a diff card and
                     # applies it only when the user presses Apply.
                     if kind == "on_custom_event" and event.get("name") == "local_edit_proposal":
+                        llm_turn.proposal_files = [{"path": f.get("path"), "additions": f.get("additions", 0), "deletions": f.get("deletions", 0)} for f in (event.get("data", {}).get("files") or []) if isinstance(f, dict)]      # how big the change is, for a joke's trigger (backend/utils/jokes.py); never read for its paths
                         yield f"data: {json.dumps({'event': 'local_edit_proposal', **event.get('data', {})})}\n\n"
                         await asyncio.sleep(0.01)
 
@@ -1971,6 +1974,17 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if llm_turn.shape_offered and shape_stories_utils.mode() == "insert" and not safety_plan.active:
                 # The approved shape sentence is placed in the reply by code, word for word, after its first paragraph (backend/utils/shape_stories.py insert_story): asking the model to say it got it said in 1 reply of 20 (blind test 2026-11-14).
                 full_response = shape_stories_utils.insert_story(full_response, llm_turn.shape_entry)
+            if llm_turn.proposal_files and not safety_plan.active:
+                # A change was proposed this turn: a curated joke may follow it (backend/utils/jokes.py), placed by code at the end, word for word, and only if every gate allows (a big or a small change, a mood that can take it, once a conversation).
+                joke = await asyncio.to_thread(
+                    jokes_utils.pick, llm_turn.proposal_files, final_state.get("emotional_state"), chat_sessions[history_key],
+                    user=username, risk_active=risk_level != RISK_NONE, db=get_db(),
+                )
+                if joke:
+                    full_response = jokes_utils.place(full_response, joke["line"])
+                    llm_turn.joke = joke
+                    jokes_utils.note_told(username)
+                    jokes_utils.tally_turn(turn_counts, joke, tally)
             context_view = context_window.view(llm_turn.peak_input, llm_turn.peak_model)      # how full the biggest request of this turn was (counts only): the session column's context ring
             if context_view:
                 yield f"data: {json.dumps({'event': 'context', **context_view})}\n\n"
@@ -1980,7 +1994,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 ai_message.additional_kwargs[reply_stamp.KEY] = reply_stamp.build(
                     written_tier, tier_reason, reply_choice, [e["id"] for e in voice_example_entries], [n["id"] for n in people_note_entries],
                     stakes=reply_stakes, record=("cited" if (llm_turn.experience_offered or llm_turn.shape_offered) and experiences_utils.cited(full_response) else "offered" if (llm_turn.experience_offered or llm_turn.shape_offered) else "none"),
-                    fact_ids=[f["id"] for f in situation_fact_entries],
+                    fact_ids=[f["id"] for f in situation_fact_entries], joke=(llm_turn.joke or {}).get("id", "none"),
                 )   # which voice wrote it and what it was shown (ids and labels only), so a thumb can be counted by voice: backend/utils/reply_stamp.py
             except Exception:
                 logger.warning("[reply_stamp] could not stamp the reply.", exc_info=True)
@@ -2044,6 +2058,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if llm_turn.experience_offered and experiences_utils.cited(str(ai_message.content)):
                 ai_message.additional_kwargs[experiences_utils.EXPERIENCE_MARK] = True       # rate-limits the next citation (backend/utils/experiences.py)
                 tally(turn_counts, "experience_cited")
+            if llm_turn.joke:
+                ai_message.additional_kwargs[jokes_utils.JOKE_MARK] = True        # one joke a conversation: the next proposal reads this
             if llm_turn.shape_offered and shape_stories_utils.cited(str(ai_message.content)):
                 ai_message.additional_kwargs[experiences_utils.EXPERIENCE_MARK] = True       # the same spacing: a shape story and a record case never follow each other within ten messages
                 tally(turn_counts, "shape_stories_cited")
@@ -2567,6 +2583,22 @@ async def remove_conversation(session_id: str, current_user = Depends(get_curren
     await asyncio.to_thread(conversation_summary_utils.clear, get_db(), username, session_id)
     await asyncio.to_thread(read_log_utils.clear, get_db(), username, session_id)
     return {"status": "deleted", "session_id": session_id}
+
+class ConversationRename(BaseModel):
+    title: str
+
+
+@app.patch("/api/conversations/{session_id}")
+async def rename_conversation(session_id: str, payload: ConversationRename, current_user = Depends(get_current_user)):
+    """Sets the title of one saved conversation. Returns the new title; 404 if there is no such conversation."""
+    username = current_user.get("sub")
+    title = (payload.title or "").strip()[:200]
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if not await asyncio.to_thread(rename_user_conversation, username, session_id, title):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "renamed", "session_id": session_id, "title": title}
+
 
 class ChoiceAnswer(BaseModel):
     index: Optional[int] = None      # the option chosen (0 is the first card button), or

@@ -116,6 +116,8 @@ export const FeedbackTab: React.FC<{ feedback: FeedbackSummary | null | undefine
               <div>
                 <h3 className="sh-subhead">By use of a case from its own record</h3>
                 {!feedback.by_voice.record || feedback.by_voice.record.length === 0 ? <div className="sh-hint">No rated reply carries this yet.</div> : <VoiceTable rows={feedback.by_voice.record} first="Record" name={row => RECORD_LABELS[row.label ?? ''] ?? row.label ?? ''} />}
+                <h3 className="sh-subhead">By joke told</h3>
+                {!feedback.by_voice.jokes || feedback.by_voice.jokes.length === 0 ? <div className="sh-hint">No rated reply carries this yet.</div> : <VoiceTable rows={feedback.by_voice.jokes} first="Joke" name={row => (row.id === 'none' ? 'No joke' : row.id ?? '')} />}
                 <h3 className="sh-subhead">By situation fact</h3>
                 {!feedback.by_voice.facts || feedback.by_voice.facts.length === 0 ? <div className="sh-hint">No fact was shown on a rated reply yet.</div> : <VoiceTable rows={feedback.by_voice.facts} first="Fact" name={row => row.id ?? ''} />}
               </div>

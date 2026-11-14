@@ -136,6 +136,23 @@
   margin-top: 2px;
 }
 
+.conversation-rename-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  opacity: 0.5;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.conversation-rename-btn:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.15);
+}
+
 .conversation-delete-btn {
   background: transparent;
   border: none;

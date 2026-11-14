@@ -993,9 +993,13 @@ export interface UsageRow {
   reasoning: number;
   /** Cached input tokens: a part of `input`, billed at a discount. */
   cached: number;
+  /** Input tokens written to the prompt cache: a part of `input`, billed at a premium by Claude (1.25x). */
+  cache_write: number;
   tokens: number;
   share: number | null;
   cache_rate: number | null;
+  /** Share of `input` that was written to the cache (paid at a premium); high with a low cache_rate means caching is costing, not saving. */
+  write_rate: number | null;
   thinking_rate: number | null;
   /** Estimated USD, or null when no price is configured for the model. */
   cost?: number | null;
@@ -1127,6 +1131,8 @@ export interface FeedbackSummary {
     record?: { label: string; positive: number; negative: number }[];
     /** Thumbs by the situation fact (an id) the reply was shown. Absent from an older server. */
     facts?: { id: string; positive: number; negative: number }[];
+    /** Thumbs by the joke told in the reply (an id) or "none". Absent from an older server. */
+    jokes?: { id: string; positive: number; negative: number }[];
   };
 }
 
@@ -1337,7 +1343,7 @@ export function getExperiences(): Promise<ExperiencesView> {
   return adminRequest<ExperiencesView>('/api/admin/experiences', 'GET');
 }
 /** One voice example or situation fact for review (backend/utils/voice_review.py): what it says, whether it may be used now, the registry's own setting, whether a person overrode it here, and how often it was used in the last `days` days. */
-export interface VoiceReviewItem { kind: 'example' | 'fact' | 'shape'; id: string; situation: string; asks: string[]; approved: boolean; default: boolean; decision: 'approved' | 'removed' | null; used: number; tone: string; text: string[]; }
+export interface VoiceReviewItem { kind: 'example' | 'fact' | 'shape' | 'joke'; id: string; situation: string; asks: string[]; approved: boolean; default: boolean; decision: 'approved' | 'removed' | null; used: number; tone: string; text: string[]; }
 export interface VoiceReviewView { items: VoiceReviewItem[]; days: number; }
 export type VoiceReviewAction = 'approve' | 'remove' | 'reset';
 export function getVoiceReview(): Promise<VoiceReviewView> {
@@ -1706,6 +1712,19 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   });
   if (!res.ok) {
     throw new Error("Failed to list conversations.");
+  }
+  return res.json();
+}
+
+export async function renameConversation(sessionId: string, title: string): Promise<{ status: string; title: string }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/conversations/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ title })
+  });
+  if (!res.ok) {
+    throw new Error("Failed to rename conversation.");
   }
   return res.json();
 }
@@ -2742,6 +2761,7 @@ export const api = {
   steerChat,
   listConversations,
   getConversation,
+  renameConversation,
   deleteConversation,
   listMemoryFacts,
   getCompactionMeter,

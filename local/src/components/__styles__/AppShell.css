@@ -128,6 +128,10 @@
 .theme-shadow .rail-convo.active { background: rgba(255, 255, 255, 0.08); }
 .app-rail .rail-convo-main { flex: 1 1 auto; min-width: 0; padding: 7px 10px; font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rail-convo.active .rail-convo-main { font-weight: 600; }
+.app-rail .rail-convo-rename { flex: 0 0 auto; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--text-muted); opacity: 0; }
+.rail-convo:hover .rail-convo-rename, .rail-convo:focus-within .rail-convo-rename { opacity: 1; }
+.app-rail .rail-convo-rename:hover { color: var(--text-main); }
+@media (hover: none) { .app-rail .rail-convo-rename { opacity: 0.55; } }
 .app-rail .rail-convo-delete { flex: 0 0 auto; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--text-muted); opacity: 0; }
 .rail-convo:hover .rail-convo-delete, .rail-convo:focus-within .rail-convo-delete { opacity: 1; }
 .app-rail .rail-convo-delete:hover { color: var(--accent-danger); }

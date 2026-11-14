@@ -26,7 +26,7 @@ export function summaryLine(items: VoiceReviewItem[], kind: VoiceReviewItem['kin
   const inUse = ofKind.filter(item => item.approved);
   const matched = inUse.filter(item => item.used > 0).length;
   if (ofKind.length === 0) return 'None yet.';
-  const what = kind === 'example' ? 'examples' : kind === 'shape' ? 'shape stories' : 'facts';
+  const what = kind === 'example' ? 'examples' : kind === 'shape' ? 'shape stories' : kind === 'joke' ? 'jokes' : 'facts';
   return `${inUse.length} of ${ofKind.length} ${what} may be used. ${matched} of those ${matched === 1 ? 'was' : 'were'} matched to a message in the last ${days} days.`;
 }
 
