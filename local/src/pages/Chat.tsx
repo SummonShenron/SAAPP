@@ -49,7 +49,7 @@ import { RUNNER_NUDGE_KEY, RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunn
 import { ringView } from '../components/budgetText';
 import { type TraceStep } from '../components/TracePanel';
 import { cleanLastStep, cleanTurnEnd, type LastStepStatus, type TurnEnd } from '../components/traceFacts';
-import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
+import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, revisionWords, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
 import StepsDisclosure from '../components/StepsDisclosure';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import LogoMark from '../components/LogoMark';
@@ -701,6 +701,7 @@ const getNodeLabel = (nodeName: string): string => {
     case 'draft_pr_node': return 'Drafting pull request...';
     case 'execute_pr_node': return 'Executing pull request action...';
     case 'reward_evaluator': return 'Reconsidering that answer...';
+    case 'reply_fit_check': return 'Checking the reply fits this moment...';
     default: return nodeName ? `Processing step: ${nodeName}` : 'Collecting rings and tokens...';
   }
 };
@@ -1854,7 +1855,9 @@ useEffect(() => {
     // backend's own per-step detail (e.g. "Synthesizing final answer for...") rather than the
     // generic friendlyLabel, since that's the actual useful, per-step text for a multi-step node
     // like tool_agent_node's ReAct loop, where no single static label fits every step.
-    const displayTitle = item.detail || friendlyLabel;
+    // A reply-fit rewrite sends the rule's tag as its detail; the page says it in plain words (components/traceFacts.ts revisionWords), never the code word.
+    const stepDetail = item.node === 'reply_fit_check' ? revisionWords(item.detail) : item.detail;
+    const displayTitle = stepDetail || friendlyLabel;
 
     setAgentStatus(item.node);
     setAgentPath(prev => (prev.includes(item.node) ? prev : [...prev, item.node]));
@@ -1863,7 +1866,7 @@ useEffect(() => {
 
     addTraceStep({
       title: friendlyLabel,
-      detail: item.detail || `Node: ${item.node}`,
+      detail: stepDetail || `Node: ${item.node}`,
       status: 'active',
       batchIndex: item.batchIndex,
       batchSize: item.batchSize,

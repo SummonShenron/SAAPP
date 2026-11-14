@@ -116,7 +116,7 @@ from backend.utils.encouragement_utils import (
 )
 from backend.utils.relatable_utils import RELATABLE_MARK, build_relatable_block, entry_vectors, mentions_itself, recently_offered, select_relatable
 from backend.utils.self_observations import asks_about_itself, build_self_knowledge_block, observations_for_turn
-from backend.utils import situation_facts as situation_facts_utils, substance_note
+from backend.utils import situation_facts as situation_facts_utils, substance_note, voice_review
 from backend.utils.emotion_checks import earlier_ai_replies, emotional_reply_issue, build_emotional_revision_prompt
 from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, closing_reply_issue, build_closing_revision_prompt
 from backend.utils.identity_checks import identity_reply_issue, build_identity_revision_prompt
@@ -4226,6 +4226,27 @@ async def backfill_pattern_notes(admin = Depends(require_global_admin)):
     db = _admin_db()
     result = await asyncio.to_thread(pattern_notes.run_pass, db, None, backfill=True)
     return {**result, "templates": await asyncio.to_thread(pattern_notes.view, db)}
+
+
+@app.get("/api/admin/voice-review")
+async def voice_review_view(admin = Depends(require_global_admin)):
+    """Every voice example and situation fact: what it says, whether it may be used now, the registry's own setting, whether a person overrode it, and how often it was used in the last 30 days (backend/utils/voice_review.py)."""
+    return await asyncio.to_thread(voice_review.view, _admin_db())
+
+
+@app.post("/api/admin/voice-review/{kind}/{entry_id}/{action}")
+async def voice_review_decide(kind: str, entry_id: str, action: str, admin = Depends(require_global_admin)):
+    """A person approves or removes one example or fact, or goes back to the registry's own setting (action: approve | remove | reset). The registry file is never edited from here."""
+    db = _admin_db()
+    if action == "reset":
+        done = await asyncio.to_thread(voice_review.reset, db, kind, entry_id)
+    elif action in ("approve", "remove"):
+        done = await asyncio.to_thread(voice_review.set_state, db, kind, entry_id, "approved" if action == "approve" else "removed", admin.get("sub"))
+    else:
+        raise HTTPException(status_code=404, detail="No such action.")
+    if not done:
+        raise HTTPException(status_code=404, detail="No such example or fact.")
+    return await asyncio.to_thread(voice_review.view, db)
 
 
 class ReflectionDecision(BaseModel):

@@ -19,6 +19,7 @@ export const TABS = [
   { id: 'shelf', label: 'Reading shelf' },
   { id: 'learned', label: 'Learned knowledge' },
   { id: 'experiences', label: 'Its record' },
+  { id: 'voice', label: 'Its voice' },
   { id: 'selfmodel', label: 'Self-model' },
   { id: 'suggestions', label: 'Suggestions' },
 ] as const;
@@ -45,7 +46,7 @@ export const GROUPS: readonly MenuGroup[] = [
   { id: 'spend', label: 'Spend', tabs: ['usage', 'turns', 'budget'] },
   { id: 'quality', label: 'Quality', tabs: ['behavior', 'feedback', 'observations', 'goals'] },
   { id: 'know', label: 'Knowledge', tabs: ['knowledge', 'shelf', 'learned', 'routines'] },
-  { id: 'sonic', label: 'Sonic', tabs: ['experiences', 'selfmodel', 'suggestions'] },
+  { id: 'sonic', label: 'Sonic', tabs: ['experiences', 'voice', 'selfmodel', 'suggestions'] },
   { id: 'safety', label: 'Safety', tabs: ['safety'] },
 ];
 

@@ -246,3 +246,31 @@ export function stepsLabel(count: number): string {
 export function stepsAreOpen(chosen: boolean | null, latest: boolean): boolean {
   return chosen ?? latest;
 }
+
+/**
+ * The words for a reply-fit rewrite step (the server's `reply_fit_check` node, app.py "4b. REPLY-FIT CHECKS"): when a draft reply broke a rule about what the person needs, it is written again once, and the step's detail is the
+ * rule's tag. The page used to show that tag as it was ("repeated_presence", "venting_advice"); these are the plain words for each. Every tag the server can send is here (traceFacts.test.mjs reads backend/utils/emotion_checks.py to keep it so),
+ * and an unknown one gets one generic line, because the page never prints a code word the server did not mean for a person to read. The words describe the draft, never what the person said.
+ */
+export const REVISION_WORDS: Readonly<Record<string, string>> = {
+  safety: 'The draft was not right for this moment, so it was written again',
+  identity: 'The draft claimed something about itself that is not true, so it was written again',
+  encouragement: 'The draft encouraged without anything real behind it, so it was written again',
+  closing_engagement: 'The draft kept the conversation going after you wrapped up, so it was written again',
+  venting_advice: 'The draft gave advice when you wanted to be heard, so it was written again',
+  celebration_no_question: 'The draft was warm but not curious about your news, so it was written again',
+  probing_question: 'The draft asked you to retell what happened, so it was written again',
+  two_questions: 'The draft asked more than one question, so it was written again',
+  template_phrase: 'The draft leaned on a stock phrase, so it was written again',
+  thin_comfort: 'The draft comforted without saying anything, so it was written again',
+  hedged: 'The draft hedged too much, so it was written again',
+  generalizing: 'The draft talked about how things go in general, so it was written again',
+  restating: 'The draft handed your own words back, so it was written again',
+  repeated_presence: 'The draft said the same reassurance as a recent reply, so it was written again',
+};
+export const GENERIC_REVISION_WORDS = 'The draft was checked against what you need and written again';
+
+/** What a reply-fit rewrite step says, from the tag the server sent. Pure. */
+export function revisionWords(tag: unknown): string {
+  return typeof tag === 'string' && Object.prototype.hasOwnProperty.call(REVISION_WORDS, tag) ? REVISION_WORDS[tag] : GENERIC_REVISION_WORDS;
+}
