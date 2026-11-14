@@ -35,6 +35,7 @@ from backend.components.sonic_people_notes import NOTES as PEOPLE_NOTES  # noqa:
 from backend.components.sonic_voice_examples import EXAMPLES as VOICE_EXAMPLES  # noqa: E402  (plain data)
 from backend.components.sonic_situation_facts import FACTS as SITUATION_FACTS  # noqa: E402  (plain data)
 from backend.components.sonic_shapes import SHAPES as SHAPE_STORIES  # noqa: E402  (plain data)
+from backend.components.sonic_jokes import JOKES  # noqa: E402  (plain data)
 from backend.utils.feeling_questions import KINDS as FEELING_KINDS  # noqa: E402  (a plain tuple of names; that module imports nothing from here)
 from backend.utils.code_plan import PLAN_STOP_REASONS  # noqa: E402  (a plain tuple of names)
 from backend.utils.reading_waste import OPENING_KINDS, ORIENT_RANKS  # noqa: E402  (plain tuples of names)
@@ -56,6 +57,8 @@ _GROUPS: Dict[str, tuple] = {
     "situation_fact_used": tuple(fact["id"] for fact in SITUATION_FACTS),
     # Which reviewed shape story was put in a reply's prompt (backend/utils/shape_stories.py): one count per shape, so one that never matches, or is never used, can be reworded or removed.
     "shape_story_used": tuple(shape["id"] for shape in SHAPE_STORIES),
+    # Which approved joke was placed in a reply (backend/utils/jokes.py): one count per joke, so one that never fires, or is rated down, can be reworded or removed.
+    "joke_used": tuple(joke["id"] for joke in JOKES),
     # What happened after a reply that used a leaning (backend/utils/leanings.py): a message followed, it read as pushback, it praised, or the turn hit its step limit. Evidence of which leanings earn their place, never a target.
     "leaning_followed": tuple(entry["id"] for entry in LEANINGS),
     "leaning_pushback": tuple(entry["id"] for entry in LEANINGS),
@@ -153,7 +156,7 @@ REASONER_KEYS = ("reasoner_on_haiku", "reasoner_on_lite")
 # The private note written before a reply to someone who is hurting (backend/utils/substance_note.py, off unless SUBSTANCE_NOTE=on): notes asked for, notes that came back empty or unusable, notes put in the prompt, and notes that
 # carried something the person said earlier. Counts only.
 # Replies that were shown a reviewed situation fact (backend/utils/situation_facts.py): a share of turns_total. Counts only.
-SUBSTANCE_KEYS = ("substance_note_asked", "substance_note_empty", "substance_note_used", "substance_note_earlier", "situation_facts_offered", "shape_stories_offered", "shape_stories_cited")
+SUBSTANCE_KEYS = ("substance_note_asked", "substance_note_empty", "substance_note_used", "substance_note_earlier", "situation_facts_offered", "shape_stories_offered", "shape_stories_cited", "jokes_placed")
 # A runner sending a project's files so Sonic can read them (backend/utils/runner_files.py): batches taken, batches refused (nobody had asked, or the project is not the runner's), and batches that failed. Counts only.
 # Notes the record's pattern templates wrote from a finished day's counters (backend/utils/pattern_notes.py), and days a template would have written one but the weekly cap held it back. Counts only.
 PATTERN_KEYS = ("pattern_note_written", "pattern_note_capped")

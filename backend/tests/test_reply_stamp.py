@@ -11,7 +11,7 @@ from backend.utils import reply_stamp as rs
 from backend.utils import reply_tier
 
 ROOT = Path(__file__).resolve().parents[2]
-STAMP = {"label": "haiku", "tier": "haiku", "reason": "auto_plain", "choice": "auto", "examples": ["big_win_energy"], "notes": ["went_quiet_after_something_vulnerable"], "stakes": "none", "record": "none", "facts": []}
+STAMP = {"label": "haiku", "tier": "haiku", "reason": "auto_plain", "choice": "auto", "examples": ["big_win_energy"], "notes": ["went_quiet_after_something_vulnerable"], "stakes": "none", "record": "none", "facts": [], "joke": "none"}
 
 
 def ai(text, stamp=None):
@@ -20,7 +20,7 @@ def ai(text, stamp=None):
 
 def test_the_stamp_names_the_voice_the_tier_the_reason_the_setting_and_what_it_was_shown_and_nothing_else():
     built = rs.build(reply_tier.HAIKU, "auto_plain", "auto", ["big_win_energy"], ["went_quiet_after_something_vulnerable"])
-    assert built == STAMP and set(built) == {"label", "tier", "reason", "choice", "examples", "notes", "stakes", "record", "facts"}      # labels and ids only: no field could hold text
+    assert built == STAMP and set(built) == {"label", "tier", "reason", "choice", "examples", "notes", "stakes", "record", "facts", "joke"}      # labels and ids only: no field could hold text
     assert rs.build(reply_tier.STANDARD, "standard_setting", "gemini")["label"] == "flash"
     assert rs.build(reply_tier.STANDARD, "standard_setting", "gpt")["label"] == "gpt"
     assert rs.build(reply_tier.LITE, "lite_setting", "lite")["label"] == "lite"
@@ -110,7 +110,7 @@ def test_the_summary_counts_thumbs_by_voice_example_and_note_and_counts_the_unst
     assert summary["labels"] == [{"label": "haiku", "positive": 2, "negative": 1}, {"label": "flash", "positive": 1, "negative": 1}]
     assert summary["examples"] == [{"id": "big_win_energy", "positive": 2, "negative": 1}]
     assert summary["notes"] == [{"id": "went_quiet_after_something_vulnerable", "positive": 2, "negative": 1}]
-    assert rs.summarize([]) == {"stamped": 0, "unstamped": 0, "labels": [], "examples": [], "notes": [], "reasons": [], "stakes": [], "record": [], "facts": []}
+    assert rs.summarize([]) == {"stamped": 0, "unstamped": 0, "labels": [], "examples": [], "notes": [], "reasons": [], "stakes": [], "record": [], "facts": [], "jokes": []}
 
 
 def test_the_stamp_also_says_how_much_the_turn_mattered_whether_a_case_from_the_record_was_used_and_which_facts_it_was_shown():

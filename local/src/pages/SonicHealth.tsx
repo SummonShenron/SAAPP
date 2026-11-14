@@ -997,24 +997,24 @@ const UsageCard: React.FC<{ usage: UsageSummary; turns: number }> = ({ usage, tu
           </div>
           <div className="sh-two sh-two-wide-right">
           <div className="sh-scroll"><table className="sh-table">
-            <thead><tr><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Thinking</th><th>Cached</th><th>Share</th>{usage.priced && <th>Est. cost</th>}</tr></thead>
+            <thead><tr><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Thinking</th><th>Cached</th><th title="Input written to the cache, billed at a premium by Claude">Cache writes</th><th>Share</th>{usage.priced && <th>Est. cost</th>}</tr></thead>
             <tbody>
               {usage.by_model.map(row => (
                 <tr key={row.model}>
                   <td>{row.model}</td><td>{row.calls}</td><td>{tokens(row.input)}</td><td>{tokens(row.output)}</td>
-                  <td>{tokens(row.reasoning)}</td><td>{pct(row.cache_rate)}</td><td>{pct(row.share)}</td>
+                  <td>{tokens(row.reasoning)}</td><td>{pct(row.cache_rate)}</td><td>{pct(row.write_rate)}</td><td>{pct(row.share)}</td>
                   {usage.priced && <td>{usd(row.cost) || 'unpriced'}</td>}
                 </tr>
               ))}
             </tbody>
           </table></div>
           <div className="sh-scroll"><table className="sh-table">
-            <thead><tr><th>Caller</th><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Thinking</th><th>Cached</th><th>Share</th></tr></thead>
+            <thead><tr><th>Caller</th><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Thinking</th><th>Cached</th><th title="Input written to the cache, billed at a premium by Claude">Cache writes</th><th>Share</th></tr></thead>
             <tbody>
               {rows.map(row => (
                 <tr key={`${row.label}|${row.model}`}>
                   <td>{row.label}</td><td>{row.model}</td><td>{row.calls}</td><td>{tokens(row.input)}</td><td>{tokens(row.output)}</td>
-                  <td>{tokens(row.reasoning)}</td><td>{pct(row.cache_rate)}</td><td>{pct(row.share)}</td>
+                  <td>{tokens(row.reasoning)}</td><td>{pct(row.cache_rate)}</td><td>{pct(row.write_rate)}</td><td>{pct(row.share)}</td>
                 </tr>
               ))}
             </tbody>

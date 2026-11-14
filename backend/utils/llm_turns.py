@@ -119,6 +119,8 @@ class Turn:
         self.experience_offered = False  # a real case from its own record was offered to this turn's reply (backend/utils/experiences.py)
         self.shape_offered = False  # a reviewed shape story from its record was offered to a person who is venting (backend/utils/shape_stories.py)
         self.shape_entry = None  # ... and which one (the entry), so the reply can be given its approved sentence once it is written
+        self.proposal_files: list = []  # the files of the last change proposed this turn ({path, additions, deletions}: counts only), which decides whether a joke may be told (backend/utils/jokes.py)
+        self.joke = None  # the joke told in this reply ({id, line}), if one was
         self.audit_wording = False  # the message had audit-style wording ("scan the repo", "every file"): wider step budget, normal model
         self.done = False
         self.paid = False  # this turn is paid for out of the person's own credit (backend/utils/credits.py): its model calls are counted under a paid: label (kept out of the shared budget) and its cost is charged when it finishes
@@ -177,7 +179,7 @@ def note_call(usage: Dict[str, int], model: Optional[str] = None) -> None:
         if model:
             from backend.utils import llm_usage
 
-            dollars = llm_usage.estimate_cost(str(model), {k: _count(usage.get(k)) for k in ("input", "output", "cached")}, llm_usage.cached_prices())
+            dollars = llm_usage.estimate_cost(str(model), {k: _count(usage.get(k)) for k in ("input", "output", "cached", "cache_write")}, llm_usage.cached_prices())
             cost_micro = int(round((dollars or 0.0) * 1_000_000))
         with turn._lock:
             turn.cost_micro += cost_micro

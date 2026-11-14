@@ -177,6 +177,11 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
     }
     setDrawerOpen(false);
   };
+  const renameConversation = async (sessionId: string, title: string) => {
+    const next = window.prompt("Rename conversation", title || "")?.trim();
+    if (!next || next === title) return;                 // cancelled, left empty or unchanged: nothing to save
+    await conversationList.rename(sessionId, next.slice(0, 200));
+  };
   const deleteConversation = async (sessionId: string, title: string) => {
     if (!window.confirm(`Delete "${title || "this conversation"}"? This can't be undone.`)) return;
     const removed = await conversationList.remove(sessionId);
@@ -218,6 +223,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
           onSelect: selectConversation,
           onNew: newConversation,
           onDelete: deleteConversation,
+          onRename: renameConversation,
         }}
       />
 

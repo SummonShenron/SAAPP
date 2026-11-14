@@ -2437,13 +2437,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         llm = LazyLLM(model_name=args.model, fallback_model=None, temperature=0.7, thinking_level=args.thinking)
     else:
         llm = get_stream_llm("jack")  # the model that writes the final reply in the app
-    totals = {"calls": 0, "input": 0, "output": 0, "cached": 0}
+    totals = {"calls": 0, "input": 0, "output": 0, "cached": 0, "cache_write": 0}
     real_record = llm_usage.record
     tracker = eval_models.SpendTracker(args.ceiling)
 
     def count(model, label, usage, day=None):
         totals["calls"] += 1
-        for key in ("input", "output", "cached"):
+        for key in ("input", "output", "cached", "cache_write"):
             totals[key] += int((usage or {}).get(key, 0) or 0)
         tracker.record(model, label, usage, day)
         real_record(model, label, usage, day)

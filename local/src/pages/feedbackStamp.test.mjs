@@ -23,3 +23,10 @@ test('the page shows each table with words for every value the server can send, 
   assert.match(page, /!feedback\.by_voice\.stakes \|\| feedback\.by_voice\.stakes\.length === 0/);          // an older server sends none of them: the page says so instead of failing
   assert.match(page, /feedback\.by_voice\.stamped > 0 && \(/);
 });
+
+test('the feedback page shows thumbs by the joke told, so a joke that lands badly shows up', () => {
+  assert.match(api, /jokes\?: \{ id: string; positive: number; negative: number \}\[\];/);
+  assert.match(page, /<VoiceTable rows=\{feedback\.by_voice\.jokes\} first="Joke"/);
+  assert.match(page, /row\.id === 'none' \? 'No joke' : row\.id \?\? ''/);
+  assert.match(page, /!feedback\.by_voice\.jokes \|\| feedback\.by_voice\.jokes\.length === 0/);          // an older server sends none: the page says so instead of failing
+});

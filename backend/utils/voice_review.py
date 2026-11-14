@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from backend.components import sonic_jokes as joke_registry
 from backend.components import sonic_shapes as shape_registry
 from backend.components import sonic_situation_facts as fact_registry
 from backend.components import sonic_voice_examples as example_registry
@@ -22,16 +23,16 @@ from backend.utils import self_counters
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "sonic_voice_review"
-KINDS = ("example", "fact", "shape")
+KINDS = ("example", "fact", "shape", "joke")
 STATES = ("approved", "removed")
 OVERRIDE_TTL_SECONDS = 60
 USAGE_DAYS = 30
-_USED_KEY = {"example": "voice_example_used_", "fact": "situation_fact_used_", "shape": "shape_story_used_"}
+_USED_KEY = {"example": "voice_example_used_", "fact": "situation_fact_used_", "shape": "shape_story_used_", "joke": "joke_used_"}
 _cache: Dict[str, Any] = {"at": 0.0, "map": {}}
 
 
 def _entries(kind: str) -> List[Dict[str, Any]]:
-    return list({"example": example_registry.EXAMPLES, "fact": fact_registry.FACTS, "shape": shape_registry.SHAPES}[kind])
+    return list({"example": example_registry.EXAMPLES, "fact": fact_registry.FACTS, "shape": shape_registry.SHAPES, "joke": joke_registry.JOKES}[kind])
 
 
 def known(kind: str, entry_id: str) -> bool:
@@ -124,6 +125,8 @@ def view(db: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
             }
             if kind == "example":
                 item.update({"tone": entry.get("tone", ""), "text": [entry.get("reply", "")]})
+            elif kind == "joke":
+                item.update({"tone": entry.get("trigger", ""), "text": list(entry.get("lines") or [])})
             elif kind == "shape":
                 item.update({"tone": entry.get("tone", ""), "text": [" ".join(part for part in (entry.get("story", ""), entry.get("bridge", "")) if part)]})          # what would be said: the story and its bridge
             else:

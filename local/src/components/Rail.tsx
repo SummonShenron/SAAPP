@@ -13,6 +13,7 @@ export interface RailConversations {
   onSelect: (sessionId: string) => void;
   onNew: () => void;
   onDelete: (sessionId: string, title: string) => void;
+  onRename: (sessionId: string, title: string) => void;
 }
 
 interface RailProps {
@@ -183,6 +184,16 @@ const Rail: React.FC<RailProps> = (props) => {
                 >
                   <button type="button" className="rail-convo-main" data-help="rail.convo" onClick={() => conversations.onSelect(c.session_id)}>
                     {c.title || 'New conversation'}
+                  </button>
+                  <button
+                    type="button"
+                    className="rail-convo-rename"
+                    data-help="rail.convoRename"
+                    aria-label={`Rename ${c.title || 'conversation'}`}
+                    title="Rename conversation"
+                    onClick={() => conversations.onRename(c.session_id, c.title)}
+                  >
+                    <Icon name="pencil" size={14} />
                   </button>
                   <button
                     type="button"
