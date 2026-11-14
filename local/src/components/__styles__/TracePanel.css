@@ -187,20 +187,16 @@ button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); ou
 .steps-earlier { margin: 0 0 6px 0; font-size: 0.78rem; }
 
 /* ---- the graph loader (rules in components/graphLoader.ts, drawings in components/LoaderGraphs.tsx) ----
-   While a turn runs the loader is a graph, in the steps drawn in the conversation (the trace panel keeps its pulsing dot): a vertical start graph before the first step, a fork under the newest step, and a merge
-   into the next step when it lands. Only the accent and the line colour are used, so the dark theme follows by itself. */
+   While a turn runs the loader is a graph, in the steps drawn in the conversation (the trace panel keeps its pulsing dot): a vertical graph before the first step, the same graph under the newest step in the gap
+   before the next one, and the light landing in each step's node as it arrives. Only the accent and the line colour are used, so the dark theme follows by itself. */
 .steps-inline-live { --gl: var(--accent-primary); }
 .gl-svg { display: block; flex: 0 0 auto; }
-.gl-svg.gl-fork-svg, .gl-svg.gl-start { overflow: visible; }
+.gl-svg.gl-start { overflow: visible; }
 .gl-link { fill: none; stroke: var(--border-color); stroke-width: 1.3; transition: stroke .25s, opacity .25s; }
 .gl-link.gl-on { stroke: var(--gl); stroke-width: 1.8; }
 .gl-fnode { fill: var(--gl); opacity: .26; transition: opacity .25s; }
 .gl-fnode.gl-on { opacity: 1; }
 .gl-gone { opacity: 0 !important; }
-.gl-page { transition: transform .45s cubic-bezier(.4, 0, .2, 1); }
-/* the way back from the chosen end into the new step's node: drawn in along its length (pathLength is 1) */
-.gl-wrap { fill: none; stroke: var(--gl); stroke-width: 1.8; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset .6s ease; }
-.gl-wrap.gl-drawn { stroke-dashoffset: 0; }
 .gl-svg.gl-leaving { opacity: 0; transition: opacity .3s ease; }
 @keyframes gl-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes gl-text-out { from { opacity: 1; } to { opacity: 0; } }
@@ -216,23 +212,28 @@ button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); ou
 .gl-start-text-out { animation: gl-text-out .3s ease forwards; }
 .gl-start-settled { transition: padding-top .35s ease; }
 
-/* Under the newest step: the fork hangs in the space the running node already reserves, so it never sits beside the text; the dashed stub runs down to it however tall the text is */
-.gl-below { position: absolute; left: 0; bottom: -17px; z-index: 2; }
+/* Under the newest step: the graph hangs in the room the row keeps below its text (50px: GAP_SPACE_PX), so it never sits beside the text, and its last node (at y = 60 of its 66px) meets the next row's dot, 10px below
+   this row's bottom edge: the box hangs 16px below the edge (GAP_OVERHANG_PX). The dashed stub runs down from the step's dot to the graph's first node (44px above the edge: GAP_STUB_END_PX) however tall the text is. */
+.gl-below { position: absolute; left: 0; bottom: -16px; z-index: 2; }
 .gl-below .gl-svg { animation: gl-fade-in .35s ease backwards; }          /* backwards, not both: the end state must stay free for the fade-out */
 .steps-inline-live .trace-node { transition: padding-bottom .35s ease; }
-.steps-inline-live .trace-node-forking, .steps-inline-live .trace-node-merging { padding-bottom: 46px; }
-.steps-inline-live .trace-node-forking::after, .steps-inline-live .trace-node-merging::after { height: auto; bottom: 22px; transition: opacity .3s ease; }
+.steps-inline-live .trace-node-forking, .steps-inline-live .trace-node-merging { padding-bottom: 50px; }
+.steps-inline-live .trace-node-forking::after, .steps-inline-live .trace-node-merging::after { height: auto; bottom: 44px; transition: opacity .3s ease; left: 6.1px; width: 1.8px; background: var(--gl); animation: none; opacity: 1; }
+/* The graph stems straight out of the step's own node: a solid stem in the graph's own line colour and width runs from the dot to the first split (there is no separate first node: StartGraph's `stem`). */
+/* The newest step has no row after it, so whatever follows the list (a run card, the reply) would sit under the graph's last 16px: the row keeps that much room, plus a little air, below its edge. Once the next step has
+   landed this row is no longer the last one, and the room goes (the next row's dot is then where the graph's last node is). */
+.steps-inline-live .trace-node-forking.trace-node-last { margin-bottom: 20px; }
 .steps-inline-live .trace-node-active .trace-node-dot::after { display: none; }          /* one thing moves, not two */
 .steps-inline-live .trace-node-core { animation: none; }
-/* while the way back is on screen it is the connection to the next step: the plain line is hidden (the dashed stub to the fork stays) and fades back in once the fork is gone */
+/* while the graph is landing it is the connection to the next step: the plain line is hidden (the dashed stub to the graph stays) and fades back in once the graph is gone */
 .steps-inline-live .trace-node::before { transition: opacity .35s ease; }
 .steps-inline-live .trace-node-merging::before { opacity: 0; }
-/* the step that has just landed: its dot and words fade in about when the way back reaches it, and its own fork (and the stub to it) wait until then (ARRIVE_DELAY_MS in graphLoader.ts) */
+/* the step that has just landed: its dot and words fade in about when the light reaches its node, and its own graph (and the stub to it) wait until the one above is gone (ARRIVE_DELAY_MS in graphLoader.ts) */
 .steps-inline-live .trace-node-arriving .trace-node-dot, .steps-inline-live .trace-node-arriving .trace-node-text { animation: gl-arrive .35s ease 720ms both; }
 .steps-inline-live .trace-node-arriving::after { opacity: 0 !important; }
 
 @media (prefers-reduced-motion: reduce) {
   .steps-toggle-chevron { transition: none; }
-  .gl-link, .gl-fnode, .gl-page, .gl-wrap, .gl-start-settled, .steps-inline-live .trace-node, .steps-inline-live .trace-node::before { transition: none; }
+  .gl-link, .gl-fnode, .gl-start-settled, .steps-inline-live .trace-node, .steps-inline-live .trace-node::before { transition: none; }
   .gl-below .gl-svg, .gl-start-text-out, .steps-inline-live .trace-node-arriving .trace-node-dot, .steps-inline-live .trace-node-arriving .trace-node-text { animation: none; }
 }
