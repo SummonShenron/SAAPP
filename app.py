@@ -2407,7 +2407,11 @@ def sync_run_script(script_path):
     stdout, stderr = process.communicate()
 
     logger.info(f"[INGEST STDOUT]\n{stdout}")
-    logger.error(f"[INGEST STDERR]\n{stderr}")
+    if stderr:
+        if process.returncode == 0:
+            logger.warning(f"[INGEST STDERR]\n{stderr}")
+        else:
+            logger.error(f"[INGEST STDERR]\n{stderr}")
     logger.info(f"[INGEST EXIT CODE] {process.returncode}")
 
 @app.post("/api/upload")
