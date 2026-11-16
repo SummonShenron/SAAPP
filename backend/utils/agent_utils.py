@@ -9,8 +9,9 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 from langchain_core.callbacks.manager import adispatch_custom_event
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage
 from backend.utils import handback_check
+from backend.utils.log_hygiene import describe_tool_result
 
 logger = logging.getLogger("SASS Logger")
 
@@ -316,6 +317,9 @@ def build_tool_facts(
         facts.append("Args: " + ", ".join(shown))
     facts.append(f"Took: {duration_seconds:.2f} s" if duration_seconds < 10 else f"Took: {duration_seconds:.1f} s")
     facts.append(f"Result: {outcome}, {len(text)} characters")
+    if outcome == "error":
+        # The tool's own reason (system-written, web addresses taken out): what the person needs to see when a step did not work. Never the content of a successful result.
+        facts.append("Why: " + describe_tool_result(text).removeprefix("ERROR:").strip())
     if retries > 0:
         facts.append(f"Retries so far this turn: {retries}")
     return clean_trace_facts(facts)

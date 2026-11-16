@@ -120,6 +120,11 @@ export function mergeExcerpts(steps: TraceStep[], byId: TraceExcerptsById): Trac
   return changed ? merged : steps;
 }
 
+/** Whether a finished tool step did not work: the facts the server sent for it say "Result: error, ..." (backend/utils/agent_utils.py build_tool_facts). A step with no facts yet is not failed. */
+export function stepFailed(facts: readonly string[] | undefined): boolean {
+  return !!facts && facts.some(line => line.startsWith('Result: error'));
+}
+
 /** What the server sent, kept to the same limits the server applies (it is shown as plain text, never as HTML). */
 export function cleanFacts(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];

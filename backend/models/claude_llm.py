@@ -57,7 +57,7 @@ def _messages(prompt: Any) -> Any:
 class ClaudeLLM:
     def __init__(self, model_name: str = DEFAULT_MODEL, fallback: Any = None, max_tokens: int = MAX_TOKENS, timeout: float = TIMEOUT_SECONDS,
                  max_retries: int = 1, effort: Optional[str] = DEFAULT_EFFORT, thinking_off: bool = THINKING_OFF, cache: bool = CACHE_DEFAULT,
-                 drop_block: bool = DROP_BLOCK, voice_shape: bool = False, voice_tail: str = ""):
+                 drop_block: bool = DROP_BLOCK, voice_shape: bool = False, voice_tail: str = "", stable_prefix: str = ""):
         self.model_name = model_name
         self.fallback = fallback
         self.max_tokens, self.timeout, self.max_retries = max_tokens, timeout, max_retries
@@ -65,6 +65,7 @@ class ClaudeLLM:
         self.drop_block = drop_block
         self.voice_tail = voice_tail          # with voice_shape: "" none, "checkin" the check-in reminder, "all" the standing ones too: closing reminders at the end of the user message (backend/utils/claude_voice.py)
         self.voice_shape = voice_shape        # a reply prompt is sent as a system prompt plus a user message (backend/utils/claude_voice.py); off for every other job
+        self.stable_prefix = stable_prefix    # a one-shot job whose prompt starts with the same long text every call (the reasoner's instructions): that start is sent as its own block and marked for the cache (_to_messages)
         self._chat: Any = None
         self._tool_runnables: Dict[tuple, Any] = {}
 
@@ -95,8 +96,10 @@ class ClaudeLLM:
                 if self.thinking_off:
                     kwargs["effort"] = "low"
                 kwargs["thinking"] = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
-            if self.cache and not self.voice_shape:
+            if self.cache and not self.voice_shape and not self.stable_prefix:
                 # Automatic caching: one top-level field, and the API keeps the cache breakpoint at the end of the conversation as it grows.
+                # Not for a job with a stable_prefix either: its prompt is ONE message that changes at its end every call, so the moving breakpoint wrote the whole prompt and never read it
+                # (the reasoner, measured 2026-11-15: 70 calls, 0% read, 100% written); it marks the end of the stable start instead (_to_messages).
                 # Not for a shaped reply (voice_shape): a reply's prompt changes before its end every turn (the mood, the memory lines, the message), so the
                 # moving breakpoint wrote the whole prompt at 1.25x and never read it back (probed live 2026-11-14: a different turn of one conversation read 0).
                 # A shaped reply marks the end of its stable system part instead (_to_messages).
@@ -139,6 +142,12 @@ class ClaudeLLM:
                     blocks.append({"type": "text", "text": moved[1]})
                     return [SystemMessage(content=system), HumanMessage(content=blocks)]
                 return [SystemMessage(content=system), HumanMessage(content=parts[1])]
+        if self.cache and self.stable_prefix and isinstance(prompt, str) and len(prompt) > len(self.stable_prefix) and prompt.startswith(self.stable_prefix):
+            # The same words as the prompt, in two blocks: the stable start (marked, so the next call reads it from the cache) and what changes this call.
+            return [HumanMessage(content=[
+                {"type": "text", "text": self.stable_prefix, "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": prompt[len(self.stable_prefix):]},
+            ])]
         return _messages(prompt)
 
     def _metered(self, response: Any, label: str) -> Any:

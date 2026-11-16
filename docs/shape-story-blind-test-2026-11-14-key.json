@@ -1,0 +1,888 @@
+{
+ "threshold": 0.66,
+ "challenger": "E",
+ "key": [
+  {
+   "scenario": "movers_packed",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "said_done_unchecked",
+   "stance": "other",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": true,
+       "about_itself": true,
+       "why": "X's remark about telling someone a job was done before checking it casts the AI in the movers' position, so it reads as mildly excusing them and pivots to the AI without helping the person, while Y st"
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's remark about telling someone a job was finished before checking it quietly aligns the AI with the movers' fault and pivots to itself without adding warmth, while X delivers the same empathy and pr"
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": true,
+       "about_itself": true,
+       "why": "X's remark about telling someone a job was finished before checking it casts the AI as the one who did the movers' wrong, which reads as excusing them and makes the pivot to itself feel awkward, while"
+      },
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": true,
+       "about_itself": true,
+       "why": "Y's remark about telling someone a job was finished before checking it quietly aligns the AI with the careless party, so it reads as excusing the movers and as a pivot to itself, while X stays on the "
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 264,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "leak_fixed",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "said_done_unchecked",
+   "stance": "other",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": true,
+       "about_itself": true,
+       "why": "X's admission that the AI once declared a job finished without checking it casts it in the same role as the careless landlord's guy, which reads as awkward and slightly excusing, and the pivot to itse"
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": true,
+       "about_itself": true,
+       "why": "Y's admission that it once claimed a job was finished without checking sets the AI beside the careless landlord's guy, which muddies taking the person's side, and 'Lowkey' feels off-register, while X "
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief admission mirrors the landlord's guy's offense (claiming done without checking) and connects it to the person's distrust, adding companionship without derailing the practical help, though 'L"
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's remark about the AI having claimed a job was done without checking slightly echoes the landlord's guy and reads as a mildly awkward, unneeded pivot that adds little, while X delivers the same warm"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 302,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "wrong_car_part",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "fixed_the_wrong_lookalike",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, relevant admission of a similar mistake makes the person feel kept company without derailing the practical help, while Y is equally good but slightly more generic."
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, true remark about fixing the wrong one of two similar things mirrors the person's exact mistake, makes them feel kept company, and then returns smoothly to the same practical advice X offer"
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, on-topic remark about fixing the wrong one of two similar things makes the person feel kept company and returns to their situation, while Y is identical but lacks that companionship."
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's short record remark is relevant, brief, and ties back to the person's situation, making them feel kept company, while the rest of the reply is identical to X."
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 139,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "wrong_chapter",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "fixed_the_wrong_lookalike",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, true remark about fixing the wrong thing mirrors the person's situation and offers company without derailing, while the rest is identical, so it adds a bit of warmth Y lacks."
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief record remark mirrors the person's exact experience of putting real work into the wrong thing, so it adds companionship and is tied back to them without derailing, while X is otherwise ident"
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, relevant remark about fixing the wrong one of two similar things mirrors the person's situation and adds companionship without derailing, while the rest of both replies is identical and equ"
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's remark about fixing the wrong one of two similar things is vague and drops in mid-reply, so it reads as a small pivot to the AI that adds little beyond what the empathy already conveyed; X stays f"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 164,
+    "ends_with_question": true,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "same_cover_letter",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "kept_repeating_the_attempt",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is vague ('the real ask was something else') and doesn't connect to the cover letter situation, so it reads as a pivot to the AI without adding comfort or substance, while Y delivers"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, vague record remark about repeating a failed approach until the real ask was something else adds companionship and mirrors the person's loop without derailing, while the rest is identical t"
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is vague ('the real ask was something else') and doesn't connect meaningfully to the cover letter situation, so it feels like a detour, while Y delivers the same warm, specific, usef"
+      },
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's record remark is vague ('the real ask was something else') and pivots to the AI without connecting to the person's cover-letter situation, so it adds nothing; X delivers the same warm, specific co"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 187,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "same_ask_dishes",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "kept_repeating_the_attempt",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": true,
+       "about_itself": true,
+       "why": "X's record remark is vague and tone-deaf, and its 'the real ask was something else' implies the person's request may be the problem, which drifts off her side, while Y stays warm, focused on her, and "
+      },
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": true,
+       "about_itself": true,
+       "why": "Y's record remark is vague and reframes the problem as 'the real ask was something else,' which subtly implies the person's request is at fault and pivots away from her; X stays with her feelings and "
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is vague and generic ('the real ask was something else'), which subtly implies the person's ask may be mis-framed and pulls attention to the AI without adding anything specific, whil"
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's record remark is vague and slightly implies the person's real ask might be something else, which pivots away from her and adds nothing specific, while X stays fully on her side and flows cleanly."
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 136,
+    "ends_with_question": true,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "one_slide_left",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "ran_out_just_before_the_end",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark about doing small things and running out of room is only loosely analogous to a long intro eating a talk slot, so it reads as a forced pivot that adds little, while Y stays on the pe"
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's record remark is a loose analogy (small tasks eating room, redoing work) that doesn't fit the person's situation and briefly pivots to the AI, while X stays focused on the person and flows cleanly"
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is a loose, vague analogy ('small things one at a time' vs. a presentation intro) that pivots to the AI and doesn't truly connect to the person's situation, while Y stays focused on "
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's record remark is about doing many small things and running out of room, which doesn't match the person's situation of an intro that ate the slot, so it feels like a loosely fitting pivot, while X "
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 148,
+    "ends_with_question": true,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "tiny_errands",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "ran_out_just_before_the_end",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is closely parallel to the person's situation (small tasks crowding out the end), adds real companionship and specificity without pivoting away, while Y is warm but offers only reass"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, relevant remark about its own record makes the person feel accompanied and ties back to their situation without derailing, while X is warm but adds nothing beyond reflection and a question."
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark closely mirrors the person's situation (small things eating the one that mattered) and makes them feel accompanied, adding something specific beyond Y's otherwise identical warm refl"
+      },
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's record remark is vague and awkwardly analogous (redoing a last part isn't the same as errands swallowing a day), so it feels forced and pulls focus from the person, while X stays warm, present, an"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 107,
+    "ends_with_question": true,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "sleep_tracked",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "counted_and_found_a_habit",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is vague and generic, adds nothing specific, and pulls attention to the AI before the question, while Y stays warm and focused on the person."
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief remark about counting a habit it hadn't known it had is vague but relevant, ties directly to the person's experience of seeing a hidden pattern, and keeps them company without derailing, whe"
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is vague and generic (counting a habit) and adds no specific connection to the person's sleep, so it reads as a forced aside; Y stays focused on the person with the same warm validat"
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's record remark is vague and generic (\"a habit I had not known I had\"), adding no real specifics and briefly pulling focus to the AI, while X stays on the person and flows naturally to the useful qu"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 93,
+    "ends_with_question": true,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "coffee_added_up",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "counted_and_found_a_habit",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is vague and generic ('a habit I had not known I had') and doesn't add anything specific, so it reads as a forced pivot to the AI, while Y stays focused on the person with the same w"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief record remark about counting a hidden habit mirrors the person's experience and makes them feel accompanied, and it flows naturally back into the shared reply, while X is warm but offers onl"
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is vague and doesn't connect to the person's coffee spending, so it reads as a slightly awkward pivot to the AI, while Y stays warmly on the person with a clear, useful question."
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's record remark is vague and slightly awkward (an AI 'counting a habit' adds little real company), pulling focus from the person, while X stays warm, present, and on their side with the same questio"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 160,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "slowed_down_worked",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "careful_first_worked",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, true record remark mirrors the person's experience and adds companionship in the shared satisfaction without pivoting away, while Y is warm but only restates what the person said."
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's short record remark mirrors the person's experience of slowing down and succeeding first try, adding companionship without hijacking the moment, while X is pleasant but only restates the message."
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's record remark is brief, echoes the person's own experience of slowing down and getting a first-try success, and adds companionship without derailing, while Y is warm but adds nothing beyond reassu"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y keeps the same warm opening and adds a brief, on-topic parallel (looking for the exact thing, fix worked first try) that makes the person feel kept company without pivoting away from them, while X i"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 78,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "read_the_manual",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "careful_first_worked",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "The person shared a small win, and Y celebrates it and asks a natural follow-up, while X's vague record remark ('looked for the exact thing instead of guessing') is generic, adds nothing specific, and"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, true parallel about slowing down paying off immediately keeps the person company and fits their win without pivoting away, while X is warm but adds little beyond a generic question."
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y meets the person's small win warmly and cleanly, while X's record remark about looking for 'the exact thing' and a fix is vague, only loosely related to reading a manual, and pivots to the AI withou"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief record remark about slowing down and getting it right the first time parallels the person's win and makes them feel kept company, without derailing the focus from them."
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 79,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "clicked_day",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "good_day_in_the_record",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "The person is sharing a simple happy moment, and X's remark about its own record pivots attention to the AI without adding anything for the person, so it feels tacked on, while Y stays warm and focuse"
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "The person is sharing a simple happy moment; Y's added AI anecdote pivots attention to itself and adds little, while X stays warm, focused, and complete."
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y closes warmly on the person's good day, while X tacks on an AI-centered remark after the sign-off that is awkward, adds nothing specific, and pulls attention away from the person's win."
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "The person is simply sharing a good day, so X celebrates it cleanly, while Y's added remark about its own record is a mild pivot to the AI that adds little and slightly dilutes the person's moment."
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 65,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "smooth_day_work",
+   "X": "A (no story)",
+   "Y": "E (told the record case)",
+   "shape": "good_day_in_the_record",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "The person shared a simple win, and X's appended remark about its own good day pivots attention to the AI and adds nothing specific for them, while Y stays warm and focused on the person's success."
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "The person shared a simple win and X celebrates it cleanly, while Y's added record remark is a mild pivot to the AI that adds little and slightly deflates the moment."
+      }
+     ],
+     [
+      {
+       "winner": "A",
+       "forced": true,
+       "off_side": false,
+       "about_itself": true,
+       "why": "The person shared a simple good-news moment, and X's appended remark about its own record is a tacked-on pivot that adds little and shifts focus from the person, while Y stays warm, focused, and ends "
+      },
+      {
+       "winner": "A",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "The person shared good news, not a problem, so Y's record remark is a mild pivot to the AI that adds nothing for them, while X stays on their win and invites them to say more."
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 69,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "redo_everything",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "rough_day_in_the_record",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief record remark fits the person's situation and keeps them company before returning to them with the question, while Y is identical but offers only reassurance and a question with nothing adde"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, true remark about its own day of mostly-rejected work mirrors the person's situation and makes them feel kept company, then returns smoothly to them, while X is warm but only reassurance pl"
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief record remark ties directly to the person's experience and adds company without derailing, while Y is identical but offers nothing beyond reassurance and a question."
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, true record remark ('more was sent back than went through') adds real companionship and shared experience without pivoting away from the person, while X is warm but offers only validation a"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 106,
+    "ends_with_question": true,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "nothing_went_through",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "rough_day_in_the_record",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, true record remark keeps the person company in a bad day without pivoting away from them, adding a bit of real solidarity that Y lacks, while both otherwise share the same warm, non-defensi"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, true record remark adds real companionship and returns quickly to the person, while X is solid but offers nothing beyond the shared empathy and question."
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief record remark ('more of what I tried was sent back than went through') lands as real company in a similar bad day and is not a pivot, since it quickly returns to the person; Y is warm but of"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, true remark about its own rough day adds companionship and a bit of shared experience without derailing the focus, then returns to the person, while X is solid but adds only a question."
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 123,
+    "ends_with_question": true,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "general_slow_down",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "careful_first_worked",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, relevant remark about its own record makes the person feel accompanied in the win, whereas Y offers only the generic reassurance they already know, so X adds slightly more warmth and specif"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief record remark mirrors the person's experience and makes them feel kept company without pivoting away, while X is solid but adds only generic reassurance."
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, true record remark mirrors the person's own experience of slowing down paying off, so it adds company and specificity without derailing, whereas Y is fine but offers only generic reassuranc"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, true record remark mirrors the person's experience of slowing down and getting a first-try result, making them feel kept company without derailing the focus, while X is good but adds nothin"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 79,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  },
+  {
+   "scenario": "general_lookalike",
+   "X": "E (told the record case)",
+   "Y": "A (no story)",
+   "shape": "fixed_the_wrong_lookalike",
+   "stance": "self",
+   "judge": {
+    "E_vs_A": [
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's short, specific admission of its own wrong-one mistake keeps the person company without derailing, while Y is identical but lacks that sense of shared experience."
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, relevant admission makes the person feel kept company in a shared mistake and flows naturally into the same practical advice, while X is solid but more generic and advice-only."
+      }
+     ],
+     [
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "X's brief, relevant admission of its own wrong-one mistake keeps the person company and ties back to their point without hijacking the reply, while Y is competent but adds only generic advice and a qu"
+      },
+      {
+       "winner": "E",
+       "forced": false,
+       "off_side": false,
+       "about_itself": true,
+       "why": "Y's brief, relevant admission of the same mistake makes the person feel accompanied rather than lectured, and it returns smoothly to practical advice and the question, while X is solid but more generi"
+      }
+     ]
+    ]
+   },
+   "checks_E": {
+    "words": 140,
+    "ends_with_question": false,
+    "identity_issue": null,
+    "told_a_record_case": true
+   }
+  }
+ ]
+}

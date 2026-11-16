@@ -136,7 +136,7 @@ def test_a_tool_call_at_an_effort_is_bound_on_the_responses_client_and_a_plain_c
 def test_invoke_returns_the_answer_and_meters_the_call_under_the_configured_name(recorded):
     llm = llm_with(FakeClient(reply("Fine.")))
     assert llm.invoke("a prompt").content == "Fine."
-    assert recorded == [("gpt-5.4-mini", {"input": 1000, "output": 50, "reasoning": 20, "cached": 400})]   # not the dated snapshot OpenAI reports
+    assert recorded == [("gpt-5.4-mini", {"input": 1000, "output": 50, "reasoning": 20, "cached": 400, "cache_write": 0})]   # not the dated snapshot OpenAI reports
 
 
 def test_a_dated_snapshot_is_metered_as_the_model_but_another_model_is_metered_as_itself(recorded):

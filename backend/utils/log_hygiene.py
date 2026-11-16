@@ -17,6 +17,7 @@ To capture full state deliberately (local debugging), set ERRAGENT_CAPTURE_STATE
 """
 import logging
 import os
+import re
 from typing import Any, Dict
 
 CAPTURE_ENV = "ERRAGENT_CAPTURE_STATE"
@@ -87,6 +88,16 @@ def describe_observation(text: Any) -> str:
     user's calendar, mail, documents or code, and doesn't belong in a log."""
     text = text if isinstance(text, str) else str(text or "")
     return text[:200] if text.startswith("ERROR") else f"{len(text)} chars"
+
+
+_URL = re.compile(r"https?://\S+")
+_QUOTED_HOST = re.compile(r"(\bhost )'[^']*'")
+
+
+def describe_tool_result(text: Any) -> str:
+    """describe_observation for a log line about a tool's result, with the web addresses taken out. A tool's own error text can name the page it was asked
+    for ("ERROR: could not read https://...: the site answered HTTP 403"), and that address is what the person was reading: the reason stays, the address does not."""
+    return _QUOTED_HOST.sub(r"\1'<host>'", _URL.sub("<url>", describe_observation(text)))
 
 
 def emotion_summary(state: Any) -> Dict[str, Any]:

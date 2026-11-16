@@ -365,6 +365,14 @@ REASONER_HAIKU_CHOICES = ("haiku",)      # only the explicit "Claude Haiku" base
 _reasoner_haiku: dict = {}
 
 
+def reasoner_stable_prefix() -> str:
+    """The start of the reasoner's prompt that is the same on every call: its instructions, up to where the conversation history is put in. A cache breakpoint here is read back by the next call
+    (the whole prompt used to be marked, which changed at its end every turn and so was written every time and never read). Exactly the text REASONER_PROMPT.format(...) starts with."""
+    from backend.components.constraints import REASONER_PROMPT
+
+    return REASONER_PROMPT.split("{history}", 1)[0].format()
+
+
 def reasoner_llm_for(reply_choice):
     """(model, "haiku" | "lite") for the reasoner call that runs first on every turn (agent_workflow.reasoner_node), by the person's base-model setting: Claude Haiku (low effort, thinking ON, Flash Lite as its fallback)
     for a person who chose the Claude Haiku base model, whose messages already go to Anthropic, and the Gemini lite model for everyone else (the standard voice, Auto, GPT, Lite, and a turn with no choice), so nobody's messages reach a provider they
@@ -374,7 +382,7 @@ def reasoner_llm_for(reply_choice):
 
     if reply_choice in REASONER_HAIKU_CHOICES and os.getenv("REASONER_HAIKU", "").strip().lower() not in ("0", "off", "false", "no") and haiku_reply_available():
         if "haiku" not in _reasoner_haiku:
-            _reasoner_haiku["haiku"] = claude_llm.ClaudeLLM(model_name=claude_llm.DEFAULT_MODEL, fallback=lite_llm, effort="low", thinking_off=False, max_tokens=4000)
+            _reasoner_haiku["haiku"] = claude_llm.ClaudeLLM(model_name=claude_llm.DEFAULT_MODEL, fallback=lite_llm, effort="low", thinking_off=False, max_tokens=4000, stable_prefix=reasoner_stable_prefix())
         return _reasoner_haiku["haiku"], "haiku"
     return lite_llm, "lite"
 
