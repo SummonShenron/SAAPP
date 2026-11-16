@@ -3,7 +3,7 @@ import Icon from './icons';
 import { StartGraph } from './LoaderGraphs';
 import { useReducedMotion } from './useReducedMotion';
 import { LAND_END_AT, arrivalOf } from './graphLoader';
-import { endingWords, finalStepLabel, searchSummary, splitAroundTerm, stepWords, toggleExpanded, type LastStepStatus, type SearchExcerpt, type TraceExcerpt, type TurnEnd } from './traceFacts';
+import { endingWords, finalStepLabel, searchSummary, splitAroundTerm, stepFailed, stepWords, toggleExpanded, type LastStepStatus, type SearchExcerpt, type TraceExcerpt, type TurnEnd } from './traceFacts';
 import './__styles__/TracePanel.css';
 
 export interface TraceStep {
@@ -84,6 +84,8 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
     <ol className="trace-path">
       {steps.map((step, i) => {
         const done = step.status === 'complete';
+        // A tool step whose result was an error says so on the row itself (its facts, behind the arrow, give the reason), so a step that did not work no longer looks like one that did.
+        const failed = done && stepFailed(step.facts);
         const last = i === steps.length - 1;
         const hasFacts = !!step.facts && step.facts.length > 0;
         const excerpt = step.excerpt;
@@ -97,6 +99,7 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
           <span className="trace-node-main">
             <span className="trace-node-title">
               {words.title}
+              {failed && <span className="trace-failed-chip">Failed</span>}
               {step.batchSize && step.batchSize > 1 && (
                 <span className="trace-batch">batched {step.batchIndex}/{step.batchSize}</span>
               )}
@@ -111,10 +114,10 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
         return (
           <li
             key={step.id}
-            className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${last ? ' trace-node-last' : ''}${step.turnEnd ? ` trace-node-end trace-end-${step.turnEnd}` : ''}${(last && running) || merging === step.id ? ' trace-node-running' : ''}${expanded ? ' trace-node-open' : ''}${forking ? ' trace-node-forking' : ''}${merging === step.id ? ' trace-node-merging' : ''}${arriving ? ' trace-node-arriving' : ''}`}
+            className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${failed ? ' trace-node-failed' : ''}${last ? ' trace-node-last' : ''}${step.turnEnd ? ` trace-node-end trace-end-${step.turnEnd}` : ''}${(last && running) || merging === step.id ? ' trace-node-running' : ''}${expanded ? ' trace-node-open' : ''}${forking ? ' trace-node-forking' : ''}${merging === step.id ? ' trace-node-merging' : ''}${arriving ? ' trace-node-arriving' : ''}`}
           >
             <span className="trace-node-dot" aria-hidden="true">
-              {done ? <Icon name="check" size={11} /> : <span className="trace-node-core" />}
+              {failed ? <Icon name="close" size={11} /> : done ? <Icon name="check" size={11} /> : <span className="trace-node-core" />}
             </span>
             <div className="trace-node-text">
               {finalLabel && <div className="trace-final-header" data-status={step.lastStep}>{finalLabel}</div>}

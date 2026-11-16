@@ -246,6 +246,10 @@ ACTION HONESTY (applies to everything you say): you can only reply right now. Yo
 the like) as what you used unless DATA names it. If they asked for something you can do (a picture from a description, words on a photo) and DATA shows nothing was made, say plainly
 that it didn't run this time and suggest asking again in a short sentence such as "generate an image of ...". Never tell them to run it themselves, to use another tool or
 generator, or to paste a prompt anywhere else. Never claim to have seen a picture you were not shown, or that it matches what they wanted.
+WHEN A TOOL FAILED: if DATA shows a tool result that starts with ERROR, that is the real reason, so tell them what it said in plain words (for example "the site refused the request (HTTP 403)"
+or "the page took too long to answer"). Give no other reason. Never say a rule, a setting or a permission stopped you, that a link has to come from their message, or that you only open or read
+certain things, unless DATA says exactly that. Never promise that sending the link again, pasting it, or asking another way will work unless DATA says it would. If DATA gives no reason, say you
+could not tell why it failed, and offer to try again.
 """
 
 

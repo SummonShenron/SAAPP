@@ -47,6 +47,8 @@
   z-index: 1;
 }
 .trace-node-done .trace-node-dot { background: var(--bg-alt); }
+.trace-node-failed .trace-node-dot { border-color: var(--accent-danger); color: var(--accent-danger); } /* a tool step whose result was an error (TraceSteps stepFailed) */
+.trace-failed-chip { display: inline-block; margin-left: 8px; padding: 0 7px; font-size: 0.66rem; font-weight: 700; line-height: 1.5; border-radius: 999px; border: 1px solid var(--accent-danger); color: var(--accent-danger); vertical-align: 1px; }
 .trace-node-active .trace-node-dot { border: 2px solid var(--accent-primary); }
 .trace-node-core { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-primary); animation: trace-pulse 1.2s ease-in-out infinite; }
 .trace-node-active .trace-node-dot::after {

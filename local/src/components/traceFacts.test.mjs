@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { GENERIC_REVISION_WORDS, REVISION_WORDS, revisionWords, cleanExcerpt, searchSummary, splitAroundTerm, cleanFacts, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, toggleExpanded, toolStepLabel } from './traceFacts.ts';
+import { GENERIC_REVISION_WORDS, REVISION_WORDS, revisionWords, cleanExcerpt, searchSummary, splitAroundTerm, cleanFacts, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, stepFailed, toggleExpanded, toolStepLabel } from './traceFacts.ts';
 
 test('tool steps get plain-words titles, browser tools share one, unknown tools get a generic one, no tool means no label', () => {
   assert.equal(toolStepLabel('web_search'), 'Searched the web');
@@ -285,4 +285,25 @@ test('the chat page gives the reply-fit step a label and says its detail in plai
   assert.match(chat, /const stepDetail = item\.node === 'reply_fit_check' \? revisionWords\(item\.detail\) : item\.detail;/);
   assert.match(chat, /const displayTitle = stepDetail \|\| friendlyLabel;/);
   assert.match(chat, /detail: stepDetail \|\| `Node: \$\{item\.node\}`,/);
+});
+
+test('a finished tool step is failed only when its facts say the result was an error, and a step with no facts yet is not', () => {
+  assert.equal(stepFailed(['Tool: read_url', 'Took: 1.20 s', 'Result: error, 112 characters', 'Why: could not read <url>: the site answered HTTP 403']), true);
+  assert.equal(stepFailed(['Tool: read_url', 'Took: 1.20 s', 'Result: ok, 8128 characters']), false);
+  assert.equal(stepFailed(['Result: empty (no results), 2 characters']), false);
+  assert.equal(stepFailed(['Result: truncated, 90000 characters']), false);
+  assert.equal(stepFailed(['Why: Result: error is only a word here']), false);       // only the result line counts, not any line that mentions it
+  assert.equal(stepFailed([]), false);
+  assert.equal(stepFailed(undefined), false);
+});
+
+test('the steps draw a failed step with a cross, a Failed label and its own class, from the facts and nothing else', () => {
+  const panel = readFileSync(new URL('./TraceSteps.tsx', import.meta.url), 'utf8');
+  assert.match(panel, /const failed = done && stepFailed\(step\.facts\);/);
+  assert.match(panel, /\{failed && <span className="trace-failed-chip">Failed<\/span>\}/);
+  assert.match(panel, /\$\{failed \? ' trace-node-failed' : ''\}/);
+  assert.match(panel, /\{failed \? <Icon name="close" size=\{11\} \/> : done \? <Icon name="check" size=\{11\} \/>/);
+  const css = readFileSync(new URL('./__styles__/TracePanel.css', import.meta.url), 'utf8');
+  assert.match(css, /\.trace-node-failed \.trace-node-dot \{[^}]*var\(--accent-danger\)/);
+  assert.match(css, /\.trace-failed-chip \{[^}]*var\(--accent-danger\)/);
 });
