@@ -9,4 +9,4 @@ from backend.services import native_loop
 
 
 def test_the_tool_agent_prompt_leaves_earlier_replies_alone_unless_asked():
-    assert "Never retract, correct or comment on" in native_loop.SYSTEM_PROMPT and "their own records" in native_loop.SYSTEM_PROMPT
+    assert "Never retract, correct or comment on" in native_loop.SYSTEM_PROMPT and "your own records" in native_loop.SYSTEM_PROMPT

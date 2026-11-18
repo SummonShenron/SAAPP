@@ -302,7 +302,7 @@ test('the steps draw a failed step with a cross, a Failed label and its own clas
   assert.match(panel, /const failed = done && stepFailed\(step\.facts\);/);
   assert.match(panel, /\{failed && <span className="trace-failed-chip">Failed<\/span>\}/);
   assert.match(panel, /\$\{failed \? ' trace-node-failed' : ''\}/);
-  assert.match(panel, /\{failed \? <Icon name="close" size=\{11\} \/> : done \? <Icon name="check" size=\{11\} \/>/);
+  assert.match(panel, /\{failed \? <Icon name="close" size=\{12\} \/> : <StepIcon kind=\{step\.kind\} still=\{done\} \/>\}/);
   const css = readFileSync(new URL('./__styles__/TracePanel.css', import.meta.url), 'utf8');
   assert.match(css, /\.trace-node-failed \.trace-node-dot \{[^}]*var\(--accent-danger\)/);
   assert.match(css, /\.trace-failed-chip \{[^}]*var\(--accent-danger\)/);

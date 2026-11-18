@@ -129,6 +129,8 @@ def test_turning_thinking_off_uses_the_form_sonnet_accepts_and_haiku_keeps_its_o
 
 def test_the_endpoints_and_the_chip_know_about_it():
     app_source = open(os.path.join(REPO, "app.py"), encoding="utf-8").read()
-    assert "from backend.models.models import llm, get_stream_llm, get_lite_stream_llm, get_haiku_stream_llm, haiku_reply_available, lite_prompt, lite_reply_available, claude_available, sonnet_available" in app_source
+    import_line = next(line for line in app_source.splitlines() if line.startswith("from backend.models.models import ") and "sonnet_available" in line)        # app.py imports more names over time: pin the ones this option needs, not the whole line
+    imported = {name.strip() for name in import_line.split(" import ", 1)[1].split(",")}
+    assert {"claude_available", "sonnet_available"} <= imported
     api = open(os.path.join(REPO, "local", "src", "api.ts"), encoding="utf-8").read()
     assert "export type ToolModel = 'gemini' | 'claude' | 'sonnet' | 'gpt';" in api and "sonnet_available: boolean;" in api

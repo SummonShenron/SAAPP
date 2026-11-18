@@ -1,0 +1,79 @@
+/* The running step's icon (components/StepIcon.tsx; which icon: components/stepKinds.ts). One small animation each, in the accent colour, on the dot's own 14px. Animations only move or fade what is already
+   there, so nothing leaves the 16 x 16 grid by more than a pixel; a person who asks for reduced motion gets the icon standing still. */
+.si { display: block; flex: 0 0 auto; overflow: visible; color: var(--accent-primary); transition: color 0.3s ease; }
+.si * { transform-box: fill-box; transform-origin: center; }
+
+/* </>: the two brackets breathe apart and together and the slash blinks. */
+.si-lt { animation: si-lt 1.5s ease-in-out infinite; }
+.si-gt { animation: si-gt 1.5s ease-in-out infinite; }
+.si-slash { animation: si-blink 1.5s ease-in-out infinite; }
+@keyframes si-lt { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-1.2px); } }
+@keyframes si-gt { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(1.2px); } }
+@keyframes si-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+/* the web: the globe turns (its meridian narrows to a line and widens again). */
+.si-meridian { animation: si-turn 2s ease-in-out infinite; }
+@keyframes si-turn { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(0.12); } }
+
+/* a database: the three layers light one after another, top to bottom. */
+.si-layer { animation: si-layer 1.5s ease-in-out infinite; }
+.si-layer-2 { animation-delay: 0.25s; }
+.si-layer-3 { animation-delay: 0.5s; }
+@keyframes si-layer { 0%, 60%, 100% { opacity: 0.35; } 25% { opacity: 1; } }
+
+/* conversation: three dots that rise in turn. */
+.si-dot { fill: currentColor; stroke: none; animation: si-rise 1.2s ease-in-out infinite; }
+.si-dot-2 { animation-delay: 0.15s; }
+.si-dot-3 { animation-delay: 0.3s; }
+@keyframes si-rise { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-1.3px); opacity: 1; } }
+
+/* reading: the lines of the right-hand page are read in turn. */
+.si-line { animation: si-read 1.6s ease-in-out infinite; }
+.si-line-2 { animation-delay: 0.4s; }
+@keyframes si-read { 0%, 100% { opacity: 0.2; } 40%, 70% { opacity: 1; } }
+
+/* looking: the magnifier drifts round a small circle. */
+.si-sweep { animation: si-sweep 1.8s ease-in-out infinite; }
+@keyframes si-sweep { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(1.2px, -1px); } 50% { transform: translate(0, -1.4px); } 75% { transform: translate(-1.2px, -0.4px); } }
+
+/* mail: the flap draws itself. */
+.si-flap { stroke-dasharray: 1; animation: si-draw 1.6s ease-in-out infinite; }
+@keyframes si-draw { 0% { stroke-dashoffset: 1; } 55%, 100% { stroke-dashoffset: 0; } }
+
+/* a calendar: a day is marked, and the mark moves along the row. */
+.si-day { fill: currentColor; stroke: none; animation: si-days 1.8s steps(1, end) infinite; }
+@keyframes si-days { 0% { transform: translateX(0); } 33% { transform: translateX(2.8px); } 66% { transform: translateX(5.6px); } 100% { transform: translateX(0); } }
+
+/* places: the pin bobs. */
+.si-pin { animation: si-bob 1.3s ease-in-out infinite; }
+@keyframes si-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
+
+/* thinking: the spark turns a quarter and pulses. */
+.si-twinkle { animation: si-twinkle 1.8s ease-in-out infinite; }
+@keyframes si-twinkle { 0%, 100% { transform: rotate(0) scale(0.9); } 50% { transform: rotate(45deg) scale(1.1); } }
+
+/* a browser: the pointer moves across the page. */
+.si-cursor { fill: currentColor; animation: si-point 1.8s ease-in-out infinite; }
+@keyframes si-point { 0%, 100% { transform: translate(0, 0); } 35% { transform: translate(2.4px, -0.5px); } 70% { transform: translate(0.6px, 1.2px); } }
+
+/* injecting (saved context into the prompt): the plunger is pushed down the barrel toward the needle and drawn back. */
+.si-plunger { animation: si-push 1.4s ease-in-out infinite; }
+@keyframes si-push { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(-1.3px, 1.3px); } }
+
+/* adding (an attachment's text): the plus swells and settles. */
+.si-plus { animation: si-swell 1.4s ease-in-out infinite; }
+@keyframes si-swell { 0%, 100% { transform: scale(0.85); } 50% { transform: scale(1.15); } }
+
+/* any other step: three joined dots, lit in turn (the same idea as the loader graph). */
+.si-node { fill: currentColor; animation: si-lit 1.5s ease-in-out infinite; }
+.si-node-2 { animation-delay: 0.3s; }
+.si-node-3 { animation-delay: 0.6s; }
+@keyframes si-lit { 0%, 70%, 100% { opacity: 0.4; } 25% { opacity: 1; } }
+
+/* An icon held standing (the summary beside a finished reply's steps). */
+.si-still, .si-still * { animation: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .si *, .si { animation: none !important; }
+  .si-flap { stroke-dashoffset: 0; }
+}

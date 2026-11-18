@@ -48,6 +48,7 @@ import { answersId, answersValue, modeId, modeValue, thinkingId, thinkingValue }
 import { RUNNER_NUDGE_KEY, RUNNER_START_LINK, RUNNER_START_WAIT_MS, canStartRunnerFromLink, nudgeDismissedUntil, parseNudgeDismissed, runnerNudgeVisible, runnerStartPhase, scopeChoices } from '../components/sessionColumnLogic';
 import { ringView } from '../components/budgetText';
 import { type TraceStep } from '../components/TracePanel';
+import { cleanKind, stepKindOf } from '../components/stepKinds';
 import { cleanLastStep, cleanTurnEnd, type LastStepStatus, type TurnEnd } from '../components/traceFacts';
 import { finishedSteps, mergeExcerpts, mergeFacts, recordExcerpt, recordFacts, revisionWords, toolStepLabel, type TraceExcerptsById, type TraceFactsById } from '../components/traceFacts';
 import StepsDisclosure from '../components/StepsDisclosure';
@@ -1835,6 +1836,7 @@ useEffect(() => {
       {
         id, title, detail, status: payload?.status === "complete" ? "complete" : "active",
         stepId: payload?.stepId,
+        kind: cleanKind(payload?.kind) ?? stepKindOf(payload?.tool, payload?.node),      // which little icon the step's dot is while it runs (components/stepKinds.ts): from the tool and node the server named
         batchIndex: payload?.batchIndex, batchSize: payload?.batchSize,
         lastStep: payload?.lastStep, turnEnd: payload?.turnEnd,
       }
@@ -1890,6 +1892,8 @@ useEffect(() => {
       batchIndex: item.batchIndex,
       batchSize: item.batchSize,
       stepId: item.stepId,
+      tool: item.tool,
+      node: item.node,
       lastStep: item.lastStep,
       turnEnd: item.turnEnd,
     });

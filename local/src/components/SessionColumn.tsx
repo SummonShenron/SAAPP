@@ -6,6 +6,7 @@ import {
   APPROVAL_OPTIONS, GIT_OPTIONS, RUNNER_INSTALL_CMD, RUNNER_INSTALL_POWERSHELL, contextGauge, folderLight, folderLine, folderCard, gaugeSummary, memoryLine, parseCollapsed, planProgress, runnerLine, runnerProjectHint, runnerProjectOffer, serializeCollapsed, toggleCollapsed,
   type ContextUse, type Line, type Option, type RunnerProjectOffer, type RunnerStartPhase, type ScopeChoice, RUNNER_NUDGE_TEXT, RUNNER_NUDGE_TITLE } from './sessionColumnLogic';
 import CompactionMeter from './CompactionMeter';
+import ColumnResizer from './ColumnResizer';
 import { gaugesSummary, isOverloaded, meterCaption, meterName, type CompactionView } from './compactionMeterLogic';
 import './__styles__/SessionColumn.css';
 
@@ -330,6 +331,7 @@ const SessionColumn: React.FC<Props> = ({ folder, runnerEnabled, runners, runner
   const progress = plan ? planProgress(plan) : null;
   return (
     <aside className="session-column" aria-label="Session">
+      <ColumnResizer />
       {runnerSetup?.visible && <RunnerNudge setup={runnerSetup} />}
       {/* One card for the connection: the runner on the person's computer and the folder they connected (the same folder for both), with the folder's actions and options below. Folded, its header keeps
           the runner's dot and the folder's light (the one the folder button beside the message box used to carry, green when connected). */}

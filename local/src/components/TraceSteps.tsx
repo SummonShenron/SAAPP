@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Icon from './icons';
 import { StartGraph } from './LoaderGraphs';
+import StepIcon from './StepIcon';
+import type { StepKind } from './stepKinds';
 import { useReducedMotion } from './useReducedMotion';
-import { LAND_END_AT, arrivalOf } from './graphLoader';
+import { ARRIVE_ANIM_MS, ARRIVE_DELAY_MS, ARRIVE_STAGGER_MS, LAND_END_AT, arrivalsOf, keptScale, nowMs, paceFor, scaled, without } from './graphLoader';
 import { endingWords, finalStepLabel, searchSummary, splitAroundTerm, stepFailed, stepWords, toggleExpanded, type LastStepStatus, type SearchExcerpt, type TraceExcerpt, type TurnEnd } from './traceFacts';
 import './__styles__/TracePanel.css';
 
@@ -10,6 +12,8 @@ export interface TraceStep {
   id: string;
   /** The server's id for this step; the facts event that follows it carries the same one. */
   stepId?: string;
+  /** What kind of step it is, from the tool and node the server named (stepKinds.ts): which little icon its dot is while it runs. A step with none (or one the page does not know) gets the general icon. */
+  kind?: StepKind;
   title: string;
   detail: string;
   status: 'active' | 'complete';
@@ -58,26 +62,53 @@ function SearchResults({ excerpt }: { excerpt: SearchExcerpt }) {
  * graphLoader.ts), and when the next step lands the light carries on to the graph's last node, which is that step's dot; the graph fades and the space it held closes. `landing`: this is the first step, and the
  * vertical start graph above it is running on into its node.
  */
-const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: string; live?: boolean; landing?: boolean; reducedMotion?: boolean; hold?: boolean }> = ({ steps, running, idPrefix = 'trace', live = false, landing = false, reducedMotion, hold = false }) => {
+/** A step that has just arrived: how fast its fade-in plays (graphLoader.ts paceFor) and its place among the steps that came with it. */
+interface Arrive { pace: number; order: number }
+
+const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: string; live?: boolean; landing?: boolean; landingPace?: number; graph?: boolean; settled?: boolean; reducedMotion?: boolean; hold?: boolean }> = ({ steps, running, idPrefix = 'trace', live = false, landing = false, landingPace = 1, graph = false, settled = false, reducedMotion, hold = false }) => {
   // Which steps are open. A new request starts a fresh list, so a caller that reuses this for the next request gives it a new key (the old expansions mean nothing then).
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const reduced = useReducedMotion(reducedMotion);
-  // Which step's graph is landing in the one that has just arrived (`merging` holds that earlier step's id). Worked out DURING the render that first has the new step (React lets a component set its own state while
-  // rendering and renders again before anything is drawn): set in an effect it would draw one frame with the new step and no landing, which destroyed the graph and rebuilt it a moment later (a flicker the mock-up
-  // caught). It goes by ids, not by a count, because only the newest few steps are drawn while a turn runs.
+  // Which steps have just arrived (`arrivals`) and which step's graph is landing in them (`landings`, by the id of the step that held the graph, with the pace it lands at). Worked out DURING the render that first has the new
+  // step (React lets a component set its own state while rendering and renders again before anything is drawn): set in an effect it would draw one frame with the new step and no landing, which destroyed the graph and
+  // rebuilt it a moment later (a flicker the mock-up caught). It goes by ids, not by a count, because only the newest few steps are drawn while a turn runs.
+  // Several can be going at once: a step that arrives while the one before it is still landing does NOT cut that landing short. Each runs to its own end, and is played faster the sooner the step followed the last one.
   const lastId = steps.length > 0 ? steps[steps.length - 1].id : null;
   const [lastSeen, setLastSeen] = useState<string | null>(lastId);
-  const [merging, setMerging] = useState<string | null>(null);
+  const [lastArrivalAt, setLastArrivalAt] = useState<number | null>(() => (landing ? nowMs() : null));
+  const [landings, setLandings] = useState<Record<string, number>>({});
+  const [grayed, setGrayed] = useState<Record<string, true>>({});          // graph mode: the kept graphs that have finished landing and have turned gray
+  const [arrivals, setArrivals] = useState<Record<string, Arrive>>(() => (landing ? Object.fromEntries(steps.map((s, order) => [s.id, { pace: landingPace, order }])) : {}));
   if (lastId !== lastSeen) {
     setLastSeen(lastId);
-    const arrival = live && running && !reduced ? arrivalOf(lastSeen, steps) : null;
-    if (arrival) setMerging(arrival.mergeId);
+    if (live && running && !reduced) {
+      const { holderId, newIds } = arrivalsOf(lastSeen, steps);
+      if (newIds.length > 0) {
+        const now = nowMs();
+        const pace = paceFor(lastArrivalAt === null ? null : now - lastArrivalAt);
+        setLastArrivalAt(now);
+        if (holderId !== null) setLandings(prev => ({ ...prev, [holderId]: pace }));
+        setArrivals(prev => ({ ...prev, ...Object.fromEntries(newIds.map((id, order) => [id, { pace, order }])) }));
+      }
+    }
   }
+  // Each one is cleared by its own timer, set once; they are only cleared together when this goes away.
+  const timers = useRef<Map<string, number>>(new Map());
   useEffect(() => {
-    if (merging === null || hold) return undefined;
-    const timer = window.setTimeout(() => setMerging(null), LAND_END_AT);
-    return () => window.clearTimeout(timer);
-  }, [merging, hold]);
+    if (hold) return;
+    const once = (key: string, ms: number, clear: () => void) => {
+      if (timers.current.has(key)) return;
+      timers.current.set(key, window.setTimeout(() => { timers.current.delete(key); clear(); }, ms));
+    };
+    // In graph mode a landing is never cleared: the graph stays where it landed (and the row keeps its room) for as long as this list is on screen.
+    if (!graph) Object.entries(landings).forEach(([id, pace]) => once(`l:${id}`, scaled(LAND_END_AT, pace), () => setLandings(prev => without(prev, id))));
+    else Object.entries(landings).forEach(([id, pace]) => { if (!grayed[id]) once(`g:${id}`, scaled(LAND_END_AT, pace), () => setGrayed(prev => (prev[id] ? prev : { ...prev, [id]: true }))); });          // then it turns gray, like a finished step's icon
+    Object.entries(arrivals).forEach(([id, a]) => once(`a:${id}`, scaled(LAND_END_AT, a.pace) + a.order * scaled(ARRIVE_STAGGER_MS, a.pace), () => setArrivals(prev => without(prev, id))));
+  }, [landings, arrivals, grayed, hold, graph]);
+  useEffect(() => {
+    const held = timers.current;
+    return () => { held.forEach(timer => window.clearTimeout(timer)); held.clear(); };
+  }, []);
 
   if (steps.length === 0) return null;
   return (
@@ -109,15 +140,26 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
         );
         // In the steps under a running reply the newest node IS the loader: the graph hangs under it until the next step lands (the trace panel keeps its pulsing dot). The first step waits for the start graph to finish landing.
         const loaderNode = live && running && last && !done;
-        const forking = live && ((loaderNode && merging === null && !landing) || merging === step.id);
-        const arriving = live && ((merging !== null && last) || (landing && i === 0));
+        const kept = settled && !last;                           // a finished reply's list (graph mode): every step but the last has its graph under it, as it ended up
+        const merging = kept || step.id in landings;             // the graph under this step is landing in the step after it (or has landed)
+        const arrive = live ? arrivals[step.id] : undefined;     // this step has just arrived: its dot and words fade in
+        const forking = kept || (live && ((loaderNode && !merging && !arrive) || merging));
+        const arriving = arrive !== undefined;
+        // In graph mode the graph under a step stays once it has landed; with two or more steps after it, it shrinks (same shape) and its row's room shrinks with it (graphLoader.ts keptScale).
+        const keptSize = (graph || settled) && merging ? keptScale(steps.length - 1 - i) : 1;
+        const compact = keptSize < 1;
+        const gray = kept || (graph && grayed[step.id] === true);          // a finished reply's graphs are gray from the start; a running turn's turn gray once they have landed
+        // How fast this step's fade-in plays and when it starts: the landing's own timeline at its pace, a little later for each of the steps that came in the same burst.
+        const arriveStyle = arrive ? ({ '--arrive-delay': `${scaled(ARRIVE_DELAY_MS, arrive.pace) + arrive.order * scaled(ARRIVE_STAGGER_MS, arrive.pace)}ms`, '--arrive-dur': `${scaled(ARRIVE_ANIM_MS, arrive.pace)}ms` } as React.CSSProperties) : undefined;
         return (
           <li
             key={step.id}
-            className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${failed ? ' trace-node-failed' : ''}${last ? ' trace-node-last' : ''}${step.turnEnd ? ` trace-node-end trace-end-${step.turnEnd}` : ''}${(last && running) || merging === step.id ? ' trace-node-running' : ''}${expanded ? ' trace-node-open' : ''}${forking ? ' trace-node-forking' : ''}${merging === step.id ? ' trace-node-merging' : ''}${arriving ? ' trace-node-arriving' : ''}`}
+            style={arriveStyle}
+            className={`trace-node ${done ? 'trace-node-done' : 'trace-node-active'}${failed ? ' trace-node-failed' : ''}${last ? ' trace-node-last' : ''}${step.turnEnd ? ` trace-node-end trace-end-${step.turnEnd}` : ''}${(last && running) || merging ? ' trace-node-running' : ''}${expanded ? ' trace-node-open' : ''}${forking ? ' trace-node-forking' : ''}${merging ? ' trace-node-merging' : ''}${compact ? ' trace-node-compact' : ''}${gray ? ' trace-node-grayed' : ''}${arriving ? ' trace-node-arriving' : ''}`}
           >
-            <span className="trace-node-dot" aria-hidden="true">
-              {failed ? <Icon name="close" size={11} /> : done ? <Icon name="check" size={11} /> : <span className="trace-node-core" />}
+            <span className={`trace-node-dot${failed ? '' : ' trace-node-dot-icon'}`} aria-hidden="true">
+              {/* A step's dot is a little icon of what it is doing (stepKinds.ts, StepIcon.tsx): in the accent and moving while it runs, the same icon in gray and standing once it is done. A step whose tool failed is a cross. */}
+              {failed ? <Icon name="close" size={12} /> : <StepIcon kind={step.kind} still={done} />}
             </span>
             <div className="trace-node-text">
               {finalLabel && <div className="trace-final-header" data-status={step.lastStep}>{finalLabel}</div>}
@@ -168,7 +210,7 @@ const TraceSteps: React.FC<{ steps: TraceStep[]; running: boolean; idPrefix?: st
                 </div>
               )}
             </div>
-            {forking && <span className="gl-below" aria-hidden="true"><StartGraph stem landing={merging === step.id} reducedMotion={reduced} hold={hold} /></span>}
+            {forking && <span className="gl-below" aria-hidden="true"><StartGraph stem landing={merging} pace={landings[step.id] ?? 1} kind={step.kind} seed={step.id} keep={graph || settled} settled={settled} grayed={gray} scale={keptSize} reducedMotion={reduced} hold={hold} /></span>}
           </li>
         );
       })}

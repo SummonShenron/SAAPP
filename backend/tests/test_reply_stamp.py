@@ -1,6 +1,7 @@
 """The reply stamp (backend/utils/reply_stamp.py): which voice wrote a reply and which voice examples and people notes it was shown, kept on the reply and copied onto feedback, so a thumb can be counted by voice.
 
 Why (Jack, 2026-11-08): he runs a mix of the standard voice and Haiku and rates turns to keep tuning, and a feedback record had no model on it. IDS AND LABELS ONLY: no text. No database is touched."""
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -284,7 +285,8 @@ def test_a_thumbs_down_about_the_voice_itself_is_counted_under_the_voice_that_wr
 
 
 def test_the_page_sends_the_tag_and_the_summary_keeps_it_so_the_reasons_reach_the_health_page():
-    rows = [{"username": "jack", "tag": "repeated_me", "rating": "negative", "source": "user", "created_at": "2026-11-08T12:00:00+00:00", "has_embedding": True, "voice": STAMP}]
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()        # summarize_feedback counts only the last 7 days, so a fixed date goes stale
+    rows = [{"username": "jack", "tag": "repeated_me", "rating": "negative", "source": "user", "created_at": yesterday, "has_embedding": True, "voice": STAMP}]
     summary = feedback_stats.summarize_feedback(rows)
     assert summary["by_voice"]["reasons"] == [{"label": "haiku", "repeated_me": 1, "nothing_new": 0, "didnt_attune": 0}]
     assert {"tag": "repeated_me", "count": 1} in summary["by_tag"]

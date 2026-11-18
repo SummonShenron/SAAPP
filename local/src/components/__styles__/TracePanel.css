@@ -29,13 +29,14 @@
 .trace-node { position: relative; padding: 0 0 18px 26px; min-height: 22px; }
 .trace-node-last { padding-bottom: 0; }
 
-/* The node: a filled dot with a check once it is done; a ring with a pulsing core while it is running. */
+/* The node: 20px, centred where the old 14px one was (left -3px, top 0 puts its centre at 7px across and 10px down), so the line, the stub and the loader graph (graphLoader.ts) do not move. Above the graph (z-index 3 over its 2) and
+   in the page's colour, so the end of a graph's last edge, which reaches its centre, tucks under it. */
 .trace-node-dot {
   position: absolute;
-  left: 0;
-  top: 3px;
-  width: 14px;
-  height: 14px;
+  left: -3px;
+  top: 0;
+  width: 20px;
+  height: 20px;
   box-sizing: border-box;
   border-radius: 50%;
   border: 1px solid var(--border-color);
@@ -44,13 +45,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1;
+  z-index: 3;
 }
 .trace-node-done .trace-node-dot { background: var(--bg-alt); }
 .trace-node-failed .trace-node-dot { border-color: var(--accent-danger); color: var(--accent-danger); } /* a tool step whose result was an error (TraceSteps stepFailed) */
 .trace-failed-chip { display: inline-block; margin-left: 8px; padding: 0 7px; font-size: 0.66rem; font-weight: 700; line-height: 1.5; border-radius: 999px; border: 1px solid var(--accent-danger); color: var(--accent-danger); vertical-align: 1px; }
 .trace-node-active .trace-node-dot { border: 2px solid var(--accent-primary); }
-.trace-node-core { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-primary); animation: trace-pulse 1.2s ease-in-out infinite; }
 .trace-node-active .trace-node-dot::after {
   content: '';
   position: absolute;
@@ -60,13 +60,20 @@
   opacity: 0;
   animation: trace-ring 1.8s ease-out infinite;
 }
+/* A step's dot is its own little icon (components/StepIcon.tsx), not a ring: no border and no pulsing ring. It is the accent colour and moves while the step runs; once the step is done it stays, in gray and standing
+   (StepIcon `still`, and the colour eases over in StepIcons.css). A step whose tool failed keeps its ring and cross (.trace-node-failed). */
+.trace-node-dot.trace-node-dot-icon, .trace-node-active .trace-node-dot.trace-node-dot-icon { border-width: 0; background: var(--bg-main); }
+.theme-shadow .trace-node-dot.trace-node-dot-icon, .theme-shadow .trace-node-done .trace-node-dot.trace-node-dot-icon, .theme-shadow .trace-node-active .trace-node-dot.trace-node-dot-icon { border-width: 0; background: var(--bg-main); }
+.trace-node-active .trace-node-dot.trace-node-dot-icon::after { display: none; }
+.trace-node-dot .si { width: 20px; height: 20px; }
+.trace-node-done .trace-node-dot .si { color: var(--text-muted); }
 
 /* The line to the next node: solid in the accent once the step is done (the way already travelled). */
 .trace-node::before {
   content: '';
   position: absolute;
   left: 6px;
-  top: 17px;
+  top: 20px;
   bottom: 0;
   width: 1px;
   background: var(--border-color);
@@ -77,7 +84,7 @@
   content: '';
   position: absolute;
   left: 6px;
-  top: 17px;
+  top: 20px;
   height: 22px;
   width: 1px;
   background: repeating-linear-gradient(to bottom, var(--accent-primary) 0 4px, transparent 4px 8px);
@@ -155,7 +162,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .trace-node-core, .trace-node-active .trace-node-dot::after, .trace-node-running::after, .trace-node-chevron { animation: none; transition: none; }
+  .trace-node-active .trace-node-dot::after, .trace-node-running::after, .trace-node-chevron { animation: none; transition: none; }
 }
 
 /* What a read step read: a capped, redacted excerpt as plain text (the live trace only). It scrolls instead of growing the panel. */
@@ -226,16 +233,40 @@ button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); ou
    landed this row is no longer the last one, and the room goes (the next row's dot is then where the graph's last node is). */
 .steps-inline-live .trace-node-forking.trace-node-last { margin-bottom: 20px; }
 .steps-inline-live .trace-node-active .trace-node-dot::after { display: none; }          /* one thing moves, not two */
-.steps-inline-live .trace-node-core { animation: none; }
 /* while the graph is landing it is the connection to the next step: the plain line is hidden (the dashed stub to the graph stays) and fades back in once the graph is gone */
 .steps-inline-live .trace-node::before { transition: opacity .35s ease; }
 .steps-inline-live .trace-node-merging::before { opacity: 0; }
 /* the step that has just landed: its dot and words fade in about when the light reaches its node, and its own graph (and the stub to it) wait until the one above is gone (ARRIVE_DELAY_MS in graphLoader.ts) */
-.steps-inline-live .trace-node-arriving .trace-node-dot, .steps-inline-live .trace-node-arriving .trace-node-text { animation: gl-arrive .35s ease 720ms both; }
+/* --arrive-delay and --arrive-dur are set on the row (TraceSteps.tsx) when the step came soon after the one before it, so the fade-in plays faster; without them it is the normal 720ms and .35s */
+.steps-inline-live .trace-node-arriving .trace-node-dot, .steps-inline-live .trace-node-arriving .trace-node-text { animation: gl-arrive var(--arrive-dur, .35s) ease var(--arrive-delay, 720ms) both; }
 .steps-inline-live .trace-node-arriving::after { opacity: 0 !important; }
+
+/* ---- graph mode (components/stepsStyle.ts; rules in graphLoader.ts, "a graph that stays") ----
+   The graph under a step is not removed once it has landed: it stays between that step and the next, so the steps of a reply make one graph, and the text sits to the right of it (56px: the graph's 44px and the 12px gap
+   "Thinking..." already keeps). A graph with two or more steps after it is drawn compact: the same shape at 5/9 size about its first node, in a row that keeps less room (26px instead of 50: COMPACT_SPACE_PX). Narrow
+   screens and reduced motion have no .steps-graph, so none of this applies there. */
+.steps-inline-live.steps-graph .trace-node { padding-left: 56px; }
+.gl-below { pointer-events: none; }          /* a kept graph hangs over the next row: it must never catch a press meant for that row's toggle */
+.gl-link { vector-effect: non-scaling-stroke; }          /* a shrunk graph keeps its line weight */
+.gl-shape { transform-origin: 0 0; transition: transform .35s ease; }
+.steps-graph .trace-node-compact.trace-node-forking, .steps-graph .trace-node-compact.trace-node-merging { padding-bottom: 26px; }
+.steps-graph .trace-node-compact.trace-node-forking::after, .steps-graph .trace-node-compact.trace-node-merging::after { bottom: 20px; }
+.steps-graph .trace-node-compact .gl-below { bottom: -40px; }
+/* Once a kept graph has landed it turns gray, the colour of a finished step's icon (TraceSteps `grayed`): the way it took, its nodes and the stub from the step's dot. The graph still running stays in the accent. */
+.gl-svg.gl-grayed .gl-link.gl-on { stroke: var(--text-muted); transition: stroke .5s ease, opacity .25s; }
+.gl-svg.gl-grayed .gl-fnode { fill: var(--text-muted); transition: opacity .25s, fill .5s ease; }
+.steps-graph .trace-node-grayed::after { background: var(--text-muted); }
+/* The list kept under a finished reply, opened, in graph mode (StepsDisclosure: it wears steps-inline-live for the graph's rules above, plus steps-inline-settled): the graphs are drawn as they ended up, lit at once and
+   standing. */
+.gl-settled, .gl-settled * { transition: none !important; }
+/* beside the count of a finished reply's steps: the kind of each step, small and standing, in the muted colour (components/StepsDisclosure.tsx, stepKinds.ts kindSummary) */
+.steps-kinds { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; }
+.steps-kinds .si { width: 14px; height: 14px; color: var(--text-muted); }
+.steps-kinds-more { margin-left: 1px; font-size: 0.7rem; color: var(--text-muted); }
+button.steps-toggle:hover .steps-kinds .si { color: var(--accent-primary); }
 
 @media (prefers-reduced-motion: reduce) {
   .steps-toggle-chevron { transition: none; }
-  .gl-link, .gl-fnode, .gl-start-settled, .steps-inline-live .trace-node, .steps-inline-live .trace-node::before { transition: none; }
+  .gl-link, .gl-fnode, .gl-shape, .gl-start-settled, .steps-inline-live .trace-node, .steps-inline-live .trace-node::before { transition: none; }
   .gl-below .gl-svg, .gl-start-text-out, .steps-inline-live .trace-node-arriving .trace-node-dot, .steps-inline-live .trace-node-arriving .trace-node-text { animation: none; }
 }

@@ -128,6 +128,7 @@ const Rail: React.FC<RailProps> = (props) => {
         className={`app-rail${compact ? ' app-rail-compact' : ''}${isMobile ? ' app-rail-drawer' : ''}${drawerOpen ? ' app-rail-open' : ''}`}
         aria-label="Navigation"
       >
+        {!isMobile && !compact && <RailResizer />}
         <div className="rail-head">
           <button type="button" className="rail-brand" onClick={() => go('/chat')} title={BRAND_NAME} aria-label={BRAND_NAME} data-help="rail.brand">
             <LogoMark size={28} />
@@ -255,5 +256,50 @@ const Rail: React.FC<RailProps> = (props) => {
     </>
   );
 };
+
+/** A grip on the expanded rail's right edge: drag it to widen or narrow the rail. The width is kept in localStorage. */
+function RailResizer() {
+  const startX = React.useRef(0);
+  const startW = React.useRef(252);
+
+  React.useEffect(() => {
+    const saved = Number(window.localStorage.getItem('railWidth'));
+    if (Number.isFinite(saved) && saved > 0) document.documentElement.style.setProperty('--rail-w', `${Math.max(200, Math.min(400, Math.round(saved)))}px`);
+  }, []);
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const rail = event.currentTarget.parentElement;
+    startX.current = event.clientX;
+    startW.current = rail ? rail.getBoundingClientRect().width : 252;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const width = Math.max(200, Math.min(400, Math.round(startW.current + (event.clientX - startX.current))));
+    document.documentElement.style.setProperty('--rail-w', `${width}px`);
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    const width = parseInt(document.documentElement.style.getPropertyValue('--rail-w'), 10);
+    if (Number.isFinite(width)) window.localStorage.setItem('railWidth', String(width));
+  };
+
+  return (
+    <div
+      className="rail-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Drag to resize the navigation"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    />
+  );
+}
 
 export default Rail;

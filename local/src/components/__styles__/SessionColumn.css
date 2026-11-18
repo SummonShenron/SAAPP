@@ -2,7 +2,8 @@
 
 .session-column {
   flex: 0 0 auto;
-  width: 272px;
+  position: relative;
+  width: var(--session-column-w, 272px);
   min-height: 0;
   overflow-y: auto;
   display: flex;
@@ -13,6 +14,9 @@
   border-left: 1px solid var(--border-color);
   color: var(--text-main);
 }
+.sc-resizer { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; z-index: 2; touch-action: none; }
+.sc-resizer:hover { background: var(--border-color); }
+
 /* Dark, the same arrangement as light: the column is the lighter grey the nav uses, with no edge, and its cards are the main black sitting on it, with no border. Not --bg-alt: in the dark theme that
    is #161718, darker than the page, so a column and cards in "alt" and "main" were both just black. */
 .theme-shadow .session-column { background: var(--bg-main); border-left: none; }

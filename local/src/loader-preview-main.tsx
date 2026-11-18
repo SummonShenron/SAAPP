@@ -5,6 +5,7 @@ import '/src/index.css';
 import '/src/components/__styles__/AppShell.css';
 import StepsDisclosure from './components/StepsDisclosure';
 import type { TraceStep } from './components/TraceSteps';
+import type { StepKind } from './components/stepKinds';
 
 // DEV ONLY (open /loader-preview.html on the dev server). The REAL StepsDisclosure, driven by one simulated turn: nothing here is a copy of the loader, so what it shows is what the chat shows.
 // Options in the address (all optional): ?theme=shadow (dark), ?long=1 (long step text), ?still=1 (reduced motion), ?pause=1 (hold the simulated turn), ?phase=N (start at that point: 0 is "nothing yet",
@@ -16,12 +17,13 @@ const SCRIPT: Array<{ title: string; detail: string; long: string }> = [
   { title: 'Found semantically relevant past context.', detail: '', long: '' },
   { title: 'Adjusting the reply to fit what you need', detail: 'The draft said the same reassurance as a recent reply, so it was written again', long: 'The draft said the same reassurance as a recent reply, so it was written again and the new draft was checked against the same rules' },
 ];
+const KINDS: StepKind[] = ['think', 'chat', 'inject', 'database', 'code'];          // the icon each simulated step's dot is while it runs (components/stepKinds.ts)
 const PHASES = SCRIPT.length + 2;          // 0: nothing yet, 1..5: that many steps, 6: the turn finished, then round again
-const PHASE_MS = 2600;
+const PHASE_MS = Math.max(120, Number(new URLSearchParams(window.location.search).get('ms')) || 2600);          // ?ms=400 makes the simulated steps arrive that quickly (the pace-up and the cut-off cases)
 
 function stepsFor(phase: number, long: boolean): TraceStep[] {
   const count = Math.min(Math.max(phase, 0), SCRIPT.length);
-  return SCRIPT.slice(0, count).map((s, i) => ({ id: `s${i}`, title: s.title, detail: long ? s.long : s.detail, status: i === count - 1 && phase <= SCRIPT.length ? 'active' : 'complete' }) as TraceStep);
+  return SCRIPT.slice(0, count).map((s, i) => ({ id: `s${i}`, kind: KINDS[i], title: s.title, detail: long ? s.long : s.detail, status: i === count - 1 && phase <= SCRIPT.length ? 'active' : 'complete' }) as TraceStep);
 }
 
 const bar = { display: 'flex', flexWrap: 'wrap', gap: '8px 14px', alignItems: 'center', padding: '10px 12px', marginBottom: 14, border: '1px solid var(--border-color)', borderRadius: 10, background: 'var(--bg-alt, transparent)', font: '13px var(--font-sans, sans-serif)', color: 'var(--text-main)' } as const;
@@ -53,6 +55,7 @@ function Preview() {
         <label><input type="checkbox" checked={still} onChange={e => setStill(e.target.checked)} /> Reduced motion</label>
         <button style={button(false)} onClick={() => setPlaying(p => !p)}>{playing ? 'Pause' : 'Play'}</button>
         <button style={button(false)} onClick={() => setPhase(p => (p + 1) % PHASES)}>Next step</button>
+        <button style={button(false)} onClick={() => setPhase(p => Math.min(p + 3, SCRIPT.length))}>Burst +3</button>
         <span style={{ font: '11px monospace', color: 'var(--text-muted)' }}>{label}</span>
       </div>
       <div style={{ maxWidth: 520, border: '1px solid var(--border-color)', borderRadius: 12, padding: '10px 14px 14px', background: 'var(--bg-main, #fff)', minHeight: 360 }}>

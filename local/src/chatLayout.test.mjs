@@ -27,7 +27,7 @@ test('each side of the conversation is padded only by the part of its margin tha
   assert.match(shell, /padding-left: calc\(var\(--base-pad\) \+ max\(0px, var\(--under-rail\) - var\(--free\)\)\);/);
   assert.match(shell, /padding-right: calc\(var\(--base-pad\) \+ max\(0px, var\(--under-column\) - var\(--free\)\)\);/);
   assert.match(shell, /--under-rail: var\(--rail-extra\);/);
-  assert.match(shell, /\.chat-page:has\(\.session-column\) \.portal-body \{ --under-column: 272px; \}/);
+  assert.match(shell, /\.chat-page:has\(\.session-column\) \.portal-body \{ --under-column: var\(--session-column-w, 272px\); \}/);
   assert.match(shell, /@media \(max-width: 1099px\) \{ \.chat-page:has\(\.session-column\) \.portal-body \{ --under-column: 236px; \} \}/);   // the column is narrower there (SessionColumn.css)
   assert.match(shell, /@media \(max-width: 768px\) \{ \.chat-page \.portal-body \{ --base-pad: 0\.5rem; \} \}/);                          // phones keep their own gutters
 });
@@ -36,8 +36,7 @@ test('the session column is always drawn over the page, never one of the row\'s 
   assert.match(column, /div\.chat-page\.chat-page \{ position: relative; container: chatpage \/ inline-size; \}/);
   assert.match(column, /\.chat-page > \.session-column \{ position: absolute; top: 0; right: 0; bottom: 0; \}/);
   assert.doesNotMatch(column, /@container chatpage/);                                                       // no width below which it goes back into the row and moves the conversation
-  const widths = [...column.matchAll(/\.session-column \{[^}]*?width: (\d+)px/g)].map(match => Number(match[1]));
-  assert.ok(widths.includes(272), 'the column is 272px wide, the figure the conversation pads for');
+  assert.match(column, /width: var\(--session-column-w, 272px\);/, 'the column is 272px wide by default, the figure the conversation pads for');
   assert.match(column, /@media \(max-width: 1099px\) \{ \.session-column \{ width: 236px;/);                  // and 236px on a narrower window
 });
 

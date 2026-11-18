@@ -12,6 +12,7 @@ export const ReadingPage: React.FC = () => {
   const [items, setItems] = useState<PublicShelfItem[] | null>(null);
   const [topics, setTopics] = useState<string[]>([]);
   const [topic, setTopic] = useState('');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -43,32 +44,49 @@ export const ReadingPage: React.FC = () => {
             research. If it says it came across something in a chat, the piece is here. The notes are summaries, not the articles, so open the link for the real thing.
           </p>
 
-          {topics.length > 1 && (
-            <div className="reading-filters" role="group" aria-label="Filter by topic" data-help="reading.topics">
-              <button type="button" className={`reading-chip${topic === '' ? ' active' : ''}`} onClick={() => setTopic('')}>All</button>
-              {topics.map(t => (
-                <button key={t} type="button" className={`reading-chip${topic === t ? ' active' : ''}`} onClick={() => setTopic(t)}>
-                  {SHELF_TOPIC_LABELS[t] ?? t}
-                </button>
-              ))}
+          <div className="reading-layout">
+            {topics.length > 1 && (
+              <aside className="reading-sidebar" aria-label="Filter by topic" data-help="reading.topics">
+                <button type="button" className={`reading-topic-btn${topic === '' ? ' active' : ''}`} onClick={() => setTopic('')}>All</button>
+                {topics.map(t => (
+                  <button key={t} type="button" className={`reading-topic-btn${topic === t ? ' active' : ''}`} onClick={() => setTopic(t)}>
+                    {SHELF_TOPIC_LABELS[t] ?? t}
+                  </button>
+                ))}
+              </aside>
+            )}
+
+            <div className="reading-main">
+              {items.length === 0 && <div className="reading-empty">Nothing on the shelf yet. Sonic adds to it as it reads.</div>}
+
+              {shown.map(item => {
+                const isOpen = !!expanded[item.url];
+                return (
+                  <article key={item.url} className="reading-item">
+                    <button
+                      type="button"
+                      className="reading-row"
+                      aria-expanded={isOpen}
+                      onClick={() => setExpanded(prev => ({ ...prev, [item.url]: !prev[item.url] }))}
+                    >
+                      <span className="reading-title">{item.title}</span>
+                      <span className="reading-date">{shortDate(item.read_at)}</span>
+                    </button>
+                    {isOpen && (
+                      <div className="reading-body">
+                        <p className="reading-summary">{item.summary}</p>
+                        {item.reflection && <p className="reading-takeaway"><strong>What I take from it:</strong> {item.reflection}</p>}
+                        <div className="reading-meta">
+                          <span className="reading-topic">{SHELF_TOPIC_LABELS[item.topic] ?? item.topic}</span>
+                          {item.domain} · <a href={item.url} target="_blank" rel="noopener noreferrer">open the article</a>
+                        </div>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
             </div>
-          )}
-
-          {items.length === 0 && <div className="reading-empty">Nothing on the shelf yet. Sonic adds to it as it reads.</div>}
-
-          {shown.map(item => (
-            <article key={item.url} className="reading-item">
-              <div className="reading-title">
-                <a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a>
-              </div>
-              <p className="reading-summary">{item.summary}</p>
-              {item.reflection && <p className="reading-takeaway"><strong>What I take from it:</strong> {item.reflection}</p>}
-              <div className="reading-meta">
-                <span className="reading-topic">{SHELF_TOPIC_LABELS[item.topic] ?? item.topic}</span>
-                {item.domain} · read {shortDate(item.read_at)}
-              </div>
-            </article>
-          ))}
+          </div>
         </section>
       </div>
     </div>

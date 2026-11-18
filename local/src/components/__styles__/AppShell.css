@@ -48,10 +48,12 @@
   color: var(--text-main);
   position: relative;
   z-index: 20;
-  transition: width 0.18s ease;
+  transition: width 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
 }
 
 .theme-shadow .app-rail { --rail-bg: var(--panel-bg); }
+.rail-resizer { position: absolute; top: 0; bottom: 0; right: -3px; width: 6px; cursor: col-resize; z-index: 21; touch-action: none; }
+.rail-resizer:hover { background: var(--border-color); }
 /* .theme-shadow .app-rail { border-right-color: var(--edge); } an orange edge on the rail */
 .app-rail-compact { width: var(--rail-compact-w); align-items: center; padding: 12px 8px; }
 
@@ -114,6 +116,7 @@
 .app-rail .rail-item.active { background: var(--bg-main); border-color: var(--border-color); font-weight: 600; }
 .theme-shadow .app-rail .rail-item.active { background: rgba(255, 255, 255, 0.08); }
 .app-rail-compact .rail-item { width: 40px; height: 40px; justify-content: center; padding: 0; }
+
 
 .rail-recent { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin-top: 10px; width: 100%; }
 .rail-section { font-size: 0.74rem; color: var(--text-muted); padding: 0 10px 4px; }
@@ -543,6 +546,18 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 .app-shell:not(.theme-shadow) .app-rail .rail-new { background: transparent; border-color: var(--quiet-line); }
 .app-shell:not(.theme-shadow) .app-rail .user-chip { background: transparent; border-color: transparent; }
 
+/* Collapsed to icons on a desktop: no gray column. The rail is the page's own colour with no edge, the logo sits in a gray box (40px, like the buttons below it) and the icons float; only the page you are on keeps
+   a soft gray box (and the orange bar), and whatever you point at. After the quiet shell above, with a stronger selector, because that block also styles the rail's edge and buttons. The expanded rail and the
+   phone's drawer are untouched. */
+.app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) { --rail-box: var(--bg-alt); background: transparent; border-right-color: transparent; }
+.app-shell.theme-shadow .app-rail.app-rail-compact:not(.app-rail-drawer) { --rail-box: var(--panel-bg); }
+.app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-brand { width: 40px; height: 40px; box-sizing: border-box; justify-content: center; padding: 0; border-radius: 12px; background: var(--rail-box); }
+.app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-brand:hover { background: var(--bg-surface-hover); }
+.app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-new { background: transparent; border-color: transparent; }
+.app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-new:hover { background: var(--bg-surface-hover); }
+.app-shell.theme-shadow .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-new:hover { background: rgba(255, 255, 255, 0.06); }
+.app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-item.active { background: var(--rail-box); border-color: transparent; }
+
 /* The feedback hearts and the time a reply was sent appear only while its message is hovered (or has keyboard focus). They keep their space, so nothing moves when they appear. A touch screen
    has no hover, so there they stay visible. */
 .message-bubble .feedback-actions { align-items: center; opacity: 0; transition: opacity 0.15s ease; }
@@ -570,7 +585,7 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
   padding-right: calc(var(--base-pad) + max(0px, var(--under-column) - var(--free)));
 }
 .app-shell:has(.chat-page) .app-rail:not(.app-rail-compact):not(.app-rail-drawer) ~ .app-main .chat-page .portal-body { --under-rail: var(--rail-extra); }
-.chat-page:has(.session-column) .portal-body { --under-column: 272px; }
+.chat-page:has(.session-column) .portal-body { --under-column: var(--session-column-w, 272px); }
 @media (max-width: 1099px) { .chat-page:has(.session-column) .portal-body { --under-column: 236px; } }
 @media (max-width: 768px) { .chat-page .portal-body { --base-pad: 0.5rem; } }
 

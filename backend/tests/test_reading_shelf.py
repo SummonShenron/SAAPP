@@ -903,6 +903,9 @@ def test_the_reading_page_is_read_only_signed_in_and_not_an_admin_route():
     assert "Depends(get_current_user)" in block and "require_global_admin" not in block and "public_view" in block
     page = (root / "local/src/pages/Reading.tsx").read_text(encoding="utf-8")
     assert "removeShelfItem" not in page and "refreshReadingShelf" not in page
+    assert 'className="reading-sidebar"' in page and 'aria-label="Filter by topic"' in page
+    assert 'aria-expanded={isOpen}' in page and "{isOpen && (" in page
+    assert page.index("{item.summary}") > page.index("{isOpen && (")
 
 
 @pytest.mark.parametrize("question", ["did you have a good day?", "Did you have a good day today", "have you had a rough week?", "was your day good?", "was your day busy", "how'd your day go", "how did your week go?"])
