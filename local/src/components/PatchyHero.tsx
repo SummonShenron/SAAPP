@@ -1,4 +1,5 @@
 import { usePatchyMood, type PatchySignals } from '../hooks/usePatchyMood';
+import { useYawn } from '../hooks/useYawn';
 import { PatchyHead, PatchyRightArm } from './PatchyParts';
 import { patchyRootClass, patchyTitle, type ArmPose } from './patchyLook';
 import './__styles__/PatchyHero.css';
@@ -18,8 +19,10 @@ export function PatchyHero({ size = 132, ...signals }: PatchySignals & { size?: 
   const { energy = 'open', budget = 'ok' } = signals;
   const { mood, look, steered, reading, poke } = usePatchyMood(signals);
 
+  const yawning = useYawn(mood === 'drowsy');          // drowsy, he yawns every so often (patchyYawn.ts)
   const pose: ArmPose =
-    mood === 'laugh' ? 'hug'
+    yawning ? 'yawn'
+    : mood === 'laugh' ? 'hug'
     : mood === 'done' ? 'cheer'
     : mood === 'active' ? (look === 'thinking' ? 'think' : look === 'searching' ? 'search' : look === 'puzzled' ? 'puzzle' : 'hang')
     : 'hang';
@@ -29,7 +32,7 @@ export function PatchyHero({ size = 132, ...signals }: PatchySignals & { size?: 
   return (
     <button
       type="button"
-      className={`${patchyRootClass({ mood, look, energy, budget, steered, reading })} mp-hero`}
+      className={`${patchyRootClass({ mood, look, energy, budget, steered, reading })} mp-hero${yawning ? ' mp-yawn' : ''}`}
       onClick={poke}
       title={patchyTitle({ mood, look, energy })}
       aria-label={energy === 'subdued' ? 'SAAPP, the mascot.' : 'SAAPP, the mascot. Poke him.'}
@@ -56,7 +59,7 @@ export function PatchyHero({ size = 132, ...signals }: PatchySignals & { size?: 
           <circle className={mood === 'laugh' || mood === 'done' ? 'mp-accent' : undefined} cx={left.x} cy={left.y} r="3.5" fill={mood === 'laugh' || mood === 'done' ? undefined : '#8E95A2'} />
 
 
-          <PatchyHead mood={mood} look={look} energy={energy} budget={budget} />
+          <PatchyHead mood={mood} look={look} energy={energy} budget={budget} yawning={yawning} />
 
           {/* Right arm, in front of the head: waves when idle, otherwise does what the look calls for */}
           <PatchyRightArm pose={pose} wave={wave} waveDur={energy === 'easing' ? 14 : 8} />

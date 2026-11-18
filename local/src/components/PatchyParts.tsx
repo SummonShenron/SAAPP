@@ -35,6 +35,8 @@ const POSES: Record<ArmPose, Pose> = {
   // A fist pump: the arm is up as in cheer, and the fist bounces twice (1.6 s). The bounce is smaller when subdued (see MiniPatchy.css).
   fistpump: { v: [84, 60, 88, 48, 84, 38], alt: [84, 46, 86, 30, 82, 16], dur: 0.8 },
   hug: { v: [72, 75, 64, 75, 57, 70] },
+  // A hand up over his mouth: he is yawning (patchyYawn.ts).
+  yawn: { v: [84, 58, 72, 52, 60, 46] },
 };
 
 // The original's idle wave for the free arm: hang, then wave a few times, then hang again (keyframe times as fractions of the cycle).
@@ -123,13 +125,15 @@ interface HeadProps {
   scrunched?: boolean;
   /** No mouth at all. */
   mouthless?: boolean;
+  /** Mid-yawn: eyes squeezed shut and the mouth open wide (patchyYawn.ts). */
+  yawning?: boolean;
 }
 
-export function PatchyHead({ mood, look, energy, budget, focused = false, turned = focused, scrunched = false, mouthless = false }: HeadProps) {
+export function PatchyHead({ mood, look, energy, budget, focused = false, turned = focused, scrunched = false, mouthless = false, yawning = false }: HeadProps) {
   const doing: PatchyLook = mood === 'active' ? look : 'idle';
   const laughing = mood === 'laugh';
   const closedEyes = mood === 'soft' || mood === 'asleep';
-  const eyesOpen = !closedEyes && !laughing && !scrunched;
+  const eyesOpen = !closedEyes && !laughing && !scrunched && !yawning;
   const calm = mood === 'idle' || mood === 'watching' || mood === 'drowsy';
   // Heavy lids: a long quiet, or a chat that has been slowed down.
   const lids = mood === 'drowsy' || (budget === 'throttled' && (mood === 'idle' || mood === 'watching'));
@@ -151,7 +155,7 @@ export function PatchyHead({ mood, look, energy, budget, focused = false, turned
     : focused ? flat(46.5, 43.6, 53.5)
     : doing === 'writing' ? flat(43, 43, 57)
     : quad(43, 41, 50, 46, 57, 41);
-  const mouthShown = !laughing && mood !== 'soft' && !scrunched && !mouthless;
+  const mouthShown = !laughing && mood !== 'soft' && !scrunched && !mouthless && !yawning;
 
   const mouthRef = useRef<SVGPathElement>(null);
   const [firstMouth] = useState(() => mouthPath(mouth));
@@ -217,8 +221,8 @@ export function PatchyHead({ mood, look, energy, budget, focused = false, turned
             </g>
           )}
 
-          {/* Scrunched: eyes squeezed shut, no mouth */}
-          <g className={`mp-stroke-accent ${fade(scrunched)}`} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none">
+          {/* Scrunched (or yawning): eyes squeezed shut, no mouth (a yawn has its own, below) */}
+          <g className={`mp-stroke-accent ${fade(scrunched || yawning)}`} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none">
             <path d="M38 32.5 L45 36 L38 39.5" />
             <path d="M62 32.5 L55 36 L62 39.5" />
           </g>
@@ -236,6 +240,11 @@ export function PatchyHead({ mood, look, energy, budget, focused = false, turned
               <path d="M 54 36 Q 58 30 62 36" />
             </g>
             <path className="mp-accent" d="M41 39 Q50 50 59 39 Z" opacity="0.9" />
+          </g>
+
+          {/* A yawn: the mouth opens wide */}
+          <g className={fade(yawning)}>
+            <ellipse className="mp-accent" cx="50" cy="43.5" rx="4" ry="4.8" />
           </g>
 
           <g className={`${fade(mouthShown)}${focused ? ' ps-mouth-flat' : ''}`}>

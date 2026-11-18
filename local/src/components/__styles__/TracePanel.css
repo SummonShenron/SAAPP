@@ -261,6 +261,7 @@ button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); ou
 .gl-settled, .gl-settled * { transition: none !important; }
 /* beside the count of a finished reply's steps: the kind of each step, small and standing, in the muted colour (components/StepsDisclosure.tsx, stepKinds.ts kindSummary) */
 .steps-kinds { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; }
+.steps-kind { display: inline-flex; }          /* pointing at an icon names its kind (stepKinds.ts KIND_NAME) */
 .steps-kinds .si { width: 14px; height: 14px; color: var(--text-muted); }
 .steps-kinds-more { margin-left: 1px; font-size: 0.7rem; color: var(--text-muted); }
 button.steps-toggle:hover .steps-kinds .si { color: var(--accent-primary); }

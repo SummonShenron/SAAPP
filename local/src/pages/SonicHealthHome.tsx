@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { type CSSProperties } from 'react';
 import type { SonicHealth } from '../api';
 import { BarRow, BudgetBars, StatTile } from './sonicHealthParts';
 import { WhoSpentTile } from './SonicHealthWhoSpent';
 import { DailyChart } from './SonicHealthChart';
 import { KB_LABELS, pct, tokens, usd } from './sonicHealthFormat';
+import { rowSpans, sharedRows } from './sonicHealthHomeRows';
 
 export interface AttentionItem {
   key: string;
@@ -66,8 +67,8 @@ const TOOL_REASON_SHORT: Record<string, string> = {
 };
 
 /** A panel that is also a button: the whole thing opens the tab it summarises. */
-const Tile: React.FC<{ title: string; tab: string; onOpen: (tab: string) => void; badge?: string; children: React.ReactNode }> = ({ title, tab, onOpen, badge, children }) => (
-  <section className="sh-home-tile" onClick={() => onOpen(tab)} role="link" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(tab); } }}>
+const Tile: React.FC<{ title: string; tab: string; onOpen: (tab: string) => void; badge?: string; rows?: CSSProperties; children: React.ReactNode }> = ({ title, tab, onOpen, badge, rows, children }) => (
+  <section className="sh-home-tile" style={rows} onClick={() => onOpen(tab)} role="link" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(tab); } }}>
     <div className="sh-home-tile-head"><h3>{title}</h3>{badge && <span className="sh-pill">{badge}</span>}<span className="sh-home-open">Open ›</span></div>
     {children}
   </section>
@@ -90,6 +91,31 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
   const routing = (turns?.routing ?? []).slice(0, 4);
   const toolRows = (turns?.tools ?? []).slice(0, 5);
 
+  // Which panels each stack shows, counted by the same conditions that draw them below, so the stacks can share rows (sonicHealthHomeRows.ts): a panel covers one or more rows and ends on a row line the other stacks share.
+  // Each shown panel is listed with how tall it naturally is, roughly (pixels, measured once): only used to decide which panels of a short stack get the spare rows.
+  const graphRows = health.graph?.by_affiliate.length ?? 0;
+  const left = [
+    ...(budget ? [110] : []), 280, 305,          // the safety layer and Sonic's behavior are always there
+    ...(health.feedback ? [280] : []), ...(health.graph ? [90 + graphRows * 45] : []),
+  ];
+  const center = [
+    ...(usage?.daily && usage.daily.length > 0 ? [410] : []), ...(health.users !== undefined ? [300] : []), ...(topCallers.length > 0 ? [90 + topCallers.length * 30] : []),
+  ];
+  const right = [
+    ...(usage ? [280] : []), ...(turns && turns.turns > 0 ? [305] : []), ...(toolRows.length > 0 ? [90 + toolRows.length * 35] : []), ...(routing.length > 0 && turns ? [90 + routing.length * 35] : []),
+  ];
+  const rows3 = sharedRows(left.length, center.length, right.length);          // three stacks side by side
+  const rows2 = sharedRows(left.length, right.length);          // two stacks under the chart
+  const spansFor = (heights: number[]) => {
+    const wide = rowSpans(heights.length, rows3, heights);
+    const narrow = rowSpans(heights.length, rows2, heights);
+    let next = 0;
+    return (): CSSProperties => { const i = next++; return { '--span3': wide[i], '--span2': narrow[i] } as CSSProperties; };
+  };
+  const leftRows = spansFor(left);
+  const centerRows = spansFor(center);
+  const rightRows = spansFor(right);
+
   return (
     <div className="sh-home">
       <section className="sh-attention" aria-label="Needs attention">
@@ -109,15 +135,15 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
       </section>
 
       {/* Three stacks: each is its own column, so a panel sits directly under the one above it whatever the height of its neighbours. */}
-      <div className="sh-home-layout">
+      <div className="sh-home-layout" style={{ '--sh-rows': rows3, '--sh-rows-pair': rows2 } as CSSProperties}>
         <div className="sh-home-col">
           {budget && (
-            <Tile title="Usage budget" tab="budget" onOpen={onOpen} badge={budget.level === 'off' ? 'NOT SET' : budget.level.toUpperCase()}>
+            <Tile title="Usage budget" rows={leftRows()} tab="budget" onOpen={onOpen} badge={budget.level === 'off' ? 'NOT SET' : budget.level.toUpperCase()}>
               {budget.level === 'off' ? <div className="sh-hint">No budget is set, so nothing is limited.</div> : <BudgetBars budget={budget} />}
             </Tile>
           )}
 
-          <Tile title="Safety layer" tab="safety" onOpen={onOpen} badge={`${safety.risk_raised} RAISED`}>
+          <Tile title="Safety layer" rows={leftRows()} tab="safety" onOpen={onOpen} badge={`${safety.risk_raised} RAISED`}>
             <div className="sh-stat-grid sh-stat-grid-tight">
               <StatTile value={safety.risk_raised} label={`times risk was raised (${safety.people_with_risk_raised} people)`} />
               <StatTile value={pct(safety.line_rate)} label="named a human line" />
@@ -126,7 +152,7 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
             </div>
           </Tile>
 
-          <Tile title="Sonic's behavior" tab="behavior" onOpen={onOpen} badge={`${turnCount} TURNS`}>
+          <Tile title="Sonic's behavior" rows={leftRows()} tab="behavior" onOpen={onOpen} badge={`${turnCount} TURNS`}>
             <table className="sh-table sh-table-tight">
               <thead><tr><th>Measure</th><th>Now</th><th>Change</th></tr></thead>
               <tbody>
@@ -138,7 +164,7 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
           </Tile>
 
           {health.feedback && (
-            <Tile title="Feedback" tab="feedback" onOpen={onOpen} badge={`${health.feedback.period.positive + health.feedback.period.negative} IN PERIOD`}>
+            <Tile title="Feedback" rows={leftRows()} tab="feedback" onOpen={onOpen} badge={`${health.feedback.period.positive + health.feedback.period.negative} IN PERIOD`}>
               <div className="sh-stat-grid sh-stat-grid-tight">
                 <StatTile value={health.feedback.period.user_positive} label="thumbs-up from people" />
                 <StatTile value={health.feedback.period.user_negative} label="thumbs-down from people" warn={health.feedback.period.user_negative > 0} />
@@ -149,7 +175,7 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
           )}
 
           {health.graph && (
-            <Tile title="Knowledge graph" tab="knowledge" onOpen={onOpen} badge={`${health.graph.edges_total} RELATIONSHIPS`}>
+            <Tile title="Knowledge graph" rows={leftRows()} tab="knowledge" onOpen={onOpen} badge={`${health.graph.edges_total} RELATIONSHIPS`}>
               {health.graph.by_affiliate.map(row => (
                 <BarRow
                   key={row.affiliate}
@@ -165,17 +191,17 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
 
         <div className="sh-home-center">
           {usage?.daily && usage.daily.length > 0 && (
-            <section className="sh-home-tile sh-chart-tile">
+            <section className="sh-home-tile sh-chart-tile" style={centerRows()}>
               <div className="sh-home-tile-head"><h3>Day by day</h3><span className="sh-pill">{usage.daily.length} DAYS</span></div>
               <DailyChart daily={usage.daily} dailyLimitUsd={dailyLimit} onOpen={() => onOpen('usage')} />
             </section>
           )}
 
           {/* Who used the day and what each cost against the day's total. */}
-          <WhoSpentTile users={health.users} onOpen={onOpen} />
+          <WhoSpentTile users={health.users} onOpen={onOpen} rows={centerRows()} />
 
           {topCallers.length > 0 && (
-            <Tile title="Where the tokens went" tab="usage" onOpen={onOpen} badge="TOP CALLERS">
+            <Tile title="Where the tokens went" rows={centerRows()} tab="usage" onOpen={onOpen} badge="TOP CALLERS">
               {topCallers.map(row => (
                 <BarRow
                   key={`${row.label}|${row.model}`}
@@ -191,7 +217,7 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
 
         <div className="sh-home-col">
           {usage && (
-            <Tile title="Model spend" tab="usage" onOpen={onOpen} badge={total ? `${tokens(total.tokens)} TOKENS` : undefined}>
+            <Tile title="Model spend" rows={rightRows()} tab="usage" onOpen={onOpen} badge={total ? `${tokens(total.tokens)} TOKENS` : undefined}>
               {total && total.calls > 0 ? (
                 <div className="sh-stat-grid sh-stat-grid-tight">
                   <StatTile value={cost !== null && cost !== undefined ? usd(cost) : 'n/a'} label="estimated cost" />
@@ -204,7 +230,7 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
           )}
 
           {turns && turns.turns > 0 && (
-            <Tile title="Chat turns" tab="turns" onOpen={onOpen} badge={`${turns.turns} TURNS`}>
+            <Tile title="Chat turns" rows={rightRows()} tab="turns" onOpen={onOpen} badge={`${turns.turns} TURNS`}>
               <div className="sh-stat-grid sh-stat-grid-tight">
                 <StatTile value={turns.overall.avg_calls ?? 'n/a'} label="model calls per turn" />
                 <StatTile value={turns.plain.avg_calls ?? 'n/a'} label="calls per plain chat turn" />
@@ -216,7 +242,7 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
           )}
 
           {toolRows.length > 0 && (
-            <Tile title="Tools called" tab="turns" onOpen={onOpen} badge={`${turns?.tool_calls_total ?? 0} CALLS`}>
+            <Tile title="Tools called" rows={rightRows()} tab="turns" onOpen={onOpen} badge={`${turns?.tool_calls_total ?? 0} CALLS`}>
               {toolRows.map(row => (
                 <BarRow
                   key={row.tool}
@@ -229,7 +255,7 @@ export const HomeTab: React.FC<HomeProps> = ({ health, awaiting, suggestionsWait
           )}
 
           {routing.length > 0 && turns && (
-            <Tile title="Why turns used tools" tab="turns" onOpen={onOpen} badge="EXPENSIVE PATH">
+            <Tile title="Why turns used tools" rows={rightRows()} tab="turns" onOpen={onOpen} badge="EXPENSIVE PATH">
               {routing.map(row => (
                 <BarRow
                   key={row.reason}

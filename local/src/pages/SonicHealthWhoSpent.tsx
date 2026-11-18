@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, type CSSProperties } from 'react';
 import type { UsersSummary } from '../api';
 import { barFraction, barItems, dayHeadline, money, percent, shortDay, shortName, tableRows } from './usersDayLayout';
 import { tokens } from './sonicHealthFormat';
@@ -21,13 +21,13 @@ function dayLabel(days: string[], index: number): string {
  * that account's share. You are in the app's orange; the biggest ten accounts are named, the rest are added up. Counts and dollars only; the page is admin-only.
  * The full list is the table on the Usage tab.
  */
-export const WhoSpentTile: React.FC<{ users: UsersSummary | null | undefined; onOpen: (tab: string) => void }> = ({ users, onOpen }) => {
+export const WhoSpentTile: React.FC<{ users: UsersSummary | null | undefined; onOpen: (tab: string) => void; rows?: CSSProperties }> = ({ users, onOpen, rows }) => {
   const data = users?.daily_people;
   const [picked, setPicked] = useState<number | null>(null);
   if (users === undefined) return null;
   if (!data || data.by_day.length === 0) {
     return (
-      <section className="sh-home-tile sh-chart-tile">
+      <section className="sh-home-tile sh-chart-tile" style={rows}>
         <div className="sh-home-tile-head"><h3>Who spent what</h3></div>
         <div className="sh-hint">{users === null ? 'The per-account figures could not be read just now.' : 'Nothing to show yet: no prices are set, or no spend has been counted.'}</div>
       </section>
@@ -37,7 +37,7 @@ export const WhoSpentTile: React.FC<{ users: UsersSummary | null | undefined; on
   const day = data.by_day[index];
   const items = barItems(day);
   return (
-    <section className="sh-home-tile sh-chart-tile sh-who">
+    <section className="sh-home-tile sh-chart-tile sh-who" style={rows}>
       <div className="sh-home-tile-head">
         <h3>Who spent what</h3>
         <DayPicker days={data.days} value={index} onChange={setPicked} label="Day to show" />

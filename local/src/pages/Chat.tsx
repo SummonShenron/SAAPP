@@ -22,7 +22,8 @@ import { decideAutoApply, levelLabel, loadLevel, nextLevel, saveLevel, type Appr
 import ConversationsBlade from '../components/ConversationsBlade';
 import MiniPatchy, { type PatchyEnergy } from '../components/MiniPatchy';
 import PatchyHero from '../components/PatchyHero';
-import { TURN_SENT_STATUS, budgetFromLevel, lookForNode } from '../components/patchyLook';
+import { TURN_SENT_STATUS, budgetFromLevel, inToolLoop, lookForStep } from '../components/patchyLook';
+import { isLongPlanDone } from '../components/patchyFlourish';
 import { SHOW_PATCHY_EVENT, loadShowPatchy } from '../chatPreferences';
 import OptionWheel, { type OptionWheelItem } from '../components/OptionWheel';
 import { getWelcomeCards } from '../utils/Example_List';
@@ -855,6 +856,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
     return () => { alive = false; };
   }, [columnVisible, workspaceStatus, currentGitBranch]);
   const [agentStatus, setAgentStatus] = useState<string>('');
+  const [toolSteps, setToolSteps] = useState(0);          // how many tool steps this turn has run: from the second, Patchy's gears turn (patchyLook.ts inToolLoop)
+  const [agentTool, setAgentTool] = useState<string>('');          // the tool the newest step is running (Patchy's magnifying glass: components/patchyLook.ts lookForStep)
   const [agentPath, setAgentPath] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [attachNotice, setAttachNotice] = useState('');   // why a file was not attached (a photo format the browser cannot read)
@@ -948,6 +951,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
   const [resendTick, setResendTick] = useState(0);
   // Bumped each time a turn finishes normally, so the pixel Patchy by the input can hop.
   const [patchyCheer, setPatchyCheer] = useState(0);
+  const [patchyGreet, setPatchyGreet] = useState(0);          // an older conversation was just opened: he waves hello (patchyFlourish.ts)
+  const [patchyLoopCheer, setPatchyLoopCheer] = useState(false);          // the turn that just finished well had gone round the tool loop: his victory hop
+  const toolStepsRef = useRef(toolSteps);          // the turn's tool steps, readable from the code that ends the turn (which holds an old copy of the state)
+  useEffect(() => { toolStepsRef.current = toolSteps; }, [toolSteps]);
   // Bumped when a turn fails (his face turns sorry instead of celebrating), and when a message is steered into a running turn (he nods).
   const [patchyFault, setPatchyFault] = useState(0);
   const [patchySteer, setPatchySteer] = useState(0);
@@ -1445,7 +1452,7 @@ useEffect(() => {
     ]);
     setHistoryStart(0);
     setSelectedAffiliate(isEmbedded ? embedAffiliate : 'All');
-    setAgentStatus('');
+    setAgentStatus(''); setAgentTool(''); setToolSteps(0);
     setAgentPath([]);
     setHasChatted(false);
     setPatchyEnergy('open');
@@ -1498,6 +1505,7 @@ useEffect(() => {
         { id: genId(), sender: 'system', text: `What would you like to find out about, ${principal}?` }
       ]);
       setHasChatted(restored.some(m => m.sender === 'user'));
+      if (restored.some(m => m.sender === 'user')) setPatchyGreet(c => c + 1);
       // The carried feeling belongs to the conversation just left; the next message re-reads it.
       setPatchyEnergy('open');
       setAttachments([]);
@@ -1881,6 +1889,8 @@ useEffect(() => {
     const displayTitle = stepDetail || friendlyLabel;
 
     setAgentStatus(item.node);
+    setAgentTool(item.tool ?? '');
+    if (item.tool) setToolSteps(n => n + 1);
     setAgentPath(prev => (prev.includes(item.node) ? prev : [...prev, item.node]));
     markTraceComplete();
     setLatestStepTitle(displayTitle);
@@ -1939,6 +1949,8 @@ useEffect(() => {
     setInputEngaged(false);
     setLoading(true);
     setAgentStatus(TURN_SENT_STATUS);
+    setAgentTool('');
+    setToolSteps(0);
     setAgentPath([]);
     hasStreamedRef.current = false;
     postPatchyStatus('thinking');
@@ -2201,7 +2213,7 @@ useEffect(() => {
                   }
                   return updated;
                 });
-                setAgentStatus('');
+                setAgentStatus(''); setAgentTool(''); setToolSteps(0);
                 failed = true;
                 postPatchyStatus('error');
                 addTraceStep({ title: "Execution error", detail: payload.message, status: "active" });
@@ -2292,8 +2304,8 @@ useEffect(() => {
       endedTurnRef.current = aiMessageId;
       window.setTimeout(() => attachTurnSteps(!isProcessingQueue.current && nodeQueueRef.current.length === 0), 80);
       if (failed) setPatchyFault(c => c + 1);
-      else if (!stoppedByUser) setPatchyCheer(c => c + 1);
-      setAgentStatus('');
+      else if (!stoppedByUser) { setPatchyCheer(c => c + 1); setPatchyLoopCheer(inToolLoop(toolStepsRef.current)); }
+      setAgentStatus(''); setAgentTool(''); setToolSteps(0);
       postPatchyStatus('done');
     }
   };
@@ -2883,8 +2895,12 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
               {/* The empty chat has the full-size Patchy; this small one takes over when the conversation starts. */}
               {patchyAllowed && showPatchy && hasChatted && (
                 <MiniPatchy
-                  look={loading ? lookForNode(agentStatus) : 'idle'}
+                  look={loading ? lookForStep(agentStatus, agentTool) : 'idle'}
+                  loop={loading && inToolLoop(toolSteps)}
                   cheer={patchyCheer}
+                  loopCheer={patchyLoopCheer}
+                  greet={patchyGreet}
+                  planDone={!!codePlan && workspace.canEdit && isLongPlanDone(codePlan.state, codePlan.steps.length)}
                   fault={patchyFault}
                   steer={patchySteer}
                   praise={patchyPraise}

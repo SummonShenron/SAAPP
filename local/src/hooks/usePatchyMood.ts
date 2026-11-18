@@ -8,8 +8,16 @@ import {
 export interface PatchySignals {
   /** What the running turn is doing; 'idle' when none is running. */
   look?: PatchyLook;
+  /** The running turn is going round the tool agent's loop (patchyLook.ts inToolLoop): two little gears turn beside his head. Only the small Patchy draws them. */
+  loop?: boolean;
+  /** Bump when an older conversation has just been opened: he waves hello, and his stretch follows (patchyFlourish.ts). Only the small Patchy does it. */
+  greet?: number;
+  /** The open plan is a long one and every step is done (patchyFlourish.ts isLongPlanDone): the moment this turns true he does a ta-da. Only the small Patchy does it. */
+  planDone?: boolean;
   /** Bump to celebrate (a turn just finished well). */
   cheer?: number;
+  /** With a cheer: the turn that just finished well had gone round the tool loop, so the celebration is the victory hop (patchyLook.ts loopVictory). Only the small Patchy does it. */
+  loopCheer?: boolean;
   /** Bump for a fist pump (praise). */
   praise?: number;
   /** Bump for the sad face (he stays still a while). */

@@ -287,7 +287,11 @@ body, html {
   padding: 1.6rem clamp(1.25rem, 3vw, 2.75rem) 1rem;
   background: var(--ld-left-bg);
   z-index: 2;
+  /* everything in this panel sits on the panel's centre line, the way the right panel's does: the title, the sign-in button and its note, the notice and the links */
+  align-items: center;
+  text-align: center;
 }
+.landing-left > .landing-id { width: 100%; }
 
 .landing-right {
   align-items: center;
@@ -325,15 +329,51 @@ body, html {
   .landing-left, .landing-right { transition: none; }
 }
 
+/* On two columns the panels share THREE ROWS, so the two buttons sit on one row whatever is above or below them: the title above Sign In and the logo above Guest end on the same line, the buttons start on the
+   next row, and the notice and links hang under it. The middle row is the buttons' own, the rows above and below it share the rest equally, so the buttons stay at the panels' vertical middle. Each panel is
+   a subgrid over those rows. (A phone is one column with its own order, below.) */
+@media (min-width: 769px) {
+  .landing-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: 1fr auto 1fr;
+  }
+  .landing-left,
+  .landing-right {
+    display: grid;
+    grid-template-rows: subgrid;
+    grid-row: 1 / span 3;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    align-content: stretch;
+    width: auto;
+    flex: none;
+  }
+  .landing-left > .landing-id,
+  .landing-brand { align-self: end; }
+  .landing-brand { display: flex; flex-direction: column; align-items: center; }
+  .landing-row .landing-signin,
+  .landing-row .landing-guest { align-self: start; margin: 1.3rem 0 0; }          /* the same space above both (stronger than the margins they have below) */
+  .landing-foot { align-self: start; display: flex; flex-direction: column; align-items: center; gap: 0.8rem; width: 100%; padding-top: 0.2rem; }
+  .landing-foot .landing-notice { margin: 0; }
+}
+
 .landing-signin, .landing-guest { display: flex; flex-direction: column; gap: 0.9rem; width: 100%; max-width: 320px; }
-.landing-signin { margin: 1.2rem 0 1rem; }
+.landing-signin { margin: 1.2rem 0 1rem; align-items: center; }
+.landing-signin .enter-btn { width: 100%; max-width: none; }          /* as wide as the guest button, and on the same centre line in its own panel */
 .landing-guest { align-items: center; margin-top: 1.4rem; }
 .landing-guest .enter-btn { width: 100%; max-width: none; }
+.landing-signin .enter-btn, .landing-guest .enter-btn { height: 44px; box-sizing: border-box; }          /* the guest button has a 1px border and the sign-in button none: one height for both */
 
 .landing-affiliate { font-size: 0.85rem; color: var(--landing-ink-soft); }
 .landing-guest-note { color: var(--landing-ink-soft); font-size: 0.8rem; text-align: center; line-height: 1.4; margin: 0; }
 
 .landing-logo { color: var(--landing-ink); } /* the one-colour logo */
+/* The home page's mark is alive: its two dashed lines (the diagonal up to the crest and the line across the middle) flow right to left, one dash-and-gap per loop (LogoMark `animated`,
+   logoMarkData.ts logoFlowOffset gives each its direction). A person who asks for reduced motion gets the still mark. */
+.logo-flow { animation: logo-flow 1.4s linear infinite; }
+@keyframes logo-flow { to { stroke-dashoffset: var(--logo-flow-to); } }
+@media (prefers-reduced-motion: reduce) { .logo-flow { animation: none; } }
 .landing-name { margin-top: 0.7rem; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: var(--ld-brand); text-align: center; }
 
 .landing-hero-text h2 {
@@ -1814,6 +1854,7 @@ select:not(:-internal-list-box):not([multiple]) option {
      ordered freely. */
   .landing-row { flex-direction: column; padding: 1.8rem 1.5rem 1rem; gap: 1.4rem; background: var(--ld-left-bg); align-items: center; text-align: center; }
   .landing-left, .landing-right { display: contents; }
+  .landing-brand, .landing-foot { display: contents; }          /* the wrappers the wide layout rows on dissolve too, so their parts order freely */
   .landing-right::before { display: none; }
   .landing-logo { order: 0; margin-bottom: -0.8rem; }
   .landing-name { order: 1; margin-top: 0; font-size: 0.7rem; }
@@ -1821,7 +1862,9 @@ select:not(:-internal-list-box):not([multiple]) option {
   .landing-hero-text h2 { font-size: 1.9rem; }
   .landing-hero-text h3 { font-size: 1rem; }
   .landing-hero-text h4 { font-size: 0.9rem; }
-  .landing-signin { order: 3; max-width: 100%; margin: 0; }
+  .landing-signin { order: 3; max-width: 100%; margin: 0; align-items: center; }
+  /* both buttons are the full width of the column and sit on its centre line (the sign-in button used to keep its 300px cap and sat 11px left of centre, narrower than the guest button) */
+  .landing-signin .enter-btn { width: 100%; max-width: none; }
   .landing-affiliate { text-align: center; }
   .landing-guest { order: 4; max-width: 100%; margin: 0; }
   .landing-notice { order: 5; margin: 0; }

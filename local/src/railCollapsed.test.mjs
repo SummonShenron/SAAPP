@@ -10,11 +10,21 @@ const escaped = P.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('the collapsed rail has no fill and no edge, so the icons float on the page', () => {
   assert.match(css, new RegExp(`${escaped} \\{ --rail-box: var\\(--bg-alt\\); background: transparent; border-right-color: transparent; \\}`));
-  assert.match(css, /\.app-shell\.theme-shadow \.app-rail\.app-rail-compact:not\(\.app-rail-drawer\) \{ --rail-box: var\(--panel-bg\); \}/);          // the logo's box is gray in the dark theme too
+  assert.match(css, /\.app-shell\.theme-shadow \.app-rail\.app-rail-compact:not\(\.app-rail-drawer\) \{ --rail-box: var\(--panel-bg\); \}/);          // the active page's box is gray in the dark theme too
 });
 
-test('the logo sits in a gray 40px box, the new-chat button floats, and the current page keeps a soft box', () => {
-  assert.match(css, new RegExp(`${escaped} \\.rail-brand \\{ width: 40px; height: 40px; box-sizing: border-box; justify-content: center; padding: 0; border-radius: 12px; background: var\\(--rail-box\\); \\}`));
+test('there is no gray box behind the logo (it sits on the page, lined up with the top bar); the new-chat button floats and the current page keeps a soft box', () => {
+  assert.match(css, new RegExp(`${escaped} \\.rail-head \\{ width: var\\(--rail-compact-w\\); height: 44px; box-sizing: border-box; align-self: flex-start; margin: -12px 0 6px -8px; padding: 0; justify-content: center; background: transparent; border-bottom: 1px solid var\\(--border-color\\); \\}`));
+  // as tall as the top bar, and flush in the corner: the rail's 12px top and 8px left padding are pulled back out, and the head is the collapsed rail's whole width; it has no fill of its own
+  assert.doesNotMatch(css, /\.rail-head \{[^}]*background: var\(--rail-box\)/, 'no gray box behind the logo');
+  // the top bar's bottom line continues under the logo (same colour, light and dark), so it runs straight across; only the collapsed rail has it
+  assert.match(css, new RegExp(`${escaped} \\.rail-head \\{[^}]*justify-content: center; background: transparent; border-bottom: 1px solid var\\(--border-color\\); \\}`));
+  assert.match(css, /\.app-shell:not\(\.theme-shadow\) \.app-rail\.app-rail-compact:not\(\.app-rail-drawer\) \.rail-head \{ border-bottom-color: var\(--quiet-line\); \}/);
+  assert.match(css, /\.app-shell:not\(\.theme-shadow\) \.app-topbar \{ border-bottom-color: var\(--quiet-line\); \}/);
+  assert.doesNotMatch(css, /\.app-rail:not\(\.app-rail-compact\)[^{]*\.rail-head \{[^}]*border-bottom/, 'the expanded rail has no such line');
+  assert.match(css, /\.app-topbar \{[^}]*height: 44px;[^}]*border-bottom: 1px solid var\(--border-color\);/);
+  assert.match(css, /\.app-rail-compact \{ width: var\(--rail-compact-w\); align-items: center; padding: 12px 8px; \}/);
+  assert.doesNotMatch(css, /\.rail-brand \{ width: 40px; height: 40px;[^}]*border-radius: 12px/, 'the logo is no longer a floating rounded box of its own');
   assert.match(css, new RegExp(`${escaped} \\.rail-new \\{ background: transparent; border-color: transparent; \\}`));
   assert.match(css, new RegExp(`${escaped} \\.rail-item\\.active \\{ background: var\\(--rail-box\\); border-color: transparent; \\}`));
   assert.match(css, new RegExp(`${escaped} \\.rail-new:hover \\{ background: var\\(--bg-surface-hover\\); \\}`));
@@ -35,7 +45,7 @@ test('the expanded rail and the phone drawer keep the gray panel and the edge, a
   assert.match(base, /transition: width 0\.18s ease, background-color 0\.18s ease, border-color 0\.18s ease;/);
   const mine = css.slice(css.indexOf('/* Collapsed to icons on a desktop'), css.indexOf('/* The feedback hearts'));
   const rules = mine.split('\n').filter(line => line.startsWith('.app-shell'));
-  assert.equal(rules.length, 8);
+  assert.equal(rules.length, 9);          // the ninth is the light themes' colour for the line under the logo
   assert.ok(rules.every(rule => rule.includes(':not(.app-rail-drawer)')), 'every new rule leaves the drawer out');
   assert.doesNotMatch(css.slice(css.indexOf(`${P} {`)), /\.app-rail-drawer \.rail-brand|\.app-rail:not\(\.app-rail-compact\) \.rail-brand/);
 });

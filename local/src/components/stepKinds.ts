@@ -63,6 +63,13 @@ export function stepKindOf(tool: unknown, node: unknown): StepKind {
   return 'generic';
 }
 
+/** What a kind of step is called when its small icon is pointed at (the summary beside a finished reply's "7 steps"). It says what KIND of step it was, never what it found. */
+export const KIND_NAME: Readonly<Record<StepKind, string>> = {
+  code: 'Ran or changed code', web: 'Used the web', database: 'Looked in memory or a database', chat: 'Talked or wrote the answer', read: 'Read something', search: 'Searched',
+  mail: 'Checked mail', calendar: 'Checked the calendar', map: 'Looked up places', think: 'Worked something out', browser: 'Used a browser',
+  inject: 'Added saved context to the prompt', add: 'Added an attachment\'s text', generic: 'Took a step',
+};
+
 /** What the "7 steps" line above a finished reply shows beside its count: the kind of each step that did something (not the closing summary step), in order, at most `max`, and how many more there were. Pure. */
 export function kindSummary(steps: ReadonlyArray<{ kind?: StepKind; turnEnd?: unknown }>, max = 8): { kinds: StepKind[]; more: number } {
   const all = steps.filter(step => !step.turnEnd).map(step => cleanKind(step.kind) ?? 'generic');

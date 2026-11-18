@@ -6,7 +6,7 @@ import { useStepsGraph } from './useStepsGraph';
 import { LAND_END_AT, START_SPACE_PX, firstStepLanded, nowMs, paceFor, scaled } from './graphLoader';
 import { stepsAreOpen, stepsLabel } from './traceFacts';
 import StepIcon from './StepIcon';
-import { kindSummary } from './stepKinds';
+import { KIND_NAME, kindSummary } from './stepKinds';
 import './__styles__/TracePanel.css';
 
 interface Props {
@@ -97,7 +97,7 @@ const StepsDisclosure: React.FC<Props> = ({ steps, running, idPrefix, latest = f
         {/* what the steps did, at a glance: the kind of each, in order (decoration: the count says it in words) */}
         {kinds.kinds.length > 0 && (
           <span className="steps-kinds" aria-hidden="true">
-            {kinds.kinds.map((kind, i) => <StepIcon key={i} kind={kind} still />)}
+            {kinds.kinds.map((kind, i) => <span key={i} className="steps-kind" title={KIND_NAME[kind]}><StepIcon kind={kind} still /></span>)}
             {kinds.more > 0 && <span className="steps-kinds-more">+{kinds.more}</span>}
           </span>
         )}

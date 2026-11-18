@@ -1,6 +1,11 @@
+import { useEffect, useState, type CSSProperties } from 'react';
 import { usePatchyMood, type PatchySignals } from '../hooks/usePatchyMood';
+import { useYawn } from '../hooks/useYawn';
 import { PatchyHead, PatchyRightArm } from './PatchyParts';
-import { patchyRootClass, patchyTitle, type ArmPose } from './patchyLook';
+import { loopVictory, motionAllowed, patchyRootClass, patchyTitle, type ArmPose } from './patchyLook';
+import { STRETCH_STAGES, STRETCH_START_DELAY_MS, stretchFlags } from './patchyStretch';
+import { gearPath } from './patchyGear';
+import { HELLO_MS, HELLO_WAVE_SECONDS, SPARKLES, TADA_AFTER_MS, TADA_MS, sparklePath } from './patchyFlourish';
 import './__styles__/MiniPatchy.css';
 
 // A small Patchy drawn straight from the full-size one in errAgent (PatchyEmptyState.tsx): same 100x100
@@ -23,6 +28,9 @@ import './__styles__/MiniPatchy.css';
 // frustrated and haven't lifted) is quiet: legs still, no wave, worried brows over wide eyes, a small frown,
 // head tilted attentively, a muted color, no sweat drop, no alarm when something fails, and no giggling when poked (a soft nod instead).
 //
+// Once a conversation has started (the first time he appears) and every time the page is refreshed on one, the first time he has nothing to do he stretches: he sets the laptop down on the input's edge, stands up,
+// stretches with both arms over his head, sits back down and picks the laptop up again (patchyStretch.ts is the script, MiniPatchy.css draws it). Any turn, or you clicking into the box, cuts it short.
+//
 // The SVG keeps the original's 100-unit coordinate space; SCALE turns a unit into CSS pixels.
 
 export type { PatchyEnergy } from './patchyLook';
@@ -30,25 +38,88 @@ export type { PatchyEnergy } from './patchyLook';
 const SCALE = 0.58;
 const WIDTH = 100 * SCALE;
 const HEIGHT = 102 * SCALE;
+// The two gears that turn beside his head while the tool agent goes round its loop: a big one under a small one, on the left where nothing else is.
+const GEAR_BIG = gearPath(12, 52, 9, 7, 9);
+const GEAR_SMALL = gearPath(12, 34.5, 7, 5.4, 7);
 
 export function MiniPatchy(props: PatchySignals) {
   const { energy = 'open', budget = 'ok' } = props;
   const { mood, look, steered, reading, poke } = usePatchyMood(props);
 
+  // The stretch: a stage number while it plays (patchyStretch.ts), -1 when he is just sitting there. It starts the first time he is idle for a moment, once for as long as he is on the page, and stops the moment he has
+  // anything else to do. The stage list is only looked at while he is idle, so a stale number is never drawn.
+  const [stage, setStage] = useState(-1);
+  const [stretchedOnce, setStretchedOnce] = useState(false);
+  const idle = mood === 'idle';
+
+  // Opening an older conversation: he waves hello first (the waving arm starts a fresh trip through its cycle, MiniPatchy.css gives him a little hop), then the stretch is armed again and plays after it. Worked out while
+  // rendering, the way usePatchyMood notices a bump, so there is no frame in between.
+  const [seenGreet, setSeenGreet] = useState(props.greet ?? 0);
+  const [hello, setHello] = useState(false);
+  if ((props.greet ?? 0) !== seenGreet) {
+    setSeenGreet(props.greet ?? 0);
+    if (motionAllowed()) { setHello(true); setStretchedOnce(false); setStage(-1); }
+  }
+  useEffect(() => {
+    if (!hello) return undefined;
+    const timer = window.setTimeout(() => setHello(false), HELLO_MS);
+    return () => window.clearTimeout(timer);
+  }, [hello]);
+
+  useEffect(() => {
+    if (!idle || hello || stretchedOnce || !motionAllowed()) return undefined;
+    let timer: number | undefined;
+    const step = (i: number) => {
+      setStage(i);
+      timer = window.setTimeout(() => {
+        if (i + 1 < STRETCH_STAGES.length) step(i + 1);
+        else { setStretchedOnce(true); setStage(-1); }
+      }, STRETCH_STAGES[i].ms);
+    };
+    timer = window.setTimeout(() => step(0), STRETCH_START_DELAY_MS);
+    return () => { window.clearTimeout(timer); setStage(-1); };
+  }, [idle, hello, stretchedOnce]);
+
+  // A long plan has just been finished (the page says so with `planDone`): once the celebration of the turn that finished it is over, a ta-da. 'wait' is the pause, 'on' the ta-da.
+  const [seenPlan, setSeenPlan] = useState(props.planDone === true);
+  const [tadaStage, setTadaStage] = useState<'off' | 'wait' | 'on'>('off');
+  if ((props.planDone === true) !== seenPlan) {
+    setSeenPlan(props.planDone === true);
+    if (props.planDone === true && motionAllowed()) setTadaStage('wait');
+  }
+  useEffect(() => {
+    if (tadaStage === 'off') return undefined;
+    const timer = window.setTimeout(() => setTadaStage(tadaStage === 'wait' ? 'on' : 'off'), tadaStage === 'wait' ? TADA_AFTER_MS : TADA_MS);
+    return () => window.clearTimeout(timer);
+  }, [tadaStage]);
+  const tada = tadaStage === 'on' && idle && energy !== 'subdued';
+  const greeting = hello && idle;
+
+  const stretch = stretchFlags(idle && !tada ? stage : -1);
+  // Drowsy, he yawns every so often (patchyYawn.ts); in the tool loop, the gears turn.
+  const yawning = useYawn(mood === 'drowsy');
+  const looping = props.loop === true && mood === 'active';
+  const victory = loopVictory(mood, props.loopCheer, energy);          // a tool loop just finished well: the big hop, an arm up, the gears fly off
+
   const pose: ArmPose =
-    mood === 'active' ? (look === 'thinking' ? 'think' : look === 'searching' ? 'search' : look === 'puzzled' ? 'puzzle' : 'type')
+    tada ? 'cheer'
+    : stretch.stretching ? (stretch.reach ? 'cheer' : 'hang')
+    : yawning ? 'yawn'
+    : victory ? 'cheer'
+    : mood === 'active' ? (look === 'thinking' ? 'think' : look === 'searching' ? 'search' : look === 'puzzled' ? 'puzzle' : 'type')
     : mood === 'idle' ? 'hang'
     : mood === 'praise' ? 'fistpump' // praise: right arm snaps up into the fist pump
     : mood === 'sad' ? 'hang' // sad: the arm hangs still
     : mood === 'watching' ? 'ready' // you are writing: his free hand comes down to hover over the keys, getting ready to answer
     : 'type'; // celebrating, laughing, nodding, sorry, drowsy, asleep: hands on the laptop
-  const wave = mood === 'idle' && energy !== 'subdued' && budget !== 'throttled';
-  const waveDur = energy === 'easing' ? 14 : 8;
+  const wave = mood === 'idle' && !stretch.stretching && energy !== 'subdued' && budget !== 'throttled';
+  const waveDur = greeting ? HELLO_WAVE_SECONDS : energy === 'easing' ? 14 : 8;          // a hello starts the wave over, at the quick pace
 
   return (
     <button
       type="button"
-      className={patchyRootClass({ mood, look, energy, budget, steered, reading })}
+      className={`${patchyRootClass({ mood, look, energy, budget, steered, reading })}${stretch.stretching ? ' mp-stretching' : ''}${stretch.down ? ' mp-down' : ''}${stretch.stand ? ' mp-stand' : ''}${stretch.reach ? ' mp-reach' : ''}${yawning ? ' mp-yawn' : ''}${looping ? ' mp-looping' : ''}${victory ? ' mp-victory' : ''}${greeting ? ' mp-hello' : ''}${tada ? ' mp-tada' : ''}`}
+      style={stretch.stretching ? ({ '--mp-lean': stretch.lean } as CSSProperties) : undefined}
       onClick={poke}
       title={patchyTitle({ mood, look, energy })}
       aria-label={energy === 'subdued' ? 'SAAPP, the mascot.' : 'SAAPP, the mascot. Poke him.'}
@@ -62,7 +133,16 @@ export function MiniPatchy(props: PatchySignals) {
           </g>
         )}
 
+        {/* The ta-da: sparkles burst around him */}
+        {tada && (
+          <g className="mp-sparkles mp-accent" aria-hidden="true">
+            {SPARKLES.map((s, i) => <path key={i} className="mp-sparkle" d={sparklePath(s.x, s.y, s.r)} style={{ '--d': `${s.delay}s` } as CSSProperties} />)}
+          </g>
+        )}
+
         <g className="mp-bob">
+          {/* Everything of him that stands up in the stretch is drawn in two layers (the legs and torso, then, after the laptop, his arms and head) that rise and lean together, from his hips. */}
+          <g className="mp-rise">
           {/* Blocky legs dangle over the input's edge and tap up and down; the torso covers the hips */}
           <g className="mp-leg mp-leg-l">
             <rect x="37" y="80" width="9" height="13" rx="2" fill="#8E95A2" />
@@ -76,7 +156,10 @@ export function MiniPatchy(props: PatchySignals) {
           {/* Torso */}
           <rect x="34" y="56" width="32" height="30" rx="7" fill="#121316" stroke="#3A3F4C" strokeWidth="2" />
 
-          {/* 3/4 Angled Laptop (Reversed Isometric Direction) */}
+          </g>
+
+          {/* 3/4 Angled Laptop (Reversed Isometric Direction): in the stretch he sets it down on the edge beside him */}
+          <g className="mp-lap">
           <polygon points="34,77 64,70 74,76 44,83" fill="#2C303B" stroke="#B7BECB" strokeWidth="1.2" />
           <polygon points="42,76 58,72 68,76 48,80" fill="#1F242D" />
 
@@ -88,16 +171,38 @@ export function MiniPatchy(props: PatchySignals) {
           <line className="mp-accent mp-line mp-line-2" x1="50" y1="64" x2="64" y2="68" strokeWidth="2" strokeLinecap="round" />
           <line className="mp-line mp-line-3" x1="50" y1="68.5" x2="58" y2="71" stroke="#4B5163" strokeWidth="2" strokeLinecap="round" />
           <rect className="mp-accent mp-cursor" x="59" y="68.5" width="2" height="2" fill="var(--mp-accent)" />
+          </g>
 
+          {/* The tool loop: two gears turn beside his head (the big one drives the small one the other way) */}
+          <g className={`mp-fade mp-gears${looping || victory ? ' mp-on' : ''}${victory ? ' mp-gears-pop' : ''}`}>
+            <path className="mp-gear mp-gear-big mp-stroke-accent" d={GEAR_BIG} strokeWidth="1.3" strokeLinejoin="round" fill="none" />
+            <circle className="mp-stroke-accent" cx="12" cy="52" r="2.3" strokeWidth="1.3" fill="none" />
+            <path className="mp-gear mp-gear-small mp-stroke-accent" d={GEAR_SMALL} strokeWidth="1.3" strokeLinejoin="round" fill="none" />
+            <circle className="mp-stroke-accent" cx="12" cy="34.5" r="1.9" strokeWidth="1.3" fill="none" />
+          </g>
+
+          <g className="mp-rise">
           {/* Left arm: shoulder to the laptop's side, ball hand on it */}
-          <path d="M24 62 C 16 70, 22 82, 32.5 78.5" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
-          <circle className="mp-hand mp-hand-l" cx="32.5" cy="78.5" r="3.5" fill="#8E95A2" />
+          <g className="mp-arm-typing">
+            <path d="M24 62 C 16 70, 22 82, 32.5 78.5" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
+            <circle className="mp-hand mp-hand-l" cx="32.5" cy="78.5" r="3.5" fill="#8E95A2" />
+          </g>
+          {/* In the stretch it lets go of the laptop: it hangs while he stands, and goes up over his head (the right arm, below, is PatchyRightArm's cheer pose) */}
+          <g className="mp-arm-free mp-arm-hang">
+            <path d="M24 62 C 16 66, 16 76, 22 82" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
+            <circle cx="22" cy="82" r="3.5" fill="#8E95A2" />
+          </g>
+          <g className="mp-arm-free mp-arm-up">
+            <path d="M24 62 C 16 50, 14 36, 18 24" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
+            <circle cx="18" cy="24" r="3.5" fill="#8E95A2" />
+          </g>
 
 
-          <PatchyHead mood={mood} look={look} energy={energy} budget={budget} />
+          <PatchyHead mood={mood} look={look} energy={energy} budget={budget} scrunched={stretch.reach} yawning={yawning} />
 
           {/* Right arm, in front of the head (a hand to it, a magnifying glass over the eye): idle, it hangs and waves now and then; typing, it joins in on the keyboard; otherwise it does what the look calls for */}
           <PatchyRightArm pose={pose} wave={wave} waveDur={waveDur} handClass={pose === 'type' ? 'mp-hand mp-hand-r' : undefined} />
+          </g>
         </g>
       </svg>
     </button>

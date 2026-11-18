@@ -124,6 +124,23 @@
 
 .mp-working .mp-antenna { animation-duration: 0.6s; }
 
+/* ---- the stretch (MiniPatchy.tsx, patchyStretch.ts): the laptop goes down on the edge, he stands up (the input's edge is the floor: everything rises by the 12 units his legs dangled), his arms go up, he leans back
+   and sways, and it all comes back. Each stage of the script sets a class; the eases between them are the transitions here. The rise and the lean use the separate `translate` and `rotate` properties, so they
+   never fight the transforms the legs, head and bob already animate. ---- */
+.mp-stretching svg { overflow: visible; }
+.mp-rise { transform-origin: 50px 86px; transition: translate 0.8s ease-in-out, rotate 0.7s ease-in-out; }
+.mp-stand .mp-rise { translate: 0 -12px; }
+.mp-stretching .mp-rise { rotate: calc(var(--mp-lean, 0) * 1deg); }
+.mp-stand .mp-leg { animation: none; }
+.mp-lap { transition: translate 0.7s ease-in-out; }
+.mp-down .mp-lap { translate: -36px 3px; }
+.mp-arm-typing { transition: opacity 0.3s ease; }
+.mp-down .mp-arm-typing { opacity: 0; }
+.mp-arm-free { opacity: 0; transition: opacity 0.3s ease; }
+.mp-down .mp-arm-hang { opacity: 1; }
+.mp-reach .mp-arm-hang { opacity: 0; }
+.mp-reach .mp-arm-up { opacity: 1; }
+
 /* ---- energy follows the user's emotional state (see MiniPatchy.tsx) ---- */
 /* easing: a small lift has been shown, so gentler, not flat */
 .mp-e-easing { --mp-leg: 1.1s; }
@@ -376,3 +393,82 @@
 
 /* The embedded widget (BTY) has its own mini Patchy in the parent page. */
 .bty-embed-container .mp-root { display: none; }
+
+/* ---- the yawn (patchyYawn.ts, useYawn.ts): drowsy, every so often his head tips back, the whole of him lifts a hair, his mouth opens wide, his eyes squeeze shut (drawn in the head) and a hand comes up over his mouth
+   (the arm's own `yawn` pose). After the drowsy rules above, which set the drooping head it replaces for the length of the yawn. ---- */
+.mp-yawn .mp-turn { transform: rotate(-6deg) translateY(-1px); }
+.mp-yawn .mp-bob { animation: mp-yawn-lift 2.8s ease-in-out 1; }
+@keyframes mp-yawn-lift {
+  0%, 100% { transform: translateY(0); }
+  35%, 65% { transform: translateY(-1.5px); }
+}
+
+/* ---- the tool loop (patchyLook.ts inToolLoop, MiniPatchy.tsx): two gears turn beside his head, the big one driving the small one the other way, and his antenna flickers faster. The gears fade in and out like every
+   other expression; they are still for a person who asks for less motion. ---- */
+.mp-gear { transform-box: view-box; animation: mp-gear-spin 3.2s linear infinite; }
+.mp-gear-big { transform-origin: 12px 52px; }
+.mp-gear-small { transform-origin: 12px 34.5px; animation-duration: 2.5s; animation-direction: reverse; }
+@keyframes mp-gear-spin { to { transform: rotate(360deg); } }
+.mp-looping .mp-antenna { animation-duration: 0.45s; }
+@media (prefers-reduced-motion: reduce) {
+  .mp-gear { animation: none; }
+}
+
+/* ---- the victory hop (patchyLook.ts loopVictory): a tool loop just finished well. He crouches, springs high with his body stretched, lands squashed, bounces once more and settles, one arm up (the arm's cheer pose),
+   and the two gears fly off him, still turning, up and away. After the plain `.mp-done` hop above, which it replaces. Still for a person who asks for less motion. ---- */
+.mp-victory svg { overflow: visible; }          /* his antenna and the gears leave the top of his drawing */
+.mp-victory .mp-bob { transform-origin: 50px 86px; transform-box: view-box; animation: mp-victory 1.4s ease-out 1; }
+@keyframes mp-victory {
+  0% { transform: translateY(0) scale(1, 1); }
+  12% { transform: translateY(1px) scale(1.05, 0.93); }
+  34% { transform: translateY(-14px) scale(0.96, 1.06); }
+  52% { transform: translateY(0) scale(1.06, 0.92); }
+  66% { transform: translateY(-4px) scale(0.99, 1.02); }
+  82% { transform: translateY(0) scale(1.02, 0.97); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+.mp-gears-pop { animation: mp-gears-pop 1.3s ease-out forwards; }
+@keyframes mp-gears-pop {
+  0% { translate: 0 0; opacity: 1; }
+  100% { translate: -4px -26px; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mp-victory .mp-bob, .mp-gears-pop { animation: none; }
+}
+
+/* ---- steering a running tool loop: on top of his "got it" nod, the gears shift into a quicker beat for a moment (they swell, and both turn fast) ---- */
+.mp-steered.mp-looping .mp-gears { transform-box: view-box; transform-origin: 12px 43px; animation: mp-gear-shift 0.55s ease-out 2; }
+@keyframes mp-gear-shift {
+  0%, 100% { transform: scale(1); }
+  40% { transform: scale(1.35); }
+}
+.mp-steered.mp-looping .mp-gear { animation-duration: 0.5s; }
+
+/* ---- the hello (patchyFlourish.ts): an older conversation was opened. The waving arm starts over (PatchyParts.tsx, the quicker pace), and he gives one little hop to go with it. ---- */
+.mp-hello .mp-bob { animation: mp-hello-hop 0.5s ease-out 1; }
+@keyframes mp-hello-hop {
+  0%, 100% { transform: translateY(0); }
+  45% { transform: translateY(-3px); }
+}
+
+/* ---- the ta-da (patchyFlourish.ts): a long plan has been finished. Both arms go up (the right one is the arm's cheer pose, the left one is the stretch's raised arm), he rises a little and holds it, and sparkles burst around him one
+   after another. ---- */
+.mp-tada svg { overflow: visible; }
+.mp-tada .mp-arm-typing { opacity: 0; }
+.mp-tada .mp-arm-up { opacity: 1; }
+.mp-tada .mp-bob { transform-origin: 50px 86px; transform-box: view-box; animation: mp-tada 2.4s ease-in-out 1; }
+@keyframes mp-tada {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  18% { transform: translateY(1.5px) scale(1.03, 0.96); }
+  38%, 62% { transform: translateY(-4px) scale(0.98, 1.04); }
+  82% { transform: translateY(0) scale(1, 1); }
+}
+.mp-sparkle { opacity: 0; transform-box: fill-box; transform-origin: center; animation: mp-sparkle 1.1s ease-out both; animation-delay: var(--d, 0s); }
+@keyframes mp-sparkle {
+  0% { opacity: 0; transform: scale(0) rotate(0deg); }
+  35% { opacity: 1; transform: scale(1.25) rotate(40deg); }
+  100% { opacity: 0; transform: scale(0.4) rotate(90deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mp-steered.mp-looping .mp-gears, .mp-hello .mp-bob, .mp-tada .mp-bob, .mp-sparkle { animation: none; }
+}

@@ -123,6 +123,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             </p>
           </div>
 
+          {/* what sits under the sign-in button: the notice and the links (its own row on a wide screen, so both buttons stay on one row) */}
+          <div className="landing-foot">
         {showNotice && (
           <div className="landing-notice">
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
@@ -173,11 +175,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             <a href="#/privacy">Privacy Policy</a>
             <a href="#/terms">Terms of Service</a>
           </div>
+          </div>
         </div>
 
         <div className="landing-right">
-          <LogoMark className="landing-logo" variant="mono" size={64} label="Sonic Graph Technologies" />
-          <div className="landing-name">Sonic Graph Technologies</div>
+          <div className="landing-brand">
+            <LogoMark className="landing-logo" variant="mono" size={64} label="Sonic Graph Technologies" animated />
+            <div className="landing-name">Sonic Graph Technologies</div>
+          </div>
 
           <div className="landing-guest">
             <button

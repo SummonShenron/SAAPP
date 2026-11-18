@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { STEP_KINDS, cleanKind, kindSummary, stepKindOf } from './stepKinds.ts';
+import { KIND_NAME, STEP_KINDS, cleanKind, kindSummary, stepKindOf } from './stepKinds.ts';
 
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const icon = read('./StepIcon.tsx');
@@ -163,6 +163,17 @@ test('the page works the kind out from the tool and node the server named, when 
   assert.match(chat, /tool: payload\.tool, subject: payload\.subject,/);          // and it gets them from the server's event
 });
 
+test('every kind has a plain name for its tooltip, and the names say what kind of step it was, not what it found', () => {
+  assert.deepEqual(Object.keys(KIND_NAME).sort(), [...STEP_KINDS].sort());
+  for (const kind of STEP_KINDS) {
+    assert.ok(KIND_NAME[kind].length > 3 && KIND_NAME[kind].length <= 40, kind);
+    assert.doesNotMatch(KIND_NAME[kind], /found|learned|discovered|\d/, `${kind}: a name is a kind of step, never a result`);
+  }
+  assert.equal(new Set(Object.values(KIND_NAME)).size, STEP_KINDS.length, 'no two kinds share a name');
+  assert.equal(KIND_NAME.inject, 'Added saved context to the prompt');
+  assert.equal(KIND_NAME.add, 'Added an attachment\'s text');
+});
+
 // ---- the summary beside a finished reply's steps ----------------------------------------------------------------------------------------------------------------------------------------------------
 
 test('the line above a finished reply shows the kind of each step that did something, in order, at most eight, and how many more', () => {
@@ -183,7 +194,7 @@ test('the summary is drawn standing, small and muted, beside the count, and is d
   const disclosure = read('./StepsDisclosure.tsx');
   assert.match(disclosure, /const kinds = kindSummary\(steps\);/);
   assert.match(disclosure, /<span className="steps-toggle-label">\{stepsLabel\(steps\.length\)\}<\/span>\s+\{\/\*[^*]*\*\/\}\s+\{kinds\.kinds\.length > 0 && \(\s+<span className="steps-kinds" aria-hidden="true">/);
-  assert.match(disclosure, /\{kinds\.kinds\.map\(\(kind, i\) => <StepIcon key=\{i\} kind=\{kind\} still \/>\)\}/);
+  assert.match(disclosure, /\{kinds\.kinds\.map\(\(kind, i\) => <span key=\{i\} className=\"steps-kind\" title=\{KIND_NAME\[kind\]\}><StepIcon kind=\{kind\} still \/><\/span>\)\}/);
   assert.match(disclosure, /\{kinds\.more > 0 && <span className="steps-kinds-more">\+\{kinds\.more\}<\/span>\}/);
   assert.match(iconCss, /\.si-still, \.si-still \* \{ animation: none !important; \}/);
   assert.match(traceCss, /\.steps-kinds \.si \{ width: 14px; height: 14px; color: var\(--text-muted\); \}/);

@@ -4,6 +4,71 @@
    .manifest-search-input/.empty-manifest-notice/.delete-row-btn from SelfService.css.
    ========================================================================== */
 
+/* The page is two panes (2026-11-18): the topics down the left (Coming up, All memories, then each category with how many are in it) and the list of the topic picked beside them. The rows themselves
+   are unchanged. On a phone the topics become a row of chips that scrolls sideways above the list. */
+.memory-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+  margin-bottom: 5rem;
+}
+.memory-main { min-width: 0; margin-bottom: 0; }          /* the card stack's own bottom margin would double the layout's */
+
+.memory-topics {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.75rem;
+  background-color: var(--chip-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+.theme-shadow .memory-topics { background-color: var(--card-bg); border-color: var(--line); }
+.memory-topics-title { padding: 0.25rem 0.6rem 0.5rem; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+
+.memory-topic {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+.memory-topic:hover { background: var(--bg-surface-hover); color: var(--text); }
+.memory-topic:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
+.memory-topic.is-active { background: color-mix(in srgb, var(--accent-primary) 14%, transparent); color: var(--text); font-weight: 600; }
+.memory-topic-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-topic-count { flex: 0 0 auto; font-size: 0.78rem; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* a category's dot is its own colour (the .cat-* rules below set the span's colour); the two topics that are not a category have a hollow one */
+.memory-topic-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; }
+.memory-topic .memory-topic-dot { background: currentColor; }
+.memory-topic .memory-topic-dot-none { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; opacity: 0.55; }
+
+@media (max-width: 860px) {
+  .memory-layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+  .memory-topics {
+    position: static;
+    flex-direction: row;
+    gap: 0.4rem;
+    padding: 0.5rem;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .memory-topics-title { display: none; }
+  .memory-topic { width: auto; flex: 0 0 auto; padding: 0.4rem 0.8rem; border: 1px solid var(--border-color); border-radius: 999px; white-space: nowrap; }
+  .memory-topic.is-active { border-color: var(--accent-primary); }
+}
+
 .memory-controls-row {
   display: flex;
   flex-wrap: wrap;
@@ -390,6 +455,7 @@
 
   .memory-controls-row .manifest-search-input {
     max-width: 100%;
+    flex: 0 0 auto;          /* the row is a column here: its 240px flex basis was the box's HEIGHT */
   }
 
   .memory-clear-all-btn {

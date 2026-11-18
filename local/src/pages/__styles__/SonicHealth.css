@@ -563,14 +563,15 @@
 .sh-attention-info { border-left-color: var(--accent-primary) !important; }
 .sh-attention-warn { border-left-color: var(--accent-danger) !important; }
 
-/* Three independent stacks (left panels, chart in the middle, right panels). Every stack is its own column, so a panel sits directly under the
-   one above it instead of waiting for the tallest panel beside it. Below 1400px the chart moves to the top and the two stacks sit under it;
-   on a phone everything is one column. */
+/* Three stacks (left panels, chart in the middle, right panels) laid out on SHARED ROWS. The page (SonicHealthHome.tsx, sonicHealthHomeRows.ts) gives the layout as many rows as the biggest stack has panels and tells each
+   panel how many of them it covers (--span3 with three stacks side by side, --span2 with two under the chart), so a stack with fewer panels gives its first panels more rows. Every panel's top and bottom therefore sit on a
+   row line the other stacks share, and all the stacks end on the same line. Where subgrid is not supported, or on a phone, each stack is a plain vertical stack whose panels share the room left over.
+   Below 1400px the chart moves to the top and the two stacks sit under it; on a phone everything is one column. */
 .sh-home-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 1.25rem;
-  align-items: start;
+  align-items: stretch;
 }
 
 .sh-home-col,
@@ -579,6 +580,12 @@
   flex-direction: column;
   gap: 1.25rem;
   min-width: 0;
+}
+
+/* The panels of a stack share the room the tallest stack leaves them, equally, so a stack that is shorter than its neighbour is not short at the bottom. In a single column there is no extra room, so nothing grows. */
+.sh-home-col > *,
+.sh-home-center > * {
+  flex: 1 1 auto;
 }
 
 /* On a narrow screen the chart comes first, then the two stacks. */
@@ -605,6 +612,43 @@
   .sh-home-center {
     grid-column: auto;
     order: 0;
+  }
+}
+
+/* The shared rows. Each stack is a subgrid over the layout's rows, and each panel covers the number of rows the page gave it. */
+@supports (grid-template-rows: subgrid) {
+  @media (min-width: 900px) {
+    .sh-home-layout {
+      grid-template-rows: auto repeat(var(--sh-rows-pair, 1), auto);
+    }
+
+    .sh-home-col {
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-row: 2 / span var(--sh-rows-pair, 1);
+    }
+
+    .sh-home-col > * {
+      grid-row: span var(--span2, 1);
+    }
+  }
+
+  @media (min-width: 1400px) {
+    .sh-home-layout {
+      grid-template-rows: repeat(var(--sh-rows, 1), auto);
+    }
+
+    .sh-home-col,
+    .sh-home-center {
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-row: 1 / span var(--sh-rows, 1);
+    }
+
+    .sh-home-col > *,
+    .sh-home-center > * {
+      grid-row: span var(--span3, 1);
+    }
   }
 }
 

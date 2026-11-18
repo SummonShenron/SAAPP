@@ -23,3 +23,17 @@ export const LOGO_EDGES: ReadonlyArray<readonly [number, number, boolean]> = [
 ];
 
 export const LOGO_DASH = '6 5';
+
+/** How far the dashes travel in one loop: one dash and one gap. */
+export const LOGO_DASH_PERIOD = LOGO_DASH.split(' ').reduce((sum, part) => sum + Number(part), 0);
+
+/**
+ * Where a dashed edge's `stroke-dashoffset` animates to, so its dashes run RIGHT TO LEFT (the animated mark on the home page). Dashes move toward an edge's END as the offset decreases and toward its START as it
+ * increases, so an edge drawn right to left (the line across the middle: node 4 back to node 2) goes to -period and one drawn left to right (the diagonal up to the crest: node 2 to node 3) goes to +period. Null for a
+ * solid edge, which does not move. Pure; the nodes are only read for which end is further left.
+ */
+export function logoFlowOffset(edge: readonly [number, number, boolean]): number | null {
+  const [from, to, dashed] = edge;
+  if (!dashed) return null;
+  return LOGO_NODES[to][0] < LOGO_NODES[from][0] ? -LOGO_DASH_PERIOD : LOGO_DASH_PERIOD;
+}

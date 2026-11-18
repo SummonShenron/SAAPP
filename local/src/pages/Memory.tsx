@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, type UserFact, type OpenLoop, type OpenLoopChanges, type MemoryStored, type MemoryDomain } from '../api';
 import './__styles__/SelfService.css';
 import './__styles__/Memory.css';
+import { ALL_TOPIC, COMING_UP, activeTopicOf, topicLabel } from './memoryTopics';
 
 const CATEGORY_COLORS: Record<string, string> = {
   identity: 'cat-identity',
@@ -80,6 +81,15 @@ function formatDueDay(day: string): string {
   return parsed.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+/** One line of the topics panel: its colour dot (a category's own colour), its name and how many are in it. */
+const TopicButton: React.FC<{ active: boolean; label: string; count: number; dot?: string; onSelect: () => void }> = ({ active, label, count, dot, onSelect }) => (
+  <button type="button" className={`memory-topic${active ? ' is-active' : ''}`} aria-current={active ? 'true' : undefined} onClick={onSelect}>
+    <span className={`memory-topic-dot ${dot ?? 'memory-topic-dot-none'}`} aria-hidden="true" />
+    <span className="memory-topic-label">{label}</span>
+    <span className="memory-topic-count">{count}</span>
+  </button>
+);
+
 export const MemoryPage: React.FC = () => {
   const [facts, setFacts] = useState<UserFact[]>([]);
   const [loops, setLoops] = useState<OpenLoop[]>([]);
@@ -88,7 +98,7 @@ export const MemoryPage: React.FC = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [clearing, setClearing] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [topic, setTopic] = useState<string>(ALL_TOPIC);          // which topic is on show: "all", a category, or COMING_UP
   const [domainFilter, setDomainFilter] = useState<string>('all');
   const [domainSavingId, setDomainSavingId] = useState<string | null>(null);
   const [editingLoopId, setEditingLoopId] = useState<string | null>(null);
@@ -273,9 +283,11 @@ export const MemoryPage: React.FC = () => {
   };
 
   const categories = Array.from(new Set(facts.map(f => f.category))).sort();
+  const activeTopic = activeTopicOf(topic, categories, loops.length);          // a topic with nothing left in it falls back to everything
+  const comingUpCount = loops.filter(l => l.status !== 'cancelled').length;
 
   const filteredFacts = facts
-    .filter(f => categoryFilter === 'all' || f.category === categoryFilter)
+    .filter(f => activeTopic === ALL_TOPIC || f.category === activeTopic)
     .filter(f => domainFilter === 'all' || (domainFilter === 'unsorted' ? !f.domain : f.domain === domainFilter))
     .filter(f => f.fact.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
@@ -291,8 +303,18 @@ export const MemoryPage: React.FC = () => {
         <p>Here's what Sonic remembers about you — how sure it is, and where it came from.</p>
       </header>
 
-      <div className="vertical-card-stack">
-        {loops.length > 0 && (
+      <div className="memory-layout">
+        <nav className="memory-topics" aria-label="Topics" data-help="memory.category">
+          <div className="memory-topics-title">Topics</div>
+          {loops.length > 0 && <TopicButton active={activeTopic === COMING_UP} label="Coming up" count={comingUpCount} onSelect={() => setTopic(COMING_UP)} />}
+          <TopicButton active={activeTopic === ALL_TOPIC} label="All memories" count={facts.length} onSelect={() => setTopic(ALL_TOPIC)} />
+          {categories.map(cat => (
+            <TopicButton key={cat} active={activeTopic === cat} label={topicLabel(cat)} count={facts.filter(f => f.category === cat).length} dot={CATEGORY_COLORS[cat] || 'cat-preference'} onSelect={() => setTopic(cat)} />
+          ))}
+        </nav>
+
+      <div className="memory-main vertical-card-stack">
+        {activeTopic === COMING_UP && (
           <section className="service-card memory-card" data-help="memory.comingUp">
             <div className="card-badge">{loops.filter(l => l.status !== 'cancelled').length} COMING UP</div>
             <h2>Coming Up</h2>
@@ -386,9 +408,10 @@ export const MemoryPage: React.FC = () => {
             </div>
           </section>
         )}
+        {activeTopic !== COMING_UP && (
         <section className="service-card memory-card" data-help="memory.saved">
-          <div className="card-badge">{facts.length} SAVED</div>
-          <h2>Saved Memories</h2>
+          <div className="card-badge">{activeTopic === ALL_TOPIC ? `${facts.length} SAVED` : `${filteredFacts.length} OF ${facts.length}`}</div>
+          <h2>{activeTopic === ALL_TOPIC ? 'Saved Memories' : topicLabel(activeTopic)}</h2>
           <p className="card-description">
             Search, review, or forget individual memories. Clearing everything is permanent.
             Each one is filed under a part of your life (work, your own projects, personal, or general) so Sonic doesn't mix your job with what you build for yourself. If one is filed wrong, change it on its row and Sonic won't move it again.
@@ -409,17 +432,6 @@ export const MemoryPage: React.FC = () => {
               onChange={(e) => setSearch(e.target.value)}
               className="manifest-search-input"
             />
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="memory-category-select"
-              data-help="memory.category"
-            >
-              <option value="all">All categories</option>
-              {categories.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
             <select
               value={domainFilter}
               onChange={(e) => setDomainFilter(e.target.value)}
@@ -585,6 +597,8 @@ export const MemoryPage: React.FC = () => {
             </div>
           )}
         </section>
+        )}
+      </div>
       </div>
     </div>
   );

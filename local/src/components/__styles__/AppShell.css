@@ -546,12 +546,15 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 .app-shell:not(.theme-shadow) .app-rail .rail-new { background: transparent; border-color: var(--quiet-line); }
 .app-shell:not(.theme-shadow) .app-rail .user-chip { background: transparent; border-color: transparent; }
 
-/* Collapsed to icons on a desktop: no gray column. The rail is the page's own colour with no edge, the logo sits in a gray box (40px, like the buttons below it) and the icons float; only the page you are on keeps
+/* Collapsed to icons on a desktop: no gray at all. The rail is the page's own colour with no edge, the logo sits on the page with no box behind it, and the icons float. The logo keeps the place it had: centred in a
+   head as wide as the collapsed rail and as tall as the top bar (44px, .app-topbar), with the top bar's own bottom line under it, so that line runs straight across the page above the icons. Expanding the rail
+   takes the line away (these rules are for the collapsed rail only). Only the page you are on keeps
    a soft gray box (and the orange bar), and whatever you point at. After the quiet shell above, with a stronger selector, because that block also styles the rail's edge and buttons. The expanded rail and the
    phone's drawer are untouched. */
 .app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) { --rail-box: var(--bg-alt); background: transparent; border-right-color: transparent; }
 .app-shell.theme-shadow .app-rail.app-rail-compact:not(.app-rail-drawer) { --rail-box: var(--panel-bg); }
-.app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-brand { width: 40px; height: 40px; box-sizing: border-box; justify-content: center; padding: 0; border-radius: 12px; background: var(--rail-box); }
+.app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-head { width: var(--rail-compact-w); height: 44px; box-sizing: border-box; align-self: flex-start; margin: -12px 0 6px -8px; padding: 0; justify-content: center; background: transparent; border-bottom: 1px solid var(--border-color); }
+.app-shell:not(.theme-shadow) .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-head { border-bottom-color: var(--quiet-line); }          /* the same line colour as the top bar in the light themes */
 .app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-brand:hover { background: var(--bg-surface-hover); }
 .app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-new { background: transparent; border-color: transparent; }
 .app-shell .app-rail.app-rail-compact:not(.app-rail-drawer) .rail-new:hover { background: var(--bg-surface-hover); }

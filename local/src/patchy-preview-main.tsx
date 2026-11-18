@@ -11,10 +11,10 @@ import type { PatchyBudget, PatchyEnergy, PatchyLook } from './components/patchy
 
 // A gallery of every Patchy look and mood, for checking them by eye (open /patchy-preview.html on the dev server).
 // `bump` repeats a short-lived trigger every few seconds so its animation can be watched: a failure, a celebration, a steer nod, typing or a poke.
-type Bump = 'fault' | 'cheer' | 'praise' | 'sad' | 'steer' | 'poke';
+type Bump = 'fault' | 'cheer' | 'praise' | 'sad' | 'steer' | 'poke' | 'greet' | 'plan';
 
-function Cell({ label, look = 'idle', energy = 'open', budget = 'ok', bump, drowsy, hero, engaged, typed = 0 }: {
-  label: string; look?: PatchyLook; energy?: PatchyEnergy; budget?: PatchyBudget; bump?: Bump; drowsy?: boolean; hero?: boolean; engaged?: boolean; typed?: number;
+function Cell({ label, look = 'idle', energy = 'open', budget = 'ok', bump, drowsy, hero, engaged, typed = 0, loop, loopCheer }: {
+  label: string; look?: PatchyLook; energy?: PatchyEnergy; budget?: PatchyBudget; bump?: Bump; drowsy?: boolean; hero?: boolean; engaged?: boolean; typed?: number; loop?: boolean; loopCheer?: boolean;
 }) {
   const [n, setN] = useState(0);
   const box = useRef<HTMLDivElement>(null);
@@ -25,16 +25,18 @@ function Cell({ label, look = 'idle', energy = 'open', budget = 'ok', bump, drow
       else setN(c => c + 1);
     };
     const first = setTimeout(tick, 600);
-    const every = setInterval(tick, bump === 'fault' ? 8000 : 3500);
+    const every = setInterval(tick, bump === 'fault' || bump === 'plan' ? 8000 : 3500);
     return () => { clearTimeout(first); clearInterval(every); };
   }, [bump]);
   const signals = {
-    look, energy, budget,
+    look, energy, budget, loop, loopCheer,
     cheer: bump === 'cheer' ? n : 0,
     fault: bump === 'fault' ? n : 0,
     praise: bump === 'praise' ? n : 0,
     sad: bump === 'sad' ? n : 0,
     steer: bump === 'steer' ? n : 0,
+    greet: bump === 'greet' ? n : 0,
+    planDone: bump === 'plan' ? n % 2 === 1 : false,
     engaged,
     typed,
     drowsyAfterMs: drowsy ? 400 : undefined,
@@ -66,6 +68,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 const params = new URLSearchParams(window.location.search);
+// ?slow=5 makes every timer five times longer (the stretch's stages with it), so a stage lasts long enough to look at; the CSS eases stay in real time.
+const slowBy = Number(params.get('slow')) || 1;
+if (slowBy !== 1) {
+  const realSetTimeout = window.setTimeout.bind(window);
+  window.setTimeout = ((fn: TimerHandler, ms?: number, ...args: unknown[]) => realSetTimeout(fn, (ms ?? 0) * slowBy, ...args)) as typeof window.setTimeout;
+}
 document.body.style.background = 'var(--bg-main)';
 if (params.get('dark')) document.body.classList.add('theme-shadow');
 
@@ -165,8 +173,41 @@ function Live() {
   );
 }
 
+// ?stretch=1: the small Patchy's stretch (patchyStretch.ts), shown big and started again every 12 seconds (he stretches once each time he appears, a moment after he is idle). &slow=3 plays it three times slower.
+function StretchLoop() {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const every = setInterval(() => setN(c => c + 1), 12000 * (Number(params.get('slow')) || 1));
+    return () => clearInterval(every);
+  }, []);
+  return (
+    <form className="chat-input-area" style={{ width: 190, margin: '190px 0 0 20px', transform: 'scale(4)', transformOrigin: '0 0' }}>
+      <div className="chat-input-wrapper">
+        <MiniPatchy key={n} />
+        <textarea className="chat-textarea" placeholder="Ask a question..." rows={2} />
+      </div>
+    </form>
+  );
+}
+
+// ?one=yawn | loop | loop-search | think: one small Patchy, shown big, to look at a single look closely.
+function One({ what }: { what: string }) {
+  return (
+    <div style={{ transform: 'scale(4.5)', transformOrigin: '0 0', margin: '230px 0 0 120px', width: 190 }}>
+      {what === 'yawn' && <Cell label="" drowsy />}
+      {what === 'loop' && <Cell label="" look="writing" loop />}
+      {what === 'loop-search' && <Cell label="" look="searching" loop />}
+      {what === 'think' && <Cell label="" look="thinking" />}
+      {what === 'victory' && <Cell label="" bump="cheer" loopCheer />}
+      {what === 'hello' && <Cell label="" bump="greet" />}
+      {what === 'tada' && <Cell label="" bump="plan" />}
+      {what === 'steerloop' && <Cell label="" look="writing" loop bump="steer" />}
+    </div>
+  );
+}
+
 createRoot(document.getElementById('root')!).render(
-  params.get('chat') ? chatMock : params.get('live') ? <Live /> : params.get('empty') ? emptyChat : <div>
+  params.get('chat') ? chatMock : params.get('live') ? <Live /> : params.get('stretch') ? <StretchLoop /> : params.get('one') ? <One what={params.get('one')!} /> : params.get('empty') ? emptyChat : <div>
     <Section title="New reactions: praise (fist pump) and sad (still, head down, eyes on his feet)">
       <Cell label="praise" bump="praise" />
       <Cell label="praise, subdued" bump="praise" energy="subdued" />
@@ -179,9 +220,15 @@ createRoot(document.getElementById('root')!).render(
       <Cell label="searching" look="searching" />
       <Cell label="puzzled" look="puzzled" />
       <Cell label="writing" look="writing" />
+      <Cell label="tool loop (gears)" look="writing" loop />
+      <Cell label="tool loop, searching" look="searching" loop />
     </Section>
     <Section title="After a turn, and your actions">
       <Cell label="done (cheer)" bump="cheer" />
+      <Cell label="done after a tool loop (victory hop)" bump="cheer" loopCheer />
+      <Cell label="steered in a tool loop (gears shift)" look="writing" loop bump="steer" />
+      <Cell label="opened an old chat (hello)" bump="greet" />
+      <Cell label="long plan finished (ta-da)" bump="plan" />
       <Cell label="error (fault)" bump="fault" />
       <Cell label="steered (got it)" look="writing" bump="steer" />
       <Cell label="box engaged" engaged />

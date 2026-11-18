@@ -5,6 +5,8 @@
 //  - the MOOD: the one expression he shows right now, which is the look while a turn runs and otherwise whatever the person's own
 //    actions and the usage budget call for (a poke, a failure, typing, a long quiet, a paused chat).
 
+import { stepKindOf, type StepKind } from './stepKinds.ts';          // with the extension: the test runner loads this file directly, and needs it (the build allows it)
+
 /** How much energy he shows; follows the user's emotional state (the backend's energy tier, backend/utils/emotion_utils.py). */
 export type PatchyEnergy = 'open' | 'easing' | 'subdued';
 
@@ -17,7 +19,7 @@ export type PatchyBudget = 'ok' | 'notice' | 'throttled' | 'blocked';
 export type PatchyMood = 'laugh' | 'soft' | 'error' | 'active' | 'done' | 'praise' | 'sad' | 'asleep' | 'watching' | 'drowsy' | 'idle';
 
 /** The poses of the right arm (PatchyParts.tsx draws them). */
-export type ArmPose = 'hang' | 'type' | 'ready' | 'think' | 'search' | 'puzzle' | 'cheer' | 'fistpump' | 'hug';
+export type ArmPose = 'hang' | 'type' | 'ready' | 'think' | 'search' | 'puzzle' | 'cheer' | 'fistpump' | 'hug' | 'yawn';
 
 /** The class on a Patchy's root: it picks the accent color and every animation in MiniPatchy.css. */
 export function patchyRootClass(p: { mood: PatchyMood; look: PatchyLook; energy: PatchyEnergy; budget: PatchyBudget; steered: boolean; reading?: boolean }): string {
@@ -64,6 +66,40 @@ export function lookForNode(node: string | null | undefined): Exclude<PatchyLook
   if (SEARCHING_NODES.has(node)) return 'searching';
   if (PUZZLED_NODES.has(node)) return 'puzzled';
   return 'writing';
+}
+
+/** The kinds of step (components/stepKinds.ts) that are looking something up: the magnifying glass. Reading one thing counts, so does looking at a page. */
+const LOOKING_KINDS = new Set<StepKind>(['web', 'search', 'database', 'read', 'mail', 'calendar', 'map', 'browser']);
+
+/**
+ * The look for a step that may name the tool it is running. The tool agent (the only loop) reports EVERY step as the node 'tool_agent_node' and names the tool separately, so the node alone could never tell a
+ * web search from typing the answer, and the magnifying glass never came out. With a tool, the step's kind (stepKindOf, the same one its icon uses) decides: looking things up is the glass, working a plan out is
+ * thinking, anything else is typing. Without a tool it is lookForNode's answer. Pure.
+ */
+export function lookForStep(node: string | null | undefined, tool?: string | null): Exclude<PatchyLook, 'idle'> {
+  if (typeof tool === 'string' && tool) {
+    const kind = stepKindOf(tool, node);
+    if (LOOKING_KINDS.has(kind)) return 'searching';
+    if (kind === 'think') return 'thinking';
+    return 'writing';
+  }
+  return lookForNode(node);
+}
+
+/** The tool agent has gone round its loop once it has run this many tools in one turn: from then on two little gears turn beside Patchy's head (MiniPatchy.tsx). One tool is just a tool. */
+export const TOOL_LOOP_AFTER = 2;
+
+/** Whether a turn that has run `toolSteps` tools so far is in the tool loop. Pure. */
+export function inToolLoop(toolSteps: number): boolean {
+  return Number.isFinite(toolSteps) && toolSteps >= TOOL_LOOP_AFTER;
+}
+
+/**
+ * Whether his celebration is the victory hop: a turn that went round the tool loop has just ended well, and he has the energy for it (a person who is low or only starting to lift gets the gentler celebration the stylesheet
+ * already has for them). He crouches, jumps high, lands squashed, with an arm up, and the two gears fly off him (MiniPatchy.css `.mp-victory`). Pure.
+ */
+export function loopVictory(mood: string, loopCheer: boolean | undefined, energy: string): boolean {
+  return mood === 'done' && loopCheer === true && energy === 'open';
 }
 
 /** The budget level as Patchy sees it. */
