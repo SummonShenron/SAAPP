@@ -132,14 +132,17 @@
 .mp-stand .mp-rise { translate: 0 -12px; }
 .mp-stretching .mp-rise { rotate: calc(var(--mp-lean, 0) * 1deg); }
 .mp-stand .mp-leg { animation: none; }
-.mp-lap { transition: translate 0.7s ease-in-out; }
-.mp-down .mp-lap { translate: -36px 3px; }
 .mp-arm-typing { transition: opacity 0.3s ease; }
 .mp-down .mp-arm-typing { opacity: 0; }
 .mp-arm-free { opacity: 0; transition: opacity 0.3s ease; }
 .mp-down .mp-arm-hang { opacity: 1; }
 .mp-reach .mp-arm-hang { opacity: 0; }
 .mp-reach .mp-arm-up { opacity: 1; }
+/* Carrying the laptop (the rig: patchyRig.ts): its two arms are drawn by script and fade in as the ordinary ones fade out, so the swap is never seen (they are the same shape at the moment of the swap). */
+.mp-rig { opacity: 0; transition: opacity 0.3s ease; }
+.mp-rarm { transition: opacity 0.3s ease; }
+.mp-rigging .mp-rig { opacity: 1; }
+.mp-rigging .mp-arm-typing, .mp-rigging .mp-arm-hang, .mp-rigging .mp-rarm { opacity: 0; }
 
 /* ---- energy follows the user's emotional state (see MiniPatchy.tsx) ---- */
 /* easing: a small lift has been shown, so gentler, not flat */

@@ -1,10 +1,12 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { usePatchyMood, type PatchySignals } from '../hooks/usePatchyMood';
+import { useStretchRig } from '../hooks/useStretchRig';
 import { useYawn } from '../hooks/useYawn';
 import { PatchyHead, PatchyRightArm } from './PatchyParts';
 import { loopVictory, motionAllowed, patchyRootClass, patchyTitle, type ArmPose } from './patchyLook';
 import { STRETCH_STAGES, STRETCH_START_DELAY_MS, stretchFlags } from './patchyStretch';
 import { gearPath } from './patchyGear';
+import { LEFT_TYPE, RIGHT_HANG, SHOULDER_LEFT, SHOULDER_RIGHT, armPath } from './patchyRig';
 import { HELLO_MS, HELLO_WAVE_SECONDS, SPARKLES, TADA_AFTER_MS, TADA_MS, sparklePath } from './patchyFlourish';
 import './__styles__/MiniPatchy.css';
 
@@ -96,6 +98,23 @@ export function MiniPatchy(props: PatchySignals) {
   const greeting = hello && idle;
 
   const stretch = stretchFlags(idle && !tada ? stage : -1);
+
+  // The laptop and the two arms that carry it (patchyRig.ts): one state eased frame by frame, written straight to the drawing, so his hands are always on the laptop's corners while he lifts it, sets it down beside him and
+  // later brings it back. When he is not stretching the rig settles at rest: the laptop on his lap, the typing hand on it, the right arm hanging.
+  const lapRef = useRef<SVGGElement>(null);
+  const leftArmRef = useRef<SVGPathElement>(null);
+  const leftHandRef = useRef<SVGCircleElement>(null);
+  const rightArmRef = useRef<SVGPathElement>(null);
+  const rightHandRef = useRef<SVGCircleElement>(null);
+  useStretchRig(stretch.rig, rig => {
+    lapRef.current?.setAttribute('transform', `translate(${rig.lap[0]} ${rig.lap[1]})`);
+    leftArmRef.current?.setAttribute('d', armPath(SHOULDER_LEFT, rig.left));
+    leftHandRef.current?.setAttribute('cx', String(rig.left[4]));
+    leftHandRef.current?.setAttribute('cy', String(rig.left[5]));
+    rightArmRef.current?.setAttribute('d', armPath(SHOULDER_RIGHT, rig.right));
+    rightHandRef.current?.setAttribute('cx', String(rig.right[4]));
+    rightHandRef.current?.setAttribute('cy', String(rig.right[5]));
+  });
   // Drowsy, he yawns every so often (patchyYawn.ts); in the tool loop, the gears turn.
   const yawning = useYawn(mood === 'drowsy');
   const looping = props.loop === true && mood === 'active';
@@ -118,7 +137,7 @@ export function MiniPatchy(props: PatchySignals) {
   return (
     <button
       type="button"
-      className={`${patchyRootClass({ mood, look, energy, budget, steered, reading })}${stretch.stretching ? ' mp-stretching' : ''}${stretch.down ? ' mp-down' : ''}${stretch.stand ? ' mp-stand' : ''}${stretch.reach ? ' mp-reach' : ''}${yawning ? ' mp-yawn' : ''}${looping ? ' mp-looping' : ''}${victory ? ' mp-victory' : ''}${greeting ? ' mp-hello' : ''}${tada ? ' mp-tada' : ''}`}
+      className={`${patchyRootClass({ mood, look, energy, budget, steered, reading })}${stretch.stretching ? ' mp-stretching' : ''}${stretch.down ? ' mp-down' : ''}${stretch.rigging ? ' mp-rigging' : ''}${stretch.stand ? ' mp-stand' : ''}${stretch.reach ? ' mp-reach' : ''}${yawning ? ' mp-yawn' : ''}${looping ? ' mp-looping' : ''}${victory ? ' mp-victory' : ''}${greeting ? ' mp-hello' : ''}${tada ? ' mp-tada' : ''}`}
       style={stretch.stretching ? ({ '--mp-lean': stretch.lean } as CSSProperties) : undefined}
       onClick={poke}
       title={patchyTitle({ mood, look, energy })}
@@ -156,10 +175,32 @@ export function MiniPatchy(props: PatchySignals) {
           {/* Torso */}
           <rect x="34" y="56" width="32" height="30" rx="7" fill="#121316" stroke="#3A3F4C" strokeWidth="2" />
 
+          {/* His chest badge, exactly the original Patchy's (the full-size one): a small dark inset with a plus in his accent colour, in the middle of his chest. The laptop in front of him covers most of it, as it covers most of him. */}
+          <rect x="43" y="63" width="14" height="14" rx="3" fill="#0C1016" stroke="#1F242D" />
+          <path className="mp-stroke-accent" d="M50 66 V74 M46 70 H54" strokeWidth="2" strokeLinecap="round" opacity="0.6" />
+
+          {/* Every arm that is not typing on the laptop is drawn BEHIND it (before it), so no arm ever crosses the front of the laptop, wherever it is: the two arms that carry it (drawn by the rig, hidden otherwise; each takes hold
+              of a corner and goes with it, the right one reaching across him), then, after letting go, the left arm hanging and the left arm up over his head (the right arm, in front of his head below, is PatchyRightArm's). */}
+          <g className="mp-rig mp-rig-back">
+            <path ref={leftArmRef} d={armPath(SHOULDER_LEFT, LEFT_TYPE)} stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
+            <circle ref={leftHandRef} cx={LEFT_TYPE[4]} cy={LEFT_TYPE[5]} r="3.5" fill="#8E95A2" />
+            <path ref={rightArmRef} d={armPath(SHOULDER_RIGHT, RIGHT_HANG)} stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
+            <circle ref={rightHandRef} className="mp-accent" cx={RIGHT_HANG[4]} cy={RIGHT_HANG[5]} r="3.5" />
+          </g>
+          {/* In the stretch it lets go of the laptop: it hangs while he stands, and goes up over his head (the right arm, below, is PatchyRightArm's cheer pose) */}
+          <g className="mp-arm-free mp-arm-hang">
+            <path d="M24 62 C 16 66, 16 76, 22 82" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
+            <circle cx="22" cy="82" r="3.5" fill="#8E95A2" />
+          </g>
+          <g className="mp-arm-free mp-arm-up">
+            <path d="M24 62 C 16 50, 14 36, 18 24" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
+            <circle cx="18" cy="24" r="3.5" fill="#8E95A2" />
+          </g>
+
           </g>
 
           {/* 3/4 Angled Laptop (Reversed Isometric Direction): in the stretch he sets it down on the edge beside him */}
-          <g className="mp-lap">
+          <g className="mp-lap" ref={lapRef}>
           <polygon points="34,77 64,70 74,76 44,83" fill="#2C303B" stroke="#B7BECB" strokeWidth="1.2" />
           <polygon points="42,76 58,72 68,76 48,80" fill="#1F242D" />
 
@@ -187,21 +228,14 @@ export function MiniPatchy(props: PatchySignals) {
             <path d="M24 62 C 16 70, 22 82, 32.5 78.5" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
             <circle className="mp-hand mp-hand-l" cx="32.5" cy="78.5" r="3.5" fill="#8E95A2" />
           </g>
-          {/* In the stretch it lets go of the laptop: it hangs while he stands, and goes up over his head (the right arm, below, is PatchyRightArm's cheer pose) */}
-          <g className="mp-arm-free mp-arm-hang">
-            <path d="M24 62 C 16 66, 16 76, 22 82" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
-            <circle cx="22" cy="82" r="3.5" fill="#8E95A2" />
-          </g>
-          <g className="mp-arm-free mp-arm-up">
-            <path d="M24 62 C 16 50, 14 36, 18 24" stroke="#8E95A2" strokeWidth="4" strokeLinecap="round" fill="none" />
-            <circle cx="18" cy="24" r="3.5" fill="#8E95A2" />
-          </g>
-
 
           <PatchyHead mood={mood} look={look} energy={energy} budget={budget} scrunched={stretch.reach} yawning={yawning} />
 
           {/* Right arm, in front of the head (a hand to it, a magnifying glass over the eye): idle, it hangs and waves now and then; typing, it joins in on the keyboard; otherwise it does what the look calls for */}
-          <PatchyRightArm pose={pose} wave={wave} waveDur={waveDur} handClass={pose === 'type' ? 'mp-hand mp-hand-r' : undefined} />
+          <g className="mp-rarm">
+            <PatchyRightArm pose={pose} wave={wave} waveDur={waveDur} handClass={pose === 'type' ? 'mp-hand mp-hand-r' : undefined} />
+          </g>
+
           </g>
         </g>
       </svg>

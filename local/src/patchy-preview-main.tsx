@@ -73,6 +73,11 @@ const slowBy = Number(params.get('slow')) || 1;
 if (slowBy !== 1) {
   const realSetTimeout = window.setTimeout.bind(window);
   window.setTimeout = ((fn: TimerHandler, ms?: number, ...args: unknown[]) => realSetTimeout(fn, (ms ?? 0) * slowBy, ...args)) as typeof window.setTimeout;
+  // and the animation clock, so the script-driven motion (the arms, the laptop being carried) slows with the stages
+  const realNow = performance.now.bind(performance);
+  const realRaf = window.requestAnimationFrame.bind(window);
+  performance.now = () => realNow() / slowBy;
+  window.requestAnimationFrame = ((cb: FrameRequestCallback) => realRaf(t => cb(t / slowBy))) as typeof window.requestAnimationFrame;
 }
 document.body.style.background = 'var(--bg-main)';
 if (params.get('dark')) document.body.classList.add('theme-shadow');
