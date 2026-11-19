@@ -24,14 +24,16 @@ test('only the dashed lines move, and each runs right to left: toward its end wh
     if (!edge[2]) { assert.equal(offset, null, 'a solid line stays still'); continue; }
     const [from, to] = edge;
     const drawnRightToLeft = LOGO_NODES[to][0] < LOGO_NODES[from][0];
-    // dashes move toward an edge's END as the offset decreases: leftward means decreasing when it is drawn right to left, increasing when it is drawn left to right
-    assert.equal(offset, drawnRightToLeft ? -LOGO_DASH_PERIOD : LOGO_DASH_PERIOD, `edge ${from}-${to}`);
+    // dashes move toward an edge's END as the offset decreases: leftward means decreasing when it is drawn right to left, increasing when it is drawn left to right.
+    // The one exception, by choice (2026-11-18): the diagonal up to the crest (1 to 2) runs LEFT TO RIGHT, up toward the crest, so its offset decreases although it is drawn left to right.
+    const crest = from === 1 && to === 2;
+    assert.equal(offset, crest || drawnRightToLeft ? -LOGO_DASH_PERIOD : LOGO_DASH_PERIOD, `edge ${from}-${to}`);
   }
   // the two real ones, by name
   const across = LOGO_EDGES.find(([from, to, dashed]) => dashed && LOGO_NODES[from][1] === LOGO_NODES[to][1]);
   const diagonal = LOGO_EDGES.find(([from, to, dashed]) => dashed && LOGO_NODES[from][1] !== LOGO_NODES[to][1]);
   assert.equal(logoFlowOffset(across), -11, 'across the middle: drawn right to left, offset goes to -11');
-  assert.equal(logoFlowOffset(diagonal), 11, 'the diagonal: drawn left to right, offset goes to +11');
+  assert.equal(logoFlowOffset(diagonal), -11, 'the diagonal up to the crest: drawn left to right and flowing left to right, so the offset goes to -11');
 });
 
 test('the mark is animated only where it asks to be, with its own direction on each line, and the animation holds still for reduced motion', () => {
@@ -43,7 +45,14 @@ test('the mark is animated only where it asks to be, with its own direction on e
   assert.equal((read('./components/Rail.tsx').match(/<LogoMark[^>]*animated/g) ?? []).length, 0, 'the rail\'s small mark stays still');
   assert.match(css, /\.logo-flow \{ animation: logo-flow 1\.4s linear infinite; \}/);
   assert.match(css, /@keyframes logo-flow \{ to \{ stroke-dashoffset: var\(--logo-flow-to\); \} \}/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{ \.logo-flow \{ animation: none; \} \}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{ \.logo-flow, \.logo-pulse \{ animation: none; \} \}/);
+});
+
+test('the dots of the home page mark pulse (their opacity goes down to 40% and back every 2 s), and only when the mark is animated', () => {
+  assert.match(mark, /className=\{animated \? 'logo-pulse' : undefined\}/);
+  assert.match(css, /\.logo-pulse \{ animation: logo-pulse 2s ease-in-out infinite; \}/);
+  assert.match(css, /@keyframes logo-pulse \{\s+0%, 100% \{ opacity: 1; \}\s+50% \{ opacity: 0\.4; \}\s+\}/);
+  assert.equal((mark.match(/logo-pulse/g) ?? []).length, 1, 'only the dots, not the lines');
 });
 
 test('on a desktop both buttons sit on the centre line of their own panel and are the same width, the left panel centred like the right', () => {

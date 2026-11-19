@@ -193,8 +193,9 @@ test('the line above a finished reply shows the kind of each step that did somet
 test('the summary is drawn standing, small and muted, beside the count, and is decoration only', () => {
   const disclosure = read('./StepsDisclosure.tsx');
   assert.match(disclosure, /const kinds = kindSummary\(steps\);/);
-  assert.match(disclosure, /<span className="steps-toggle-label">\{stepsLabel\(steps\.length\)\}<\/span>\s+\{\/\*[^*]*\*\/\}\s+\{kinds\.kinds\.length > 0 && \(\s+<span className="steps-kinds" aria-hidden="true">/);
-  assert.match(disclosure, /\{kinds\.kinds\.map\(\(kind, i\) => <span key=\{i\} className=\"steps-kind\" title=\{KIND_NAME\[kind\]\}><StepIcon kind=\{kind\} still \/><\/span>\)\}/);
+  assert.match(disclosure, /<span className="steps-toggle-label">\{stepsLabel\(steps\.length\)\}<\/span>\s+\{\/\*[^*]*\*\/\}\s+\{kinds\.kinds\.length > 0 && \(\s+<span className=\{`steps-kinds\$\{live \? ' steps-kinds-live' : ''\}`\} aria-hidden="true">/);
+  // a finished reply's icons all stand; while a turn runs the one for the step that is still working moves
+  assert.match(disclosure, /\{kinds\.kinds\.map\(\(kind, i\) => <span key=\{i\} className="steps-kind" title=\{KIND_NAME\[kind\]\}><StepIcon kind=\{kind\} still=\{!\(live && shown\[i\]\?\.status === 'active'\)\} \/><\/span>\)\}/);
   assert.match(disclosure, /\{kinds\.more > 0 && <span className="steps-kinds-more">\+\{kinds\.more\}<\/span>\}/);
   assert.match(iconCss, /\.si-still, \.si-still \* \{ animation: none !important; \}/);
   assert.match(traceCss, /\.steps-kinds \.si \{ width: 14px; height: 14px; color: var\(--text-muted\); \}/);

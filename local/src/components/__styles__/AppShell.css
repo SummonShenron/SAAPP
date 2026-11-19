@@ -250,8 +250,6 @@
 .topbar-menu:hover, .topbar-btn:hover { background: var(--bg-surface-hover); }
 .topbar-btn { position: relative; }
 /* A pulse on the trace button while a request runs and the trace is closed, so the work in progress is not invisible. */
-.topbar-btn-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-primary); animation: trace-pulse 1.2s ease-in-out infinite; }
-.theme-shadow .topbar-btn-dot { background: var(--accent-primary); }
 .topbar-btn[aria-pressed="true"] { background: var(--bg-alt); color: var(--accent-primary); }
 .theme-shadow .topbar-btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.1); color: var(--text-main); }
 

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import TraceSteps, { type TraceStep } from './TraceSteps';
-import { StartGraph } from './LoaderGraphs';
+import ThinkingLogo from './ThinkingLogo';
 import { useReducedMotion } from './useReducedMotion';
 import { useStepsGraph } from './useStepsGraph';
 import { LAND_END_AT, START_SPACE_PX, firstStepLanded, nowMs, paceFor, scaled } from './graphLoader';
 import { stepsAreOpen, stepsLabel } from './traceFacts';
+import { defaultStepsOpen, readStepsPreference, writeStepsPreference } from './stepsPreference';
 import StepIcon from './StepIcon';
 import { KIND_NAME, kindSummary } from './stepKinds';
 import './__styles__/TracePanel.css';
@@ -26,17 +27,49 @@ interface Props {
 /** While a turn runs, only the newest steps are drawn; the rest are one press away. */
 export const LIVE_STEPS_SHOWN = 5;
 const WAITING_TEXT = 'Thinking...';
+/** The animated logo's height before the first step: it fits the 66px box the wait keeps (TracePanel.css), with room to crouch and spring. */
+const THINKING_LOGO_PX = 36;
 
 /**
- * The steps of one turn. While the turn runs there is no line to open: the steps are right there as nodes, each keeping its own words (its title and what it is doing underneath), and the loader is a graph
- * (components/graphLoader.ts): before the first step a vertical graph runs down the left beside "Thinking...", the first step lands into its last node, and under the newest step the same graph runs in the
- * gap until the next step lands into its last node. Anything a step measured or read opens under that step.
- * When the turn ends they settle into a "7 steps" line above the reply and stay there: open for the newest reply until the next request starts, then folded, opening to the same steps the trace panel shows
- * (components/TraceSteps.tsx). Kept in the page for as long as it is open; the read excerpts are never stored, so a reloaded conversation has none of this.
+ * The line that decides what a turn's steps show: the number of steps, an icon for each step (they come in one by one as the steps are taken, and the newest keeps moving while it works), and the little arrow.
+ * The arrow is the only switch: open, the steps are drawn as nodes under it; closed, there is just this line.
+ */
+const StepsLine: React.FC<{ steps: TraceStep[]; open: boolean; controls: string; onToggle: () => void; live?: boolean }> = ({ steps, open, controls, onToggle, live = false }) => {
+  const kinds = kindSummary(steps);
+  const shown = steps.filter(step => !step.turnEnd);          // the same list kindSummary draws an icon for, so icon i is step i
+  return (
+    <button type="button" className="steps-toggle" data-help="msg.steps" aria-expanded={open} aria-controls={controls} onClick={onToggle}>
+      <span className="steps-toggle-label">{stepsLabel(steps.length)}</span>
+      {/* what the steps did, at a glance: the kind of each, in order (decoration: the count says it in words) */}
+      {kinds.kinds.length > 0 && (
+        <span className={`steps-kinds${live ? ' steps-kinds-live' : ''}`} aria-hidden="true">
+          {kinds.kinds.map((kind, i) => <span key={i} className="steps-kind" title={KIND_NAME[kind]}><StepIcon kind={kind} still={!(live && shown[i]?.status === 'active')} /></span>)}
+          {kinds.more > 0 && <span className="steps-kinds-more">+{kinds.more}</span>}
+        </span>
+      )}
+      <span className="steps-toggle-chevron" aria-hidden="true">▸</span>
+    </button>
+  );
+};
+
+/**
+ * The steps of one turn. Before the first step there is the animated logo beside "Thinking...". From the first step on there is the steps line (StepsLine) above the reply, while the turn runs as well as after it, and
+ * its arrow alone decides what you see: open (the newest reply's steps start open), the steps are drawn as nodes, each keeping its own words (its title and what it is doing underneath), with a graph that
+ * runs in the gap until the next step lands (components/graphLoader.ts); closed, the line (its icons coming in as the steps are taken) with the animated logo under it the whole time the turn runs. What you chose carries on when the turn ends, when the nodes settle
+ * into the same list the trace panel shows (components/TraceSteps.tsx), open for the newest reply until the next request starts, then folded. Kept in the page for as long as it is open; the read excerpts are never
+ * stored, so a reloaded conversation has none of this.
  */
 const StepsDisclosure: React.FC<Props> = ({ steps, running, idPrefix, latest = false, reducedMotion, hold = false }) => {
-  const [chosen, setChosen] = useState<boolean | null>(null);        // what the person pressed; null until they do
-  const open = stepsAreOpen(chosen, latest);
+  const [chosen, setChosen] = useState<boolean | null>(null);        // what the person pressed on THIS turn's line; null until they do
+  // What they last chose on the current turn's line (stepsPreference.ts) is how every later turn starts: collapse the steps once and the next messages stay collapsed. A running turn is the newest reply, so its steps start open
+  // like that reply's, unless they were collapsed.
+  const [preference] = useState(readStepsPreference);
+  const open = stepsAreOpen(chosen, defaultStepsOpen(running || latest, preference));
+  // Pressing the line decides this turn, and, if it is the current turn's (the running one, or the newest reply), the turns after it too.
+  const toggle = () => {
+    setChosen(!open);
+    if (running || latest) writeStepsPreference(!open);
+  };
   const [showAll, setShowAll] = useState(false);
   const bodyId = `${idPrefix}-steps`;
   const reduced = useReducedMotion(reducedMotion);
@@ -70,39 +103,39 @@ const StepsDisclosure: React.FC<Props> = ({ steps, running, idPrefix, latest = f
     const waiting = steps.length === 0;
     const all = steps;
     const hidden = showAll ? 0 : Math.max(0, all.length - LIVE_STEPS_SHOWN);
-    // One wrapper in the same place whether the turn is waiting for its first step, landing it, or past it, so the start graph is ONE instance all through (a different tree would restart it, and the light
-    // would not carry on from where it was). Its text and graph change place by class only.
+    // One wrapper in the same place whether the turn is waiting for its first step, landing it, or past it, so the logo is ONE instance all through (a different tree would restart it). With the steps closed there
+    // are no nodes: the line, and under it the logo going the whole time the turn runs, with the step Sonic is on beside it.
+    const body = waiting || open;
+    const current = [...steps].reverse().find(step => step.status === 'active') ?? steps[steps.length - 1];
     return (
       <div className={`steps-inline steps-inline-live${graph ? ' steps-graph' : ''}${waiting ? ' steps-inline-waiting' : ''}`} id={bodyId} role={waiting ? 'status' : undefined}>
-        {!waiting && hidden > 0 && (
+        {!waiting && <StepsLine steps={steps} open={open} controls={bodyId} onToggle={toggle} live />}
+        {!waiting && open && hidden > 0 && (
           <button type="button" className="steps-toggle steps-earlier" onClick={() => setShowAll(true)}>
             <span className="steps-toggle-label">{stepsLabel(hidden)} before this</span>
             <span className="steps-toggle-chevron" aria-hidden="true">▸</span>
           </button>
         )}
-        <div className={`gl-startwrap${waiting ? ' gl-start-wait' : landing ? '' : ' gl-start-settled'}`} style={landing ? { paddingTop: START_SPACE_PX } : undefined}>
-          {(waiting || landing) && <StartGraph landing={landing} pace={pace} reducedMotion={reduced} hold={hold} />}
-          {(waiting || landing) && <span className={`agent-status-text${landing ? ' gl-start-text gl-start-text-out' : ''}`}><span className="steps-first-title">{WAITING_TEXT}</span></span>}
-          {!waiting && <TraceSteps steps={hidden > 0 ? all.slice(hidden) : all} running live landing={landing} landingPace={pace} graph={graph} reducedMotion={reduced} hold={hold} idPrefix={idPrefix} />}
-        </div>
+        {!waiting && !open && (
+          <div className="gl-startwrap gl-start-wait" role="status">
+            <ThinkingLogo size={THINKING_LOGO_PX} reducedMotion={reduced} />
+            <span className="agent-status-text"><span className="steps-first-title">{current?.title || WAITING_TEXT}</span></span>
+          </div>
+        )}
+        {body && (
+          <div className={`gl-startwrap${waiting ? ' gl-start-wait' : landing ? '' : ' gl-start-settled'}`} style={landing ? { paddingTop: START_SPACE_PX } : undefined}>
+            {(waiting || landing) && <ThinkingLogo size={THINKING_LOGO_PX} leaving={landing} reducedMotion={reduced} />}
+            {(waiting || landing) && <span className={`agent-status-text${landing ? ' gl-start-text gl-start-text-logo gl-start-text-out' : ''}`}><span className="steps-first-title">{WAITING_TEXT}</span></span>}
+            {!waiting && <TraceSteps steps={hidden > 0 ? all.slice(hidden) : all} running live landing={landing} landingPace={pace} graph={graph} reducedMotion={reduced} hold={hold} idPrefix={idPrefix} />}
+          </div>
+        )}
       </div>
     );
   }
 
-  const kinds = kindSummary(steps);
   return (
     <div className="steps-inline">
-      <button type="button" className="steps-toggle" data-help="msg.steps" aria-expanded={open} aria-controls={bodyId} onClick={() => setChosen(!open)}>
-        <span className="steps-toggle-label">{stepsLabel(steps.length)}</span>
-        {/* what the steps did, at a glance: the kind of each, in order (decoration: the count says it in words) */}
-        {kinds.kinds.length > 0 && (
-          <span className="steps-kinds" aria-hidden="true">
-            {kinds.kinds.map((kind, i) => <span key={i} className="steps-kind" title={KIND_NAME[kind]}><StepIcon kind={kind} still /></span>)}
-            {kinds.more > 0 && <span className="steps-kinds-more">+{kinds.more}</span>}
-          </span>
-        )}
-        <span className="steps-toggle-chevron" aria-hidden="true">▸</span>
-      </button>
+      <StepsLine steps={steps} open={open} controls={bodyId} onToggle={toggle} />
       {open && (
         <div className={`steps-inline-body${graph ? ' steps-inline-live steps-inline-settled steps-graph' : ''}`} id={bodyId}>
           <TraceSteps steps={steps} running={false} settled={graph} idPrefix={idPrefix} />

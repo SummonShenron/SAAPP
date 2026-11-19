@@ -31,7 +31,6 @@ export const HELP_TIPS: Record<string, HelpTip> = {
   'user.chip': { title: 'You', what: 'Opens a menu with your Account settings, a light or dark theme, the full Help guide and Disconnect.', when: 'You want the settings, or the long Help guide.' },
 
   // ---- the chat page ----
-  'chat.trace': { title: 'Trace', what: 'Shows the steps Sonic took on your last request: what it read, searched and decided.', when: 'You want to see how an answer was reached.' },
   'chat.terminal': { title: 'Terminal', what: 'Shows the output of checks and commands Sonic ran on your own computer through the runner.', when: 'You have the runner set up and want to see what it printed.' },
   'chat.terminalPanel': { title: 'Terminal', what: 'The output of checks and commands run on your computer through the runner, newest first.' },
   'chat.sessionColumn': { title: 'Session column', what: 'Shows or hides the column down the right side: your computer and folder, the repository, how full the memory is, the plan, and your chat settings.' },

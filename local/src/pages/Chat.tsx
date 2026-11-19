@@ -230,10 +230,8 @@ interface ChatMessageListProps {
   loading: boolean;
   agentStatus: string;
   latestStepTitle: string;
-  /** The running turn's steps so far (with their facts and excerpts), drawn as the live node graph above the reply when `showSteps` is on. */
+  /** The running turn's steps so far (with their facts and excerpts), drawn as the live node graph above the reply, and kept on it as the "7 steps" line (components/StepsDisclosure.tsx). */
   liveSteps: TraceStep[];
-  /** The microscope is on: replies show their steps as nodes (live while they run, a "7 steps" line after). Off: one line saying what Sonic is doing now, and nothing after. */
-  showSteps: boolean;
   theme: "sonic" | "shadow";
   isEmbedded: boolean;
   chatWindowRef: React.RefObject<HTMLDivElement | null>;
@@ -319,7 +317,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 // direct function props, so a skipped re-render here never risks calling a stale closure over
 // sessionId/principal/etc — the same class of bug fixed earlier for attachmentsRef.
 const ChatMessageList = React.memo(function ChatMessageList({
-  messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, liveSteps, showSteps, theme, isEmbedded,
+  messages, earlierCount, loadingEarlier, loadEarlierRef, hasChatted, loading, agentStatus, latestStepTitle, liveSteps, theme, isEmbedded,
   chatWindowRef, messagesEndRef, attachmentsRef, handleSendMessageRef, handleFeedbackRef, getTokenRef,
   canEditLocal, localEditActionsRef, localGitMode, planCard, planAnchorId = null, putInComposer,
 }: ChatMessageListProps) {
@@ -329,7 +327,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
   if (!hasChatted) return null;
   // The reply being written right now (the last message, while a turn runs) holds the live steps itself.
   const lastMessage = messages[messages.length - 1];
-  const liveMessageId = loading && showSteps && !isEmbedded && lastMessage?.sender === 'ai' ? lastMessage.id : null;
+  const liveMessageId = loading && !isEmbedded && lastMessage?.sender === 'ai' ? lastMessage.id : null;
 
   return (
     <div
@@ -379,7 +377,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                 <div className="message-initiated-note">Sonic started this. You can turn that off in the settings menu.</div>
               )}
               {/* The steps come first and the answer under them: the running reply draws the live nodes (the newest is the loader), a finished one a "7 steps" line that opens (components/StepsDisclosure.tsx). */}
-              {msg.sender === 'ai' && showSteps && !isEmbedded && (msg.id === liveMessageId
+              {msg.sender === 'ai' && !isEmbedded && (msg.id === liveMessageId
                 ? <StepsDisclosure steps={liveSteps} running idPrefix="live" />
                 : replySteps && replySteps.length > 0 && <StepsDisclosure steps={replySteps} running={false} latest={isNewestReply} idPrefix={`reply-${msg.id}`} />)}
               {msg.images && msg.images.length > 0 && (
@@ -659,15 +657,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
               {latestStepTitle || "Thinking..."}
             </div>
           </div>
-        ) : showSteps ? (
-          // Normally the running reply shows its own steps (above); this is only for a turn with no reply bubble to hold them.
-          liveMessageId === null && <StepsDisclosure steps={liveSteps} running idPrefix="live" />
         ) : (
-          // The default: the ring and one line, the step Sonic is on right now.
-          <div className="sonic-loader-container">
-            <div className="sonic-ring-loader"></div>
-            {latestStepTitle && <span className="agent-status-text">{latestStepTitle}</span>}
-          </div>
+          // The running reply shows its own steps (above); this is only for a turn with no reply bubble to hold them.
+          liveMessageId === null && <StepsDisclosure steps={liveSteps} running idPrefix="live" />
         )
       )}
       {planCard && !(planAnchorId && messages.some(m => m.id === planAnchorId)) && planCard}
@@ -730,8 +722,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ theme, toggleTheme }) => {
       const saved = localStorage.getItem('showTracePanel');
       if (saved !== null) return JSON.parse(saved);
     }
-    // With no saved choice the steps stay simple: one line saying what Sonic is doing now. The microscope turns on the node graph in the conversation (see showSteps).
-    // The shared guest starts with it ON: the visible tool calls are what a stranger came to see (docs/guest-mode-plan.md); a choice they make is remembered like anyone's.
+    // Only the embedded widget uses this now (its Trace menu entry and its mobile pill). The app's own page has no switch: every reply always shows its steps (components/StepsDisclosure.tsx), live while it runs and as a
+    // "7 steps" line with their icons after, opened and closed with the little arrow on that line.
     return isGuestPrincipal(getEffectivePrincipal());
   });
   const isMobileView = useMediaQuery('(max-width: 768px)');
@@ -1538,23 +1530,11 @@ useEffect(() => {
   const userTurnCount = useMemo(() => messages.filter(m => m.sender === 'user').length, [messages]);
   useEffect(() => {
     if (isEmbedded) return;
-    const traceOpen = showTracePanel;
     shell.setTopBarActions(
       <>
         {!isGuestPrincipal(principal) && <MeetingControl sessionId={sessionId} onStarted={(name) => meetingStartedRef.current(name)} />}
         {!isGuestPrincipal(principal) && <WorkingNotesControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
         {!isGuestPrincipal(principal) && <ConversationSummaryControl sessionId={sessionId} busy={loading} turns={userTurnCount} />}
-        <button
-          type="button"
-          className="topbar-btn"
-          onClick={toggleTracePanel}
-          aria-pressed={traceOpen}
-          aria-label="Toggle execution trace" data-help="chat.trace"
-          title={traceOpen ? 'Hide the steps as nodes' : 'Show the steps as nodes'}
-        >
-          <Icon name="microscope" size={18} />
-          {loading && !traceOpen && <span className="topbar-btn-dot" aria-hidden="true" />}
-        </button>
         {terminal && (
           <button
             type="button"
@@ -1580,7 +1560,7 @@ useEffect(() => {
       </>
     );
     return () => shell.setTopBarActions(null);
-  }, [isEmbedded, showTracePanel, showSessionColumn, loading, sessionId, principal, userTurnCount, terminal, showTerminal]);
+  }, [isEmbedded, showSessionColumn, loading, sessionId, principal, userTurnCount, terminal, showTerminal]);
 
   // Prepends the page of saved messages just before the ones on screen. The smooth scroll-to-bottom
   // that normally fires when the message count changes is skipped here, and the viewport is held
@@ -2719,7 +2699,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
   );
   // The toggles that used to be the top of this menu (scope, open answers, deep thinking, plan first, code model) are the icons under the message box now (components/ComposerChips.tsx), and the
   // scope is in the session column. What is left of the "..." menu is only the embedded widget's, which has no rail, no top bar and no chips: its Help, Conversations, Trace, Export and Delete.
-  // The conversations list lives in the rail now, and the trace has its microscope button in the top bar; the embedded widget has neither, so only it keeps those two menu entries.
+  // The conversations list lives in the rail now, and every reply carries its own steps line (the count, the icons and the arrow); the embedded widget has neither, so only it keeps those two menu entries.
   const baseOverflowEntries = baseOverflowItems.map((item, index) => ({ item, index })).filter(e => isEmbedded || (e.item.label !== 'Conversations' && e.item.label !== 'Trace'));
   const overflowItems: OptionWheelItem[] = baseOverflowEntries.map(e => e.item);
 
@@ -2789,7 +2769,6 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
           agentStatus={agentStatus}
           latestStepTitle={latestStepTitle}
           liveSteps={tracePanelSteps}
-          showSteps={!isEmbedded && showTracePanel}
           theme={theme}
           isEmbedded={isEmbedded}
           chatWindowRef={chatWindowRef}
@@ -3551,7 +3530,7 @@ const handleSubmitNegativeFeedback = async (e: React.FormEvent) => {
         />
       )}
 
-      {/* The execution trace is not a panel on any screen any more: the microscope draws the steps as nodes in the conversation itself (showSteps, components/StepsDisclosure.tsx), on a phone as on a
+      {/* The execution trace is not a panel on any screen any more: every reply draws its steps in the conversation itself (components/StepsDisclosure.tsx: nodes while it runs, a "7 steps" line with icons and an arrow after), on a phone as on a
           desktop. Only the embedded widget keeps its own drawer (above). */}
     </div>
   );

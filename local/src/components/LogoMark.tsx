@@ -31,7 +31,16 @@ const LogoMark: React.FC<{ size?: number; variant?: 'color' | 'mono'; className?
         />
       );
     })}
-    {LOGO_NODES.map(([x, y, radius], index) => <circle key={index} cx={x} cy={y} r={radius} fill="currentColor" />)}
+    {LOGO_NODES.map(([x, y, radius], index) => (
+      <circle 
+        key={index} 
+        cx={x} 
+        cy={y} 
+        r={radius} 
+        fill="currentColor" 
+        className={animated ? 'logo-pulse' : undefined}
+      />
+    ))}
   </svg>
 );
 

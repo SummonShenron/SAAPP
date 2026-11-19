@@ -21,7 +21,7 @@ export const EVERYDAY: Record<string, Content> = {
       <ul>
         <li>Ask it anything, including who Jack is, what he has built, and how this system works.</li>
         <li>Ask what it has been reading lately, or for a dry joke. It has a personality and a profile you can read under "About Sonic".</li>
-        <li>Press the <strong>microscope</strong> button at the top right to see the steps it takes to answer, drawn as a path above each reply.</li>
+        <li>Above each reply is its <strong>steps</strong> line (the number of steps, an icon for each kind, and a small arrow): press it to see the path Sonic took to answer.</li>
         <li>For questions about the demo library, Sonic uses its documents first and cites the page. For anything they don't cover, it answers from general knowledge. If you'd rather it stuck to the documents, turn off <strong>Open Answers</strong> in the "…" menu.</li>
         <li>Guests share one temporary identity, so nothing here is personal and nothing is remembered about you.</li>
       </ul>
@@ -122,7 +122,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li>"Tell me a joke about vibe coding."</li>
         <li>"What's the most famous bug in computing history?"</li>
       </ul>
-      <p>While Sonic works you see one line saying what it is doing. Press the <strong>microscope</strong> button at the top right to see every step instead, drawn as a path above the reply, and open a step to see what it read or found. Each reply keeps its steps for as long as the page is open.</p>
+      <p>While Sonic works you see its steps drawn as a path above the reply. When it has answered they fold into the <strong>steps</strong> line: the number of steps, an icon for each kind, and a small arrow. Press that line to open the path again, and open a step to see what it read or found. Each reply keeps its steps for as long as the page is open.</p>
     </>
   ) : (
     <>
@@ -419,7 +419,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>Plan first</strong> (with a folder connected): a request to change your files starts with a plan you approve. Sonic reads, then shows the files, the steps and what it is unsure of; nothing is edited until you press Approve. Steps tick off as you apply their edits, and "Continue" picks up where a long change left off. It costs an extra reading pass, so it is off by default.</li>
         <li><strong>Models:</strong> one icon, up to three columns. <em>Base model</em> is the AI that writes Sonic's replies (Gemini, or GPT-5.4 mini where it's set up). <em>Tool model</em> is the AI that does the reasoning steps when Sonic reads code, searches or writes code for you (Gemini, Claude, Claude Sonnet or GPT-5.4 mini), and it writes the plan when you use Plan mode. <em>Execute model</em> is the AI that then carries out an approved plan: it can be a cheaper one (Claude Sonnet costs about 20 times as much as Claude per step), and by default it is the same as your Tool model. <em>Presets</em> set the Tool and Execute models together: <em>Lite</em> (Claude plans and writes, the cheapest), <em>Smart</em> (Claude Sonnet writes the plan and reads the finished change, Claude carries out the steps; best in Plan mode) and <em>Max</em> (Claude Sonnet does everything, and costs the most). Each one sends your code to Anthropic for those steps, and <em>Custom</em> shows the two columns so you can choose each yourself. The icon draws the models in play, cut into parts. A column only appears when something besides Gemini is set up (the Execute model also needs a folder you can edit), and none is offered in the guest demo.</li>
       </ul>
-      <p>The choices about how Sonic behaves are on the Account page: letting Sonic start conversations and bring things up (under "About you"), showing or hiding the little robot, and, for admins, the incident digest. The steps Sonic took to answer are under the <strong>microscope</strong> button at the top right.</p>
+      <p>The choices about how Sonic behaves are on the Account page: letting Sonic start conversations and bring things up (under "About you"), showing or hiding the little robot, and, for admins, the incident digest. The steps Sonic took to answer are on the <strong>steps</strong> line above each reply.</p>
       <p><HelpLink go={ctx.go} path="/account">Open Account settings</HelpLink></p>
     </>
   ),

@@ -35,5 +35,7 @@ export const LOGO_DASH_PERIOD = LOGO_DASH.split(' ').reduce((sum, part) => sum +
 export function logoFlowOffset(edge: readonly [number, number, boolean]): number | null {
   const [from, to, dashed] = edge;
   if (!dashed) return null;
+  // The top angled line (1 to 2) should move left to right, so we force it to -LOGO_DASH_PERIOD.
+  if (from === 1 && to === 2) return -LOGO_DASH_PERIOD;
   return LOGO_NODES[to][0] < LOGO_NODES[from][0] ? -LOGO_DASH_PERIOD : LOGO_DASH_PERIOD;
 }

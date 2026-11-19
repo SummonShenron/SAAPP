@@ -58,5 +58,6 @@ test('the help no longer sends people to a menu entry that is gone', () => {
   const help = read('./components/helpContent.tsx');
   assert.ok(!help.includes('Open the <strong>Trace</strong> in the "…" menu'));
   assert.ok(!help.includes('<strong>Message First:</strong>') && !help.includes('<strong>SAAPP:</strong>') && !help.includes('<strong>Trace:</strong>'));
-  assert.match(help, /microscope/);
+  assert.match(help, /<strong>steps<\/strong> line/, 'the steps are found on the line above each reply');
+  assert.doesNotMatch(help, /microscope/, 'there is no microscope button any more');
 });

@@ -221,6 +221,14 @@ button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); ou
 .gl-start-text-out { animation: gl-text-out .3s ease forwards; }
 .gl-start-settled { transition: padding-top .35s ease; }
 
+/* The animated logo (components/ThinkingLogo.tsx) is the loader before the first step, and where the spinning ring was when the steps are hidden. It jumps and spins, so it may draw outside its own box.
+   Where the start graph used to be it takes the same places: in line beside "Thinking...", then (the first step has arrived) held where it was while it fades, its text a logo-width and a gap from the left. */
+.thinking-logo { display: block; flex: 0 0 auto; overflow: visible; margin-right: 8px; color: var(--accent-primary); }          /* 8px more room: in the crouch it is a third wider than at rest */
+.gl-startwrap > .thinking-logo { position: absolute; left: 0; top: 15px; z-index: 2; }          /* 15px = half of what is left of the 66px box under a 36px mark (THINKING_LOGO_PX in StepsDisclosure.tsx) */
+.gl-start-wait > .thinking-logo { position: static; }
+.gl-start-text-logo { left: 77px; }          /* the 36px mark's width (57px), its 8px margin and the 12px gap */
+.thinking-logo-out { animation: gl-text-out .3s ease forwards; }
+
 /* Under the newest step: the graph hangs in the room the row keeps below its text (50px: GAP_SPACE_PX), so it never sits beside the text, and its last node (at y = 60 of its 66px) meets the next row's dot, 10px below
    this row's bottom edge: the box hangs 16px below the edge (GAP_OVERHANG_PX). The dashed stub runs down from the step's dot to the graph's first node (44px above the edge: GAP_STUB_END_PX) however tall the text is. */
 .gl-below { position: absolute; left: 0; bottom: -16px; z-index: 2; }
@@ -264,10 +272,12 @@ button.steps-toggle:focus-visible { outline: 2px solid var(--accent-primary); ou
 .steps-kind { display: inline-flex; }          /* pointing at an icon names its kind (stepKinds.ts KIND_NAME) */
 .steps-kinds .si { width: 14px; height: 14px; color: var(--text-muted); }
 .steps-kinds-more { margin-left: 1px; font-size: 0.7rem; color: var(--text-muted); }
+.steps-kinds-live .steps-kind { animation: gl-arrive .3s ease backwards; }          /* while the turn runs, each icon pops in as its step is taken (backwards, not both, so nothing is left locked) */
+.steps-inline-live > .steps-toggle + .gl-startwrap { margin-top: 10px; }          /* the nodes sit under the line the way the finished list does */
 button.steps-toggle:hover .steps-kinds .si { color: var(--accent-primary); }
 
 @media (prefers-reduced-motion: reduce) {
   .steps-toggle-chevron { transition: none; }
   .gl-link, .gl-fnode, .gl-shape, .gl-start-settled, .steps-inline-live .trace-node, .steps-inline-live .trace-node::before { transition: none; }
-  .gl-below .gl-svg, .gl-start-text-out, .steps-inline-live .trace-node-arriving .trace-node-dot, .steps-inline-live .trace-node-arriving .trace-node-text { animation: none; }
+  .gl-below .gl-svg, .gl-start-text-out, .steps-kinds-live .steps-kind, .steps-inline-live .trace-node-arriving .trace-node-dot, .steps-inline-live .trace-node-arriving .trace-node-text { animation: none; }
 }

@@ -213,10 +213,10 @@ test('the steps draw list and count excerpts', () => {
   assert.match(source, /remembered \{excerpt\.count === 1 \? 'item' : 'items'\} found/);
 });
 
-test('before the first step of a running turn there is the vertical start graph beside "Thinking...", not a ring, and the steps begin at the first', () => {
+test('before the first step of a running turn there is the animated logo beside "Thinking...", not a ring, and the steps begin at the first', () => {
   const source = readFileSync(new URL('./StepsDisclosure.tsx', import.meta.url), 'utf8');
   assert.match(source, /const waiting = steps\.length === 0;/);
-  assert.match(source, /\(waiting \|\| landing\) && <StartGraph /);
+  assert.match(source, /\(waiting \|\| landing\) && <ThinkingLogo /);
   assert.match(source, /const WAITING_TEXT = 'Thinking\.\.\.';/);
   assert.doesNotMatch(source, /sonic-ring-loader|sonic-loader-container/);
   assert.doesNotMatch(readFileSync(new URL('./TraceSteps.tsx', import.meta.url), 'utf8'), /trace-node-ring|trace-node-spinning/);
