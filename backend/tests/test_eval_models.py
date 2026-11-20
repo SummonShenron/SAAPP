@@ -16,6 +16,10 @@ def run(coro):
 def _never_read_the_real_env_file(monkeypatch):
     """The evals' main() loads .env (real keys, the real database address). In a test that would leak into every later test in the process, so it is a no-op here."""
     monkeypatch.setattr("dotenv.load_dotenv", lambda *args, **kwargs: False)
+    # The candidates need a key to be offered at all (eval_models.missing_key). These tests use a FAKE model, so a placeholder is all they need; without it they passed only where a .env supplied the real key
+    # and failed in CI, which has none (2026-11-19).
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-real")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-not-real")
 
 
 # ---- the candidate list ------------------------------------------------------------------------------------------------

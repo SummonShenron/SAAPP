@@ -11,7 +11,9 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "runner" / "src"))
 from saapp_runner import workspace_sync  # noqa: E402
 
-import app as app_module  # noqa: E402  (imported here, at collection, as the other tests that need the app's request classes do: importing it inside a test starts services)
+from backend.tests.import_app import import_app  # noqa: E402
+
+app_module = import_app()  # noqa: E402  (imported here, at collection, as the other tests that need the app's request classes do: importing it inside a test starts services; with no database: backend/tests/import_app.py)
 
 from backend.services import local_workspace as lw
 from backend.tests.fake_runner_db import FakeDB

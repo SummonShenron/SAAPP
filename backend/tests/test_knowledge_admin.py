@@ -4,13 +4,14 @@ import asyncio
 import pytest
 from fastapi import HTTPException
 
-import app as app_module
+from backend.tests.import_app import import_app
 from backend.tests.fake_kb_db import Db
 from backend.utils import isolation_kb_utils
 from backend.utils import knowledge_base as kb
 
+app_module = import_app()          # the app, imported with no database (backend/tests/import_app.py)
 ADMIN = {"sub": "boss"}
-BODY = "The harbour town keeps a tide table on its council website."
+BODY ="The harbour town keeps a tide table on its council website."
 
 
 def run(coro):

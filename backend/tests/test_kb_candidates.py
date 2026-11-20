@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-import app as app_module
+from backend.tests.import_app import import_app
 from backend.services import agent_workflow as aw
 from backend.services import knowledge_cards as cards
 from backend.tests.fake_kb_db import Db
@@ -17,6 +17,7 @@ from backend.tests.test_knowledge_cards import BODY, PAGE, URL, Model, page
 from backend.utils import kb_candidates as kc
 from backend.utils import knowledge_base as kb
 
+app_module = import_app()          # the app, imported with no database (backend/tests/import_app.py)
 NOW = datetime.now(timezone.utc)
 ADMIN = {"sub": "boss"}
 
@@ -237,7 +238,8 @@ async def _read(monkeypatch, *, username="jack", risk="none", result="Some page 
     monkeypatch.setattr(aw, "safe_emit_event", AsyncMock())
     monkeypatch.setattr(aw, "read_url", AsyncMock(return_value=result))
     monkeypatch.setattr(aw, "browser_navigate", AsyncMock(return_value=result))
-    monkeypatch.setattr(aw, "_get_browser_session", AsyncMock(), raising=False)
+    # The browser session is made inside the turn from this address (nothing connects: the page read itself is faked below). Without one the tool refuses before it gets there, which is what CI saw, where no .env supplies it.
+    monkeypatch.setenv("BROWSERLESS_WS_ENDPOINT", "ws://browserless.invalid")
     monkeypatch.setattr(aw, "get_db", lambda: "the-db")
     monkeypatch.setattr(aw, "effective_risk", lambda *a, **k: risk)
     noted = []
