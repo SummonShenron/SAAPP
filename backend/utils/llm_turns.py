@@ -43,6 +43,7 @@ ROUTE_REASONS = (
     "clarification_resume",    # answering the tool agent's own question
     "commit_request",          # asked to commit, push or open a branch for the changes (the older pull-request drafter cannot do that)
     "place_lookup",            # a question about places or getting somewhere, with the maps tools set up (backend/utils/place_questions.py, backend/services/maps_tools.py)
+    "library_review",          # how the person's own work has gone over a stretch of time, with a library to read (backend/utils/library_questions.py): the agent lists and reads the files, not three nearest passages
 )
 # HOW MANY STEPS the tool agent's loop used, and whether it ran into its limit. A turn that reached the last step it was allowed (the forced final answer) may have wanted more:
 # this is the number that says whether the step budget (TOOL_AGENT_MAX_ITERATIONS and the deep one) is too tight, or whether it never matters. Counts only.

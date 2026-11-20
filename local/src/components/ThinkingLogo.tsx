@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { LOGO_DASH, LOGO_DASH_PERIOD, LOGO_EDGES, LOGO_NODES, LOGO_STROKE, LOGO_VIEWBOX } from './logoMarkData';
-import { RESTING_POSE, TRAIL_SLOTS, poseAt, type LogoPose } from './thinkingLogoMotion';
+import { MID_X, MID_Y, RESTING_POSE, TRAIL_SLOTS, poseAt, type LogoPose } from './thinkingLogoMotion';
+import { GLYPH_BIG, GLYPH_BOX, GLYPH_PATH, GLYPH_STROKE, becomePose, type BecomeTarget } from './thinkingLogoBecome';
 import { useReducedMotion } from './useReducedMotion';
 import './__styles__/TracePanel.css';
 
@@ -23,6 +24,11 @@ interface Props {
   reducedMotion?: boolean;
   /** The first step has arrived: the mark fades away (the steps take its place). */
   leaving?: boolean;
+  /**
+   * The first step has arrived and its icon is the sparkle: instead of fading, the mark turns INTO a sparkle, which travels to that step's dot and arrives as the dot comes in. This is how long all of that takes, in ms
+   * (the dot's own arrival delay, so the two meet). Not with reduced motion, where the landing is skipped.
+   */
+  becomeMs?: number;
   className?: string;
 }
 
@@ -35,8 +41,12 @@ const pathOf = (points: LogoPose['curve']['points']) => points.map(([x, y], i) =
  * are on, and a dot pulses (stretches, squashes and sends out a ring) only when the runner reaches it. It is drawn frame by frame straight into the drawing (no React state per frame). Decoration only (aria-hidden): "Thinking..." or the step's own words beside it say what is going
  * on. Under reduced motion it is the plain mark, still. The colour is the page's accent.
  */
-const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = false, className }) => {
+const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = false, becomeMs, className }) => {
   const reduced = useReducedMotion(reducedMotion);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const glyphRef = useRef<SVGGElement>(null);
+  const lastPose = useRef<LogoPose>(RESTING_POSE);                                                     // the pose last drawn: where the hand-over to the sparkle starts from
+  const becoming = useRef<{ start: number; total: number; from: LogoPose; target: BecomeTarget } | null>(null);
   const markRef = useRef<SVGGElement>(null);
   const edgesRef = useRef<SVGGElement>(null);
   const edgeRefs = useRef<Array<SVGLineElement | null>>([]);
@@ -47,7 +57,7 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
   const runnerRef = useRef<SVGGElement>(null);
 
   useEffect(() => {
-    const apply = (pose: LogoPose) => {
+    const apply = (pose: LogoPose, dotsOpacity = 1) => {
       markRef.current?.setAttribute('transform', pose.transform);
       // the links join the dots wherever the dots are (the logo's own lines, or a star's, a tree's, a ladder's), and fade while the dots move from one shape to the next
       edgesRef.current?.setAttribute('opacity', String(pose.edgeOpacity));
@@ -70,6 +80,7 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
         const body = dotRefs.current[index];
         body?.setAttribute('cx', String(dot.x));
         body?.setAttribute('cy', String(dot.y));
+        body?.setAttribute('opacity', String(dotsOpacity));
         body?.setAttribute('rx', String(radius * DOT_BOOST * dot.scaleX));
         body?.setAttribute('ry', String(radius * DOT_BOOST * dot.scaleY));
         const ring = ringRefs.current[index];
@@ -94,15 +105,47 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
       apply(RESTING_POSE);
       return undefined;
     }
+    // the hand-over to the first step's icon: the dots gather and a sparkle forms and travels (thinkingLogoBecome.ts), drawn through the same `apply`
+    const applyBecoming = (b: NonNullable<typeof becoming.current>, now: number) => {
+      const pose = becomePose(b.from, (now - b.start) / b.total, b.target);
+      apply({ ...b.from, transform: pose.transform, body: pose.body, dots: pose.dots, edgeOpacity: pose.edgeOpacity, curve: { points: b.from.curve.points, opacity: pose.curveOpacity }, trail: pose.trail, runner: { ...b.from.runner, opacity: pose.runnerOpacity } }, pose.dotsOpacity);
+      glyphRef.current?.setAttribute('opacity', String(pose.glyph.opacity));
+      glyphRef.current?.setAttribute('transform', `translate(${pose.glyph.x} ${pose.glyph.y}) scale(${pose.glyph.size / GLYPH_BOX}) translate(${-GLYPH_BOX / 2} ${-GLYPH_BOX / 2})`);
+    };
     const start = performance.now();
     let frame = 0;
     const tick = (now: number) => {
-      apply(poseAt(now - start));
+      const b = becoming.current;
+      if (b) {
+        applyBecoming(b, now);
+      } else {
+        const pose = poseAt(now - start);
+        lastPose.current = pose;
+        apply(pose);
+      }
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [reduced]);
+
+  // The first step has landed and its icon is the sparkle: work out where that step's own dot is, in the drawing's units, and start the hand-over from the pose last drawn. The dot is already on the page (drawn in
+  // the same render as the landing, invisible until its arrival delay), so its place is known now; with none to find, the sparkle forms where the mark was and fades there.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!becomeMs || reduced || !svg) return undefined;
+    const box = svg.getBoundingClientRect();
+    const [unitX, unitY] = [box.width / VB_W, box.height / VB_H];
+    const dot = svg.closest('.steps-inline')?.querySelector('.trace-node-dot');
+    let target: BecomeTarget = { travelX: 0, travelY: 0, endSize: GLYPH_BIG };
+    if (dot && unitX > 0 && unitY > 0) {
+      const there = dot.getBoundingClientRect();
+      const icon = Number(dot.querySelector('svg')?.getAttribute('width')) || 14;
+      target = { travelX: (there.left + there.width / 2 - (box.left + MID_X * unitX)) / unitX, travelY: (there.top + there.height / 2 - (box.top + MID_Y * unitY)) / unitY, endSize: icon / unitY };
+    }
+    becoming.current = { start: performance.now(), total: becomeMs, from: lastPose.current, target };
+    return () => { becoming.current = null; };
+  }, [becomeMs, reduced]);
 
   // each piece of trail is drawn from the dot the runner left to the one it is heading for, so its dashes flow the way the runner goes (the dashes move toward a line's end as the offset goes down)
   const flowing = reduced ? undefined : 'logo-flow';
@@ -110,6 +153,7 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
 
   return (
     <svg
+      ref={svgRef}
       className={`thinking-logo${leaving ? ' thinking-logo-out' : ''}${className ? ` ${className}` : ''}`}
       viewBox={LOGO_VIEWBOX}
       width={Math.round((size * VB_W) / VB_H)}
@@ -143,6 +187,10 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
           <circle r={RUNNER_HALO} fill="currentColor" opacity="0.35" />
           <circle r={RUNNER_CORE} fill="#fff" />
         </g>
+      </g>
+      {/* the sparkle the mark turns into when the first step lands (thinkingLogoBecome.ts): the "think" icon's own drawing, outside the squashing group */}
+      <g ref={glyphRef} opacity="0">
+        <path d={GLYPH_PATH} fill="none" stroke="currentColor" strokeWidth={GLYPH_STROKE} strokeLinecap="round" strokeLinejoin="round" />
       </g>
     </svg>
   );

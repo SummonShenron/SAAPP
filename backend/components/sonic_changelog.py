@@ -498,6 +498,19 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "library_review_route",
+        "requires": [
+            "backend/utils/library_questions.py::def asks_about_own_record",
+            "backend/services/library_search.py::def narrow_to_library",
+            "backend/services/agent_workflow.py::_library_review_wanted",
+        ],
+        "month": "2026-11",
+        "title": "Keeping to the right documents",
+        "line": "When you ask how your own work has gone over time, I now read through your files and keep to the ones about that job, instead of mixing in cover letters or work from somewhere else.",
+        "keywords": ["how has my work progressed", "since i started at", "my track record", "review my last weeks", "my progress at work", "cover letter", "other job"],
+        "volunteer": [],
+    },
+    {
         "id": "plan_stall_guard",
         "requires": [
             "backend/utils/code_plan.py::def after_turn",

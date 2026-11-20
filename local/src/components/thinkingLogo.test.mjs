@@ -10,6 +10,7 @@ import {
 } from './thinkingLogoMotion.ts';
 import {
   LADDER_END, LADDER_ROUTE, LADDER_START, LINK_SLOTS, LOGO_SCENE, RETURN_START, SCENES, STAR_END, STAR_RADIUS, STAR_ROUTE, TREE_END, TREE_ROUTE, TREE_START,
+  GRAPH_MOVE_MS, PIPE_ARCH_Y, PIPE_BASE_Y, PIPE_END, PIPE_FOOT_Y, PIPE_LEFT_X, PIPE_MID_X, PIPE_RADIUS, PIPE_RIGHT_X, PIPE_TIP_Y, PIPE_HOLD_END, LOOP_PHASE,
 } from './thinkingLogoMotion.ts';
 import { LOGO_EDGES, LOGO_NODES } from './logoMarkData.ts';
 
@@ -31,8 +32,8 @@ const offLoop = point => {
   return Math.min(Math.abs((point[1] - CENTRE[1]) / INFINITY_HEIGHT - expected), Math.abs((point[1] - CENTRE[1]) / INFINITY_HEIGHT + expected));
 };
 
-test('the cycle is nine equal stages, each with a run of its own that starts with it and is over (trail and last pop too) just as it ends', () => {
-  assert.equal(STAGE_COUNT, 9);
+test('the cycle is ten equal stages, each with a run of its own that starts with it and is over (trail and last pop too) just as it ends', () => {
+  assert.equal(STAGE_COUNT, 10);
   assert.equal(LOOP_MS, STAGE_COUNT * STAGE_MS);
   assert.equal(RUNS.length, STAGE_COUNT);
   RUNS.forEach((run, stage) => {
@@ -44,15 +45,16 @@ test('the cycle is nine equal stages, each with a run of its own that starts wit
     assert.ok(times[times.length - 1] + POP_MS <= (stage + 1) * STAGE_MS + 1e-6, 'and its last pop');
     times.slice(1).forEach((time, i) => assert.ok(time > times[i], 'in order'));
   });
-  // where each stage's own showing ends: the bounce has settled, the runner has gone through the logo, the circle has been gone round, the line held, the loop gone round, the star, the tree and the ladder held, the logo is home
-  [SETTLE_END, STAGE_MS * 2, SPIN_END, HOLD_END, FLOW_END, TREE_START, LADDER_START, RETURN_START, LOOP_MS].forEach((end, i) => assert.equal(end, (i + 1) * STAGE_MS, `stage ${i + 1}`));
+  // where each stage's own showing ends: the bounce has settled, the runner has gone through the logo, the circle has been gone round, the line held, the pipe held, the loop gone round, the star, the tree and the ladder held, the logo is home
+  [SETTLE_END, STAGE_MS * 2, SPIN_END, HOLD_END, PIPE_HOLD_END, FLOW_END, TREE_START, LADDER_START, RETURN_START, LOOP_MS].forEach((end, i) => assert.equal(end, (i + 1) * STAGE_MS, `stage ${i + 1}`));
   assert.ok(at(MORPH_START + 1).edgeOpacity < 1 && at(SPIN_END - 1).curve.opacity === 1 && at(SPIN_END - 1).edgeOpacity === 0, 'stage 3: the circle');
   assert.ok(at(SPIN_END + 1).curve.opacity === 1 && at(HOLD_END - 1).curve.opacity === 1, 'stage 4: the line');
-  assert.ok(at(HOLD_END + 1).curve.opacity === 1 && at(FLOW_END - 1).curve.opacity === 1, 'stage 5: the loop');
-  assert.deepEqual(linkSet(at(TREE_START - 1)), setOf(SCENES.star.links), 'stage 6: the star, held to the end of its stage');
-  assert.deepEqual(linkSet(at(LADDER_START - 1)), setOf(SCENES.tree.links), 'stage 7: the tree');
-  assert.deepEqual(linkSet(at(RETURN_START - 1)), setOf(SCENES.ladder.links), 'stage 8: the ladder');
-  assert.ok(at(RETURN_START + 1).edgeOpacity > 0.9 && at(LOOP_MS - 1).curve.opacity === 0 && at(LOOP_MS - 1).edgeOpacity === 1 && at(LOOP_MS - 1).links.length === LINK_SLOTS, 'stage 9: back to the logo');
+  assert.ok(at(HOLD_END + 1).curve.opacity === 1 && at(PIPE_HOLD_END - 1).curve.opacity === 1 && at(PIPE_HOLD_END - 1).edgeOpacity === 0, 'stage 5: the pipe, a line and no links, held to the end of its stage');
+  assert.ok(at(PIPE_HOLD_END + 1).curve.opacity === 1 && at(FLOW_END - 1).curve.opacity === 1, 'stage 6: the loop');
+  assert.deepEqual(linkSet(at(TREE_START - 1)), setOf(SCENES.star.links), 'stage 7: the star, held to the end of its stage');
+  assert.deepEqual(linkSet(at(LADDER_START - 1)), setOf(SCENES.tree.links), 'stage 8: the tree');
+  assert.deepEqual(linkSet(at(RETURN_START - 1)), setOf(SCENES.ladder.links), 'stage 9: the ladder');
+  assert.ok(at(RETURN_START + 1).edgeOpacity > 0.9 && at(LOOP_MS - 1).curve.opacity === 0 && at(LOOP_MS - 1).edgeOpacity === 1 && at(LOOP_MS - 1).links.length === LINK_SLOTS, 'stage 10: back to the logo');
   assert.ok(heightScale(SETTLE_END - 100) !== 1 && heightScale(SETTLE_END) === 1, 'stage 1: the bounce is still settling until its stage ends');
 });
 
@@ -61,7 +63,7 @@ test('through the logo the runner follows the mark\'s own edges (over the crest,
   for (const route of [CREST_ROUTE, TROUGH_ROUTE, HOME_ROUTE]) route.slice(1).forEach((dot, i) => assert.ok(edge(route[i], dot), `${route[i]} to ${dot} is an edge of the mark`));
   assert.ok(CREST_ROUTE.includes(2) && !CREST_ROUTE.includes(3) && TROUGH_ROUTE.includes(3) && !TROUGH_ROUTE.includes(2));
   assert.deepEqual(HOME_ROUTE, [...CREST_ROUTE].reverse(), 'home is the way over the crest, backwards');
-  assert.deepEqual(RUNS.map(run => run.dots), [CREST_ROUTE, TROUGH_ROUTE, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, STAR_ROUTE, TREE_ROUTE, LADDER_ROUTE, HOME_ROUTE]);
+  assert.deepEqual(RUNS.map(run => run.dots), [CREST_ROUTE, TROUGH_ROUTE, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, STAR_ROUTE, TREE_ROUTE, LADDER_ROUTE, HOME_ROUTE]);
   assert.ok(TRAIL_SLOTS >= SLOT_ORDER.length - 1, 'a piece of trail for each step of the longest run');
 });
 
@@ -170,11 +172,11 @@ test('the circle unrolls into a straight line: the dots end in a row, evenly spa
   assert.equal(middle.curve.opacity, 1);
 });
 
-test('the line becomes an infinity loop (a lying figure eight): the dots end on it, the line through them crosses in the middle, and the dots go round it once and are back where they started', () => {
+test('the pipe becomes an infinity loop (a lying figure eight): the dots end on it, the line through them crosses in the middle, and the dots go round it once and are back where they started', () => {
   const pose = at(INFINITY_END);
   pose.dots.forEach((dot, i) => assert.ok(offLoop([dot.x, dot.y]) < 0.01, `dot ${i} is on the loop`));
   assert.ok(pose.curve.points.every(point => offLoop(point) < 0.01), 'and so is the line through them');
-  assert.ok(pose.curve.points.some(point => distance(point, CENTRE) < 0.01), 'it crosses in the middle');
+  assert.ok(pose.curve.points.some(point => distance(point, CENTRE) < 1.5), 'it crosses in the middle');
   assert.ok(pose.curve.points.some(point => point[1] < CENTRE[1] - INFINITY_HEIGHT + 1) && pose.curve.points.some(point => point[1] > CENTRE[1] + INFINITY_HEIGHT - 1), 'a lobe above and a lobe below');
   assert.ok(pose.dots.every(dot => distance([dot.x, dot.y], CENTRE) > 3), 'no dot sits on the crossing');
   const start = spots(pose);
@@ -182,6 +184,70 @@ test('the line becomes an infinity loop (a lying figure eight): the dots end on 
   during.dots.forEach((dot, i) => assert.ok(offLoop([dot.x, dot.y]) < 0.01, `dot ${i} stays on the loop while it goes round`));
   assert.ok(spots(during).some((spot, i) => distance(spot, start[i]) > 5), 'they have moved');
   spots(at(FLOW_END)).forEach((spot, i) => assert.ok(distance(spot, start[i]) < 0.01, `dot ${i} is back where it started`));
+});
+
+// how far a point is from a line drawn through a list of points
+const offLine = (point, points) => Math.min(...points.slice(1).map((end, i) => {
+  const start = points[i];
+  const [dx, dy] = [end[0] - start[0], end[1] - start[1]];
+  const k = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / (dx * dx + dy * dy || 1)));
+  return distance(point, [start[0] + k * dx, start[1] + k * dy]);
+}));
+
+test('the line bends into a pipe: a line from low on the left, up a leg, over an arch, down the middle, round a U-bend and up to the right, with the six dots along it in order and no links', () => {
+  const pose = at(PIPE_END);
+  const line = pose.curve.points;
+  assert.equal(pose.curve.opacity, 1);
+  assert.equal(pose.edgeOpacity, 0, 'a line through the dots, no links');
+  assert.deepEqual(line[0], [PIPE_LEFT_X, PIPE_FOOT_Y], 'it starts at the foot of the left leg');
+  assert.deepEqual(line.at(-1), [PIPE_RIGHT_X, PIPE_TIP_Y], 'and ends at the tip of the right leg');
+  // the arch is the highest part and the U-bend the lowest part of the bends: round, with the radius of the bends
+  assert.ok(Math.min(...line.map(point => point[1])) > PIPE_ARCH_Y - PIPE_RADIUS - 0.01 && Math.min(...line.map(point => point[1])) < PIPE_ARCH_Y - PIPE_RADIUS + 1, 'the arch tops out one radius above where it starts to curve');
+  const underneath = line.filter(point => point[0] > PIPE_MID_X + 1 && point[0] < PIPE_RIGHT_X - 1);
+  assert.ok(Math.max(...underneath.map(point => point[1])) < PIPE_BASE_Y + PIPE_RADIUS + 0.01 && Math.max(...underneath.map(point => point[1])) > PIPE_BASE_Y + PIPE_RADIUS - 1, 'and the U-bend bottoms out one radius below');
+  // up, down, up: three runs of direction, in that order (a real pipe, not a zigzag)
+  const directions = [];
+  line.slice(1).forEach((point, i) => { const dy = point[1] - line[i][1]; const sign = Math.abs(dy) < 0.05 ? 0 : Math.sign(dy); if (sign && directions.at(-1) !== sign) directions.push(sign); });
+  assert.deepEqual(directions, [-1, 1, -1], 'up the first leg and over, down the middle and under, up the last');
+  // the three legs are straight and upright: several points in a row on each
+  for (const x of [PIPE_LEFT_X, PIPE_MID_X, PIPE_RIGHT_X]) assert.ok(line.filter(point => Math.abs(point[0] - x) < 0.01).length >= 5, `a straight leg at x = ${x}`);
+  // the dots sit on it, in the order they sit round the logo, from the foot to the tip, and well apart
+  const index = dot => { let best = 0; line.forEach((point, i) => { if (distance(point, [pose.dots[dot].x, pose.dots[dot].y]) < distance(line[best], [pose.dots[dot].x, pose.dots[dot].y])) best = i; }); return best; };
+  SLOT_ORDER.forEach(dot => assert.ok(offLine([pose.dots[dot].x, pose.dots[dot].y], line) < 0.01, `dot ${dot} is on the pipe`));
+  SLOT_ORDER.slice(1).forEach((dot, i) => assert.ok(index(dot) > index(SLOT_ORDER[i]), `dot ${dot} comes after dot ${SLOT_ORDER[i]} along it`));
+  SLOT_ORDER.forEach((dot, i) => SLOT_ORDER.slice(i + 1).forEach(other => assert.ok(distance([pose.dots[dot].x, pose.dots[dot].y], [pose.dots[other].x, pose.dots[other].y]) >= 25, `dots ${dot} and ${other} do not touch`)));
+  // and all of it fits the box the mark is drawn in, with room for the dots' size
+  line.forEach(point => assert.ok(point[0] >= 10 && point[0] <= 166 && point[1] >= 10 && point[1] <= 101, `${point} is inside the box`));
+  // it is held to the end of its stage, and the line is what it came from: right until the stage starts, the dots are where the loop's lap left them
+  assert.deepEqual(spots(at(PIPE_HOLD_END - 1)), spots(pose), 'held');
+  assert.ok(at(HOLD_END).dots.every(dot => Math.abs(dot.y - CENTRE[1]) < 0.01), 'it starts from the straight line');
+  const half = at(HOLD_END + GRAPH_MOVE_MS / 2).curve.points[12];
+  assert.ok(distance(half, at(HOLD_END).curve.points[12]) > 3 && distance(half, pose.curve.points[12]) > 3, 'part way, the line is neither the straight line nor the pipe');
+});
+
+test('the morphs into and out of the pipe keep the dots apart: from the line, into the loop and on to the star the closest any two get is well clear of touching (another starting phase for the loop has two dots land on the same spot for a moment)', () => {
+  const closest = (from, to) => {
+    let gap = Infinity;
+    for (let t = from; t <= to; t += 5) {
+      const dots = at(t).dots;
+      dots.forEach((a, i) => dots.slice(i + 1).forEach(b => { gap = Math.min(gap, distance([a.x, a.y], [b.x, b.y])); }));
+    }
+    return gap;
+  };
+  assert.ok(closest(HOLD_END, PIPE_END) > 20, `line to pipe: ${closest(HOLD_END, PIPE_END).toFixed(1)}`);
+  assert.ok(closest(PIPE_HOLD_END, INFINITY_END) > 7, `pipe to loop: ${closest(PIPE_HOLD_END, INFINITY_END).toFixed(1)}`);
+  assert.ok(closest(FLOW_END, STAR_END) > 10, `loop to star: ${closest(FLOW_END, STAR_END).toFixed(1)}`);
+  assert.ok(LOOP_PHASE > 0 && LOOP_PHASE < 1);
+});
+
+test('the runner goes along the pipe, bending with it, not cutting across it', () => {
+  const times = runTimes(RUNS[4]);
+  for (const hop of [1, 2, 3, 4]) {
+    const pose = at((times[hop] + times[hop + 1]) / 2);
+    assert.ok(offLine([pose.runner.x, pose.runner.y], pose.curve.points) < 0.3, `step ${hop}: on the pipe`);
+  }
+  const piece = at(times[3] + 60).trail[2];
+  assert.ok(piece.points.length > 3 && piece.points.every(point => offLine(point, at(times[3] + 60).curve.points) < 0.3), 'and so is the trail behind it');
 });
 
 test('the ladder\'s dots fly back into the logo, the ladder\'s links fade and the logo\'s own lines come back, and the cycle ends as the plain mark', () => {
@@ -278,7 +344,7 @@ test('the runner goes along the links of each graph shape (and never to a dot it
     route.slice(1).forEach((dot, i) => assert.ok(setOf(scene.links).includes([route[i], dot].sort().join('-')), `${label}: ${route[i]} to ${dot} is a link`));
   }
   // and it is on the link, a straight line between the two dots, once the shape is made: the tree's runner on its last branch
-  const times = runTimes(RUNS[6]);
+  const times = runTimes(RUNS[7]);
   const pose = at((times[3] + times[4]) / 2);
   const [a, b] = [pose.dots[TREE_ROUTE[3]], pose.dots[TREE_ROUTE[4]]];
   assert.ok(times[3] > TREE_END, 'by then the tree is made');
@@ -326,7 +392,7 @@ test('the runner goes along whatever the dots are on: the logo\'s edges, the cir
   // on the straight line once it is straight
   for (const hop of [3, 4]) assert.ok(Math.abs(mid(3, hop).y - CENTRE[1]) < 0.01, `line, step ${hop}`);
   // on the loop once it is a loop
-  for (const hop of [3, 4]) assert.ok(offLoop([mid(4, hop).x, mid(4, hop).y]) < 0.02, `loop, step ${hop}`);
+  for (const hop of [3, 4]) assert.ok(offLoop([mid(5, hop).x, mid(5, hop).y]) < 0.02, `loop, step ${hop}`);
   // along the logo's own edge in the logo: the first step of the first run goes from dot 0 to dot 1 in a straight line
   const times = runTimes(RUNS[1]);
   const pose = at((times[0] + times[1]) / 2);
@@ -365,7 +431,7 @@ test('the dashed line is going all the way through the cycle: at no moment (but 
     assert.ok(visible(at(t)).length > 0, `no trail at ${t} ms`);
   }
   // in particular not just in the bounce or the run: in the circle, the line, the loop and the return too
-  for (const [from, to] of [[MORPH_START, SPIN_END], [SPIN_END, HOLD_END], [HOLD_END, FLOW_END], [FLOW_END, LOOP_MS]]) {
+  for (const [from, to] of [[MORPH_START, SPIN_END], [SPIN_END, HOLD_END], [HOLD_END, PIPE_HOLD_END], [PIPE_HOLD_END, FLOW_END], [FLOW_END, LOOP_MS]]) {
     for (let t = from + 20; t < to - 20; t += 40) assert.ok(visible(at(t)).length > 0, `trail at ${t}`);
   }
   // and the pieces are bent along the circle and the loop, not cut straight across
@@ -416,7 +482,7 @@ test('it is drawn frame by frame straight into the drawing, still for reduced mo
   assert.match(component, /focusable="false"/);
   assert.match(component, /const reduced = useReducedMotion\(reducedMotion\);/);
   assert.match(component, /if \(reduced\) \{\s+apply\(RESTING_POSE\);\s+return undefined;\s+\}/);
-  assert.match(component, /apply\(poseAt\(now - start\)\);/);
+  assert.match(component, /const pose = poseAt\(now - start\);\s+lastPose\.current = pose;\s+apply\(pose\);/, 'each frame is drawn, and remembered as the pose the hand-over to the sparkle starts from');
   assert.match(component, /return \(\) => cancelAnimationFrame\(frame\);/);
   assert.doesNotMatch(component, /useState|setState/, 'no React state per frame');
   assert.match(component, /markRef\.current\?\.setAttribute\('transform', pose\.transform\);/);
@@ -454,7 +520,7 @@ test('the mark has no dashes at rest: all seven of its lines are drawn full and 
 
 test('it is the loader before the first step (one instance, fading when the step lands), and the spinning ring and its CSS are gone', () => {
   const disclosure = read('./StepsDisclosure.tsx');
-  assert.match(disclosure, /\{\(waiting \|\| landing\) && <ThinkingLogo size=\{THINKING_LOGO_PX\} leaving=\{landing\} reducedMotion=\{reduced\} \/>\}/);
+  assert.match(disclosure, /\{\(waiting \|\| landing\) && <ThinkingLogo size=\{THINKING_LOGO_PX\} leaving=\{landing && !becomesSparkle\} becomeMs=\{landing && becomesSparkle \? scaled\(ARRIVE_DELAY_MS, pace\) : undefined\} reducedMotion=\{reduced\} \/>\}/);
   const px = Number(disclosure.match(/const THINKING_LOGO_PX = (\d+);/)[1]);          // the mark's height before the first step: the offsets in the sheet are worked out from it
   assert.ok(px >= 30 && px <= 54, 'it fits the 66px box the wait keeps');
   assert.doesNotMatch(disclosure, /StartGraph/);
