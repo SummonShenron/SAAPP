@@ -3,6 +3,7 @@ import logging
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage
+from backend.models.gemini_schema import gemini_safe_tools
 
 from backend.utils import llm_usage
 
@@ -180,9 +181,14 @@ class LazyLLM:
         key = tuple(sorted(str(tool.get("name")) for tool in tools))
         cached = self._tool_runnables.get(key)
         if cached is None:
-            bound = self._primary_client.bind_tools(tools)
+            safe = gemini_safe_tools(tools)          # Gemini only takes string enums (backend/models/gemini_schema.py)
+            bound = self._primary_client.bind_tools(safe)
             if self._fallback_client is not None:
-                bound = bound.with_fallbacks([self._fallback_client.bind_tools(tools)])
+                try:
+                    bound = bound.with_fallbacks([self._fallback_client.bind_tools(safe)])
+                except Exception as error:
+                    # A fallback that cannot take these tools is no reason to lose the turn the primary can run. Only the kind of error is logged, never its text (it can quote the schema).
+                    logger.warning("[llm] the fallback model could not be given the tools (%s); this turn has no fallback.", type(error).__name__)
             cached = self._tool_runnables[key] = bound
         return cached
 
