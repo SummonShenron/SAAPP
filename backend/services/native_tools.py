@@ -47,8 +47,11 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
     "search_library": _object({
         "query": {"type": "string", "description": "words to look for in the person's own documents: a name, topic, date or kind of document"},
         "max_results": {"type": "integer", "description": "default 6, max 12"},
+        "library": {"type": "string", "description": "optional: search only this one library, named exactly as list_library_files wrote it"},
     }, ["query"]),
-    "list_library_files": _object({}),
+    "list_library_files": _object({
+        "library": {"type": "string", "description": "optional: list only this one library, named exactly as an earlier listing wrote it"},
+    }),
     # Sonic's own knowledge base (backend/utils/knowledge_base.py): cards written from public pages an admin approved, shared by everyone; and the admin-only proposal of one more page (backend/services/knowledge_cards.py)
     "search_my_knowledge": _object({
         "query": {"type": "string", "description": "the topic or name to look for, in plain words"},

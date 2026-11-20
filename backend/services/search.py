@@ -39,23 +39,36 @@ _embeddings = GoogleGenerativeAIEmbeddings(
 # -------------------------
 # Routing strategy
 # -------------------------
-def _detect_routing_strategy(query: str) -> str:
+# Which way a library question is searched. MEASURED, not guessed (backend/evals/rag_eval.py, 2026-11-19): on the invented libraries the keyword router (below, "auto") was the WORST of the options: a
+# "lexical" route that cannot do what its markers promise (it re-scores the vector search's own few candidates by word counts, so "latest" returned the OLDEST week), and substring matching that sent "update"
+# and "validate" there because they contain "date". Hybrid for everything had the best rank (MRR 0.76 to 0.82 on the files as stored today, 0.81 to 0.85 with file names in the chunks) and the fewest wrong
+# files (35% down to 30% of the questions), at the same cost: one vector search either way. So hybrid is the default, SEARCH_STRATEGY=auto brings the keyword router back, and vector or lexical can be forced.
+STRATEGIES = ("vector", "lexical", "hybrid")
+DEFAULT_STRATEGY = "hybrid"
+LEXICAL_MARKERS = ("recent", "latest", "newest", "oldest", "release", "date", "year", "when", "timeline", "chronology", "current", "last")
+HYBRID_MARKERS = ("compare", "difference", "versus", "vs", "relationship", "how does", "why did", "explain the connection", "analyze")
+# Whole words only: "date" is a marker, "update" and "validate" are not.
+_LEXICAL_RE = re.compile(r"\b(?:" + "|".join(re.escape(m) for m in LEXICAL_MARKERS) + r")\b")
+_HYBRID_RE = re.compile(r"\b(?:" + "|".join(re.escape(m) for m in HYBRID_MARKERS) + r")\b")
+
+
+def _keyword_routing(query: str) -> str:
+    """The older router (SEARCH_STRATEGY=auto): date-like words go to lexical, comparison words and long questions to hybrid, everything else to vector."""
     clean_query = query.lower().strip()
-    lexical_markers = [
-        "recent", "latest", "newest", "oldest", "release", "date",
-        "year", "when", "timeline", "chronology", "current", "last"
-    ]
-    if any(marker in clean_query for marker in lexical_markers):
+    if _LEXICAL_RE.search(clean_query):
         return "lexical"
-        
-    hybrid_markers = [
-        "compare", "difference", "versus", "vs", "relationship",
-        "how does", "why did", "explain the connection", "analyze"
-    ]
-    if any(marker in clean_query for marker in hybrid_markers) or len(clean_query.split()) > 12:
+    if _HYBRID_RE.search(clean_query) or len(clean_query.split()) > 12:
         return "hybrid"
-        
     return "vector"
+
+
+def _detect_routing_strategy(query: str) -> str:
+    setting = os.getenv("SEARCH_STRATEGY", DEFAULT_STRATEGY).strip().lower()
+    if setting in STRATEGIES:
+        return setting
+    if setting == "auto":
+        return _keyword_routing(query)
+    return DEFAULT_STRATEGY
 
 # -------------------------
 # Core MongoDB vector search

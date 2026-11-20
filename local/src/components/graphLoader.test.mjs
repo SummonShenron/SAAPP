@@ -382,7 +382,7 @@ test('the graph hangs under the newest active step, waits for that step\'s own a
 test('the graph is one instance from waiting through the first landing, because it sits in the same wrapper in the same place in both, and the first step\'s landing is worked out in the render too, at a pace', () => {
   assert.equal((disclosure.match(/<ThinkingLogo /g) ?? []).length, 2, 'drawn in two places: the wrapper the first step lands from (one instance from waiting to landing), and the closed view of a running turn');
   assert.doesNotMatch(disclosure, /<StartGraph /, 'the graph under the steps is TraceSteps\'s; before the first step it is the animated logo (thinkingLogo.test.mjs)');
-  assert.match(disclosure, /\{\(waiting \|\| landing\) && <ThinkingLogo size=\{THINKING_LOGO_PX\} leaving=\{landing\} reducedMotion=\{reduced\} \/>\}/);
+  assert.match(disclosure, /\{\(waiting \|\| landing\) && <ThinkingLogo size=\{THINKING_LOGO_PX\} leaving=\{landing && !becomesSparkle\} becomeMs=\{landing && becomesSparkle \? scaled\(ARRIVE_DELAY_MS, pace\) : undefined\} reducedMotion=\{reduced\} \/>\}/);
   assert.match(disclosure, /if \(running && !reduced && firstStepLanded\(seen, steps\.length\)\) \{\s+setLanding\(true\);\s+setPace\(paceFor\(nowMs\(\) - shownAt\)\);\s+\} else if \(steps\.length === 0\) \{\s+setLanding\(false\);/);
   assert.ok(disclosure.indexOf('setLanding(true)') < disclosure.indexOf('useEffect('), 'set while rendering, then only cleared by the effect');
   assert.match(disclosure, /setTimeout\(\(\) => setLanding\(false\), scaled\(LAND_END_AT, pace\)\)/);

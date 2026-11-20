@@ -3,7 +3,7 @@ import TraceSteps, { type TraceStep } from './TraceSteps';
 import ThinkingLogo from './ThinkingLogo';
 import { useReducedMotion } from './useReducedMotion';
 import { useStepsGraph } from './useStepsGraph';
-import { LAND_END_AT, START_SPACE_PX, firstStepLanded, nowMs, paceFor, scaled } from './graphLoader';
+import { ARRIVE_DELAY_MS, LAND_END_AT, START_SPACE_PX, firstStepLanded, nowMs, paceFor, scaled } from './graphLoader';
 import { stepsAreOpen, stepsLabel } from './traceFacts';
 import { defaultStepsOpen, readStepsPreference, writeStepsPreference } from './stepsPreference';
 import StepIcon from './StepIcon';
@@ -107,6 +107,9 @@ const StepsDisclosure: React.FC<Props> = ({ steps, running, idPrefix, latest = f
     // are no nodes: the line, and under it the logo going the whole time the turn runs, with the step Sonic is on beside it.
     const body = waiting || open;
     const current = [...steps].reverse().find(step => step.status === 'active') ?? steps[steps.length - 1];
+    // The first step of a turn is nearly always the "think" step, whose icon is a sparkle: then the loader does not fade, it turns INTO the sparkle, which travels to the step's dot and arrives as the dot comes in
+    // (thinkingLogoBecome.ts). A first step with any other icon keeps the plain fade.
+    const becomesSparkle = steps[0]?.kind === 'think';
     return (
       <div className={`steps-inline steps-inline-live${graph ? ' steps-graph' : ''}${waiting ? ' steps-inline-waiting' : ''}`} id={bodyId} role={waiting ? 'status' : undefined}>
         {!waiting && <StepsLine steps={steps} open={open} controls={bodyId} onToggle={toggle} live />}
@@ -124,7 +127,7 @@ const StepsDisclosure: React.FC<Props> = ({ steps, running, idPrefix, latest = f
         )}
         {body && (
           <div className={`gl-startwrap${waiting ? ' gl-start-wait' : landing ? '' : ' gl-start-settled'}`} style={landing ? { paddingTop: START_SPACE_PX } : undefined}>
-            {(waiting || landing) && <ThinkingLogo size={THINKING_LOGO_PX} leaving={landing} reducedMotion={reduced} />}
+            {(waiting || landing) && <ThinkingLogo size={THINKING_LOGO_PX} leaving={landing && !becomesSparkle} becomeMs={landing && becomesSparkle ? scaled(ARRIVE_DELAY_MS, pace) : undefined} reducedMotion={reduced} />}
             {(waiting || landing) && <span className={`agent-status-text${landing ? ' gl-start-text gl-start-text-logo gl-start-text-out' : ''}`}><span className="steps-first-title">{WAITING_TEXT}</span></span>}
             {!waiting && <TraceSteps steps={hidden > 0 ? all.slice(hidden) : all} running live landing={landing} landingPace={pace} graph={graph} reducedMotion={reduced} hold={hold} idPrefix={idPrefix} />}
           </div>

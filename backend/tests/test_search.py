@@ -60,3 +60,58 @@ def test_mongo_vector_search_defaults_embedded_images_to_empty_list(monkeypatch)
 
     assert docs[0].metadata["embedded_images"] == []
     assert docs[0].metadata.get("gridfs_id") is None
+
+
+# ---- which way a library question is searched (measured by backend/evals/rag_eval.py, 2026-11-19) -------------------------------------------------------
+
+import pytest
+
+
+@pytest.fixture()
+def strategy_env(monkeypatch):
+    monkeypatch.delenv("SEARCH_STRATEGY", raising=False)
+    return monkeypatch
+
+
+QUESTIONS = ["latest release date", "What did I update in the intake service?", "compare sonic vs shadow", "tell me about sonic", "when was it", "what is the capital of Australia",
+             "Who is Sonic and how does his relationship with Shadow progress the narrative in Sonic Adventure 2?"]
+
+
+@pytest.mark.parametrize("question", QUESTIONS)
+def test_every_question_is_searched_as_hybrid_by_default(strategy_env, question):
+    assert search._detect_routing_strategy(question) == "hybrid"
+
+
+@pytest.mark.parametrize("setting", ["vector", "lexical", "hybrid", " Vector ", "LEXICAL"])
+def test_a_strategy_can_be_forced_whatever_the_question(strategy_env, setting):
+    strategy_env.setenv("SEARCH_STRATEGY", setting)
+    assert all(search._detect_routing_strategy(q) == setting.strip().lower() for q in QUESTIONS)
+
+
+def test_a_setting_nobody_recognises_falls_back_to_the_default_rather_than_to_no_search(strategy_env):
+    strategy_env.setenv("SEARCH_STRATEGY", "semantic-ish")
+    assert search._detect_routing_strategy("anything") == search.DEFAULT_STRATEGY == "hybrid"
+    strategy_env.setenv("SEARCH_STRATEGY", "")
+    assert search._detect_routing_strategy("anything") == "hybrid"
+
+
+def test_auto_brings_back_the_keyword_router_and_it_reads_whole_words_only(strategy_env):
+    strategy_env.setenv("SEARCH_STRATEGY", "auto")
+    route = search._detect_routing_strategy
+    assert route("latest release date") == "lexical" and route("When did it ship?") == "lexical" and route("the current plan") == "lexical"
+    assert route("compare sonic vs shadow") == "hybrid" and route("one two three four five six seven eight nine ten eleven twelve thirteen") == "hybrid"
+    assert route("tell me about sonic") == "vector"
+    # a word that merely CONTAINS a marker is not the marker: "update" and "validate" have "date" in them, "forecast" and "blast" have "last", "concurrent" has "current", "devs" and "TVs" have "vs"
+    for question in ("What did I update?", "How did I validate the upgrade", "blast radius of the forecast", "concurrent jobs", "yearly goals", "whenever you like", "what did the devs say about the TVs"):
+        assert route(question) == "vector", question
+
+
+def test_the_retriever_searches_the_way_the_setting_says(strategy_env):
+    calls = []
+    for name in ("vector", "lexical", "hybrid"):
+        strategy_env.setattr(search, f"_retrieve_{name}", lambda query, flt, k, name=name: calls.append(name) or [])
+    search.get_secure_retriever(None, ["lib"], "latest release date", top_k=3).invoke("latest release date")
+    assert calls == ["hybrid"], "no setting: hybrid, even for a question full of date words"
+    strategy_env.setenv("SEARCH_STRATEGY", "vector")
+    search.get_secure_retriever(None, ["lib"], "anything", top_k=3).invoke("anything")
+    assert calls == ["hybrid", "vector"]

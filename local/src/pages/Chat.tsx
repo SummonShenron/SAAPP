@@ -402,6 +402,9 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   />
                 </div>
               )}
+              {msg.choiceCard && <ChoiceCard key={msg.choiceCard.choice_id} card={msg.choiceCard} />}
+              {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
+              {msg.commandSteps && <CommandStepsCard key={msg.commandSteps.steps.map(s => s.id).join('-') + msg.id} steps={msg.commandSteps.steps} runner={msg.commandSteps.runner} onTell={putInComposer} />}
               {msg.editProposals?.map(proposal => (
                 // Keyed by the proposal: a card keeps its own Apply/Undo state, so a second proposal in the same reply must be a new card, not the first one showing different files.
                 <LocalEditCard
@@ -417,9 +420,6 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   demoDisabled={!isGuestPrincipal(getEffectivePrincipal()) && !localEditActionsRef.current.canConnect}
                 />
               ))}
-              {msg.choiceCard && <ChoiceCard key={msg.choiceCard.choice_id} card={msg.choiceCard} />}
-              {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
-              {msg.commandSteps && <CommandStepsCard key={msg.commandSteps.steps.map(s => s.id).join('-') + msg.id} steps={msg.commandSteps.steps} runner={msg.commandSteps.runner} onTell={putInComposer} />}
               <div className="message-text">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}

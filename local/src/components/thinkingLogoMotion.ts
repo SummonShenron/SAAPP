@@ -1,23 +1,24 @@
-// The Sonic mark, animated as the "thinking" loader (2026-11-18). One cycle of NINE EQUAL STAGES (STAGE_MS each), then it starts again:
+// The Sonic mark, animated as the "thinking" loader (2026-11-18). One cycle of TEN EQUAL STAGES (STAGE_MS each), then it starts again:
 //   1. the logo crouches, springs up and lands with a squash (the whole mark; it never turns);
 //   2. the logo is still, and the runner goes through it again, the other way (through the trough);
 //   3. the dots break apart into a circle and go round it (two turns);
 //   4. the circle unrolls into a straight line, which is held;
-//   5. the line becomes an infinity loop (a lying figure eight), and the dots circulate round it once;
-//   6. the dots become a STAR graph (the big dot is the hub, with a spoke to each of the other five);
-//   7. then a TREE (the big dot is the root, with two children and three leaves);
-//   8. then a LADDER (two rows of three, joined along the rows and by rungs);
-//   9. the dots fly back into the logo.
+//   5. the line bends into a PIPE (a plumbing pipe: up a leg, over an arch, down the middle, round a U-bend and up the other leg), and the runner goes along it;
+//   6. the pipe becomes an infinity loop (a lying figure eight), and the dots circulate round it once;
+//   7. the dots become a STAR graph (the big dot is the hub, with a spoke to each of the other five);
+//   8. then a TREE (the big dot is the root, with two children and three leaves);
+//   9. then a LADDER (two rows of three, joined along the rows and by rungs);
+//  10. the dots fly back into the logo.
 // THE DASHED LINE RUNS THROUGH THE WHOLE CYCLE: in every stage a RUNNER, a bright dot, goes from dot to dot with a flowing dashed line behind it that joins the last two dots it has touched, along whatever the
-// dots are on at that moment (the logo's own lines, the circle, the straight line, the infinity loop, the links of a star, a tree or a ladder). A dot PULSES (stretches, squashes, settles, and sends out a ring) only
+// dots are on at that moment (the logo's own lines, the circle, the straight line, the pipe, the infinity loop, the links of a star, a tree or a ladder). A dot PULSES (stretches, squashes, settles, and sends out a ring) only
 // when the runner reaches it: there is no other pulse. In the logo and in the three graph shapes the dots are joined by LINKS (the logo's own seven lines, a star's five spokes, a tree's five branches, a ladder's
 // seven bars); between two shapes the old links fade away and the new ones fade in. This file is the pure maths: what the whole mark, each dot, the links, the runner and the trail are doing at a given moment.
 // components/ThinkingLogo.tsx draws it. Everything starts and ends at rest, so the cycles join on.
 import { LOGO_EDGES, LOGO_NODES } from './logoMarkData.ts';
 
-/** The cycle is nine stages, each the SAME length: the bounce, the runner through the logo, the circle (it breaks apart and goes round), the line, the infinity loop, the star, the tree, the ladder, and the return to the logo. Each stage's own coming-in is part of its time. */
+/** The cycle is ten stages, each the SAME length: the bounce, the runner through the logo, the circle (it breaks apart and goes round), the line, the pipe, the infinity loop, the star, the tree, the ladder, and the return to the logo. Each stage's own coming-in is part of its time. */
 export const STAGE_MS = 1600;
-export const STAGE_COUNT = 9;
+export const STAGE_COUNT = 10;
 export const LOOP_MS = STAGE_MS * STAGE_COUNT;
 
 // stage 1, the bounce (0 to STAGE_MS), in ms
@@ -42,15 +43,17 @@ export const BREAK_END = MORPH_START + 550;            // ...into a circle (stag
 export const SPIN_END = 3 * STAGE_MS;                  // ...round which the dots go until the stage ends
 export const UNROLL_END = SPIN_END + 650;              // stage 4: the circle unrolls into a straight line...
 export const HOLD_END = 4 * STAGE_MS;                  // ...which is held until the stage ends
-export const INFINITY_END = HOLD_END + 650;            // stage 5: the line becomes an infinity loop...
-export const FLOW_END = 5 * STAGE_MS;                  // ...round which the dots circulate once until the stage ends
-export const GRAPH_MOVE_MS = 650;                      // stages 6 to 8: the dots move to the next graph shape in this long, and the shape is then held until the stage ends
-export const STAR_END = FLOW_END + GRAPH_MOVE_MS;      // stage 6: the star (the infinity loop's line fades, the star's spokes come in)...
-export const TREE_START = 6 * STAGE_MS;                // stage 7: ...which becomes a tree...
+export const GRAPH_MOVE_MS = 650;                      // stages 5 and 7 to 9: the dots move to the next shape in this long, and the shape is then held until the stage ends
+export const PIPE_END = HOLD_END + GRAPH_MOVE_MS;      // stage 5: the line bends into a pipe...
+export const PIPE_HOLD_END = 5 * STAGE_MS;             // ...which is held until the stage ends
+export const INFINITY_END = PIPE_HOLD_END + 650;       // stage 6: the pipe becomes an infinity loop...
+export const FLOW_END = 6 * STAGE_MS;                  // ...round which the dots circulate once until the stage ends
+export const STAR_END = FLOW_END + GRAPH_MOVE_MS;      // stage 7: the star (the loop's line fades, the star's spokes come in)...
+export const TREE_START = 7 * STAGE_MS;                // stage 8: ...which becomes a tree...
 export const TREE_END = TREE_START + GRAPH_MOVE_MS;
-export const LADDER_START = 7 * STAGE_MS;              // stage 8: ...which becomes a ladder...
+export const LADDER_START = 8 * STAGE_MS;              // stage 9: ...which becomes a ladder...
 export const LADDER_END = LADDER_START + GRAPH_MOVE_MS;
-export const RETURN_START = 8 * STAGE_MS;              // stage 9: ...whose dots fly back into the logo
+export const RETURN_START = 9 * STAGE_MS;              // stage 10: ...whose dots fly back into the logo
 export const RETURN_END = RETURN_START + 750;
 export const SPIN_TURNS = 2;                           // how many times the dots go round the circle
 
@@ -59,8 +62,8 @@ export const LAUNCH_STRETCH = 1.5;
 export const LAND_SQUASH = 0.55;
 
 // the mark's own drawing space (logoMarkData.ts LOGO_VIEWBOX): squashing is about the ground under it
-const MID_X = 88;
-const MID_Y = 55;
+export const MID_X = 88;
+export const MID_Y = 55;
 const GROUND_Y = 100;
 const JUMP = 22;                    // how high it goes, in drawing units
 
@@ -71,6 +74,15 @@ export const LINE_TO_X = 162;       // ...to its last
 export const INFINITY_WIDTH = 66;   // half the width of the infinity loop
 export const INFINITY_HEIGHT = 27;  // and how far each lobe goes up and down
 export const CURVE_SAMPLES = 48;    // the line through the dots is drawn as this many short pieces
+// the pipe (a plumbing pipe, as an open line): a leg up from the foot, an arch over the top, a leg down the middle, a U-bend underneath, and a leg up to the tip. Both bends are half circles of the same radius.
+export const PIPE_RADIUS = 19;
+export const PIPE_LEFT_X = 50;      // the first leg
+export const PIPE_MID_X = 88;       // the middle leg, down the middle of the mark (the arch and the U-bend each span half the pipe's width)
+export const PIPE_RIGHT_X = 126;    // the last leg
+export const PIPE_ARCH_Y = 30;      // where the arch's half circle starts to curve (its top is PIPE_RADIUS higher)
+export const PIPE_BASE_Y = 76;      // where the U-bend's half circle starts to curve (its bottom is PIPE_RADIUS lower)
+export const PIPE_FOOT_Y = 96;      // the pipe starts here, low on the left...
+export const PIPE_TIP_Y = 16;       // ...and ends here, high on the right
 /** Slot s of every shape holds dot SLOT_ORDER[s]: the dots in the order they sit round the logo (crest, the two on the right, trough, then the two on the left), so they fly out to the circle without crossing. */
 export const SLOT_ORDER: readonly number[] = [2, 4, 5, 3, 0, 1];
 
@@ -84,7 +96,7 @@ export const TREE_ROUTE: readonly number[] = [0, 1, 2, 4, 5];
 export const LADDER_ROUTE: readonly number[] = [0, 2, 4, 5, 3, 1];
 /** One run for each stage, starting as the stage does. A run, its trail and its last pop are all over by the time its stage ends, so only one is ever going. */
 export interface Run { start: number; dots: readonly number[] }
-export const RUNS: ReadonlyArray<Run> = [CREST_ROUTE, TROUGH_ROUTE, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, STAR_ROUTE, TREE_ROUTE, LADDER_ROUTE, HOME_ROUTE].map((dots, stage) => ({ start: stage * STAGE_MS, dots }));
+export const RUNS: ReadonlyArray<Run> = [CREST_ROUTE, TROUGH_ROUTE, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, STAR_ROUTE, TREE_ROUTE, LADDER_ROUTE, HOME_ROUTE].map((dots, stage) => ({ start: stage * STAGE_MS, dots }));
 /** How many pieces of trail there can be: one for each step of the longest run. */
 export const TRAIL_SLOTS = Math.max(...RUNS.map(run => run.dots.length)) - 1;
 /** When the runner reaches each dot of a run: evenly, from the start of the stage to RUN_MS after it. */
@@ -101,9 +113,12 @@ export interface RunnerPose { x: number; y: number; opacity: number }
 export interface TrailPose { points: ReadonlyArray<Point>; opacity: number }
 /** The line through the dots once the logo has broken apart: a circle, a straight line, an infinity loop, or the shape between two of them. */
 export interface CurvePose { points: ReadonlyArray<Point>; opacity: number }
+/** How the whole mark is squashed, stretched and lifted: the numbers behind `transform` (the loader's hand-over to the first step's icon, thinkingLogoBecome.ts, blends them back to rest). */
+export interface Body { lift: number; scaleX: number; scaleY: number }
 export interface LogoPose {
   /** The SVG transform of the whole mark inside its drawing: squash, stretch and jump. */
   transform: string;
+  body: Body;
   dots: DotPose[];
   /** The links that join the dots now (the logo's lines, or a star's, a tree's or a ladder's): LINK_SLOTS slots, null where a shape has fewer. They run between the dots, wherever the dots are. */
   links: ReadonlyArray<Link | null>;
@@ -114,13 +129,13 @@ export interface LogoPose {
   trail: TrailPose[];
 }
 
-const easeInOut = (k: number) => (k < 0.5 ? 2 * k * k : 1 - 2 * (1 - k) * (1 - k));
+export const easeInOut = (k: number) => (k < 0.5 ? 2 * k * k : 1 - 2 * (1 - k) * (1 - k));
 const easeOut = (k: number) => 1 - (1 - k) * (1 - k);
 const easeIn = (k: number) => k * k;
 /** A fly-out that overshoots its place and settles back. */
-const easeOutBack = (k: number) => 1 + 2.70158 * (k - 1) ** 3 + 1.70158 * (k - 1) ** 2;
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+export const easeOutBack = (k: number) => 1 + 2.70158 * (k - 1) ** 3 + 1.70158 * (k - 1) ** 2;
+export const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+export const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 const lerpPoint = (a: Point, b: Point, k: number): Point => [lerp(a[0], b[0], k), lerp(a[1], b[1], k)];
 /** Squashing a body makes it wider and stretching makes it thinner, so it keeps about the same bulk (a little less than all of it, which reads as lively). */
 export const widthFor = (scaleY: number) => scaleY ** -0.6;
@@ -149,23 +164,54 @@ function liftAt(t: number): number {
 
 // ---- the shapes the logo breaks apart into ---------------------------------------------------------------------------------------------------------------------------------------------
 
-type Shape = 'circle' | 'line' | 'infinity';
-/** A shape, and how far round it the dots have gone (turns for the circle, laps for the infinity loop; ignored for the line). */
+type Shape = 'circle' | 'line' | 'infinity' | 'pipe';
+/** A shape, and how far round it the dots have gone (turns for the circle, laps for the infinity loop; ignored for the line and the pipe, which are open and have no round to go). */
 interface ShapeSpec { shape: Shape; shift: number }
 const CIRCLE: ShapeSpec = { shape: 'circle', shift: 0 };
 const LINE: ShapeSpec = { shape: 'line', shift: 0 };
-const INFINITY: ShapeSpec = { shape: 'infinity', shift: 0 };
+/** Where on the infinity loop the dots start when the pipe becomes it, as a fraction of a lap. Any other start has dots from one end of the pipe meet dots from the other on the way (two of them land on the same spot for a moment): this one keeps every pair at least 8 units apart, going in and coming out. */
+export const LOOP_PHASE = 0.79;
+const LOOP: ShapeSpec = { shape: 'infinity', shift: LOOP_PHASE };
+const PIPE: ShapeSpec = { shape: 'pipe', shift: 0 };
 
-/** Where along a shape (0 to 1) slot `slot` of the six sits when the dots are evenly spaced on it (the infinity loop's dots are kept off its crossing in the middle). */
+/** Where along a shape (0 to 1) slot `slot` of the six sits when the dots are evenly spaced on it (the infinity loop's dots are kept off its crossing in the middle, and the pipe's off its two ends so the line reaches past the first and last). */
 const slotParam = (shape: Shape, slot: number) => (shape === 'circle' ? slot / 6 : shape === 'line' ? slot / 5 : (slot + 0.5) / 6);
 
-/** A point of a shape: the circle from its top, clockwise; the line from left to right; the infinity loop (a lying figure eight) from its middle, up and to the right first. */
+// the pipe's five pieces, by length, so the line through the dots is drawn at an even pace along it
+const PIPE_LEG_LEFT = PIPE_FOOT_Y - PIPE_ARCH_Y;
+const PIPE_BEND = Math.PI * PIPE_RADIUS;
+const PIPE_LEG_MID = PIPE_BASE_Y - PIPE_ARCH_Y;
+const PIPE_LEG_RIGHT = PIPE_BASE_Y - PIPE_TIP_Y;
+export const PIPE_LENGTH = PIPE_LEG_LEFT + PIPE_BEND + PIPE_LEG_MID + PIPE_BEND + PIPE_LEG_RIGHT;
+
+/** A point of the pipe, `u` (0 to 1) of the way along it from its foot: up the first leg, over the arch, down the middle, under the U-bend and up to the tip. */
+function pipePoint(u: number): Point {
+  let s = clamp01(u) * PIPE_LENGTH;
+  if (s <= PIPE_LEG_LEFT) return [PIPE_LEFT_X, PIPE_FOOT_Y - s];
+  s -= PIPE_LEG_LEFT;
+  if (s <= PIPE_BEND) {
+    const phi = s / PIPE_RADIUS;
+    return [(PIPE_LEFT_X + PIPE_MID_X) / 2 - PIPE_RADIUS * Math.cos(phi), PIPE_ARCH_Y - PIPE_RADIUS * Math.sin(phi)];
+  }
+  s -= PIPE_BEND;
+  if (s <= PIPE_LEG_MID) return [PIPE_MID_X, PIPE_ARCH_Y + s];
+  s -= PIPE_LEG_MID;
+  if (s <= PIPE_BEND) {
+    const phi = s / PIPE_RADIUS;
+    return [(PIPE_MID_X + PIPE_RIGHT_X) / 2 - PIPE_RADIUS * Math.cos(phi), PIPE_BASE_Y + PIPE_RADIUS * Math.sin(phi)];
+  }
+  s -= PIPE_BEND;
+  return [PIPE_RIGHT_X, PIPE_BASE_Y - s];
+}
+
+/** A point of a shape: the circle from its top, clockwise; the line from left to right; the infinity loop (a lying figure eight) from its middle, up and to the right first; the pipe from its foot. */
 function pointOn(spec: ShapeSpec, u: number): Point {
   if (spec.shape === 'circle') {
     const angle = 2 * Math.PI * (u + spec.shift) - Math.PI / 2;
     return [MID_X + CIRCLE_RADIUS * Math.cos(angle), MID_Y + CIRCLE_RADIUS * Math.sin(angle)];
   }
   if (spec.shape === 'line') return [lerp(LINE_FROM_X, LINE_TO_X, u), MID_Y];
+  if (spec.shape === 'pipe') return pipePoint(u);
   const theta = 2 * Math.PI * (u + spec.shift);
   return [MID_X + INFINITY_WIDTH * Math.sin(theta), MID_Y + INFINITY_HEIGHT * Math.sin(2 * theta)];
 }
@@ -236,18 +282,21 @@ function layoutAt(t: number): Layout {
   }
   if (t < UNROLL_END) return onShape(between({ shape: 'circle', shift: SPIN_TURNS }, LINE, easeInOut((t - SPIN_END) / (UNROLL_END - SPIN_END))));
   if (t < HOLD_END) return onShape(between(LINE, LINE, 0));
-  if (t < INFINITY_END) return onShape(between(LINE, INFINITY, easeInOut((t - HOLD_END) / (INFINITY_END - HOLD_END))));
+  // the line bends into the pipe (the dots keep to the line as it changes), which is held until its stage ends
+  if (t < PIPE_END) return onShape(between(LINE, PIPE, easeInOut((t - HOLD_END) / GRAPH_MOVE_MS)));
+  if (t < PIPE_HOLD_END) return onShape(between(PIPE, PIPE, 0));
+  if (t < INFINITY_END) return onShape(between(PIPE, LOOP, easeInOut((t - PIPE_HOLD_END) / (INFINITY_END - PIPE_HOLD_END))));
   if (t < FLOW_END) {
-    const lap = easeInOut((t - INFINITY_END) / (FLOW_END - INFINITY_END));
-    return onShape(between({ shape: 'infinity', shift: lap }, { shape: 'infinity', shift: lap }, 0));
+    const lap = easeInOut((t - INFINITY_END) / (FLOW_END - INFINITY_END));   // one whole lap, so at FLOW_END the dots are exactly where they started on the loop
+    return onShape(between({ shape: 'infinity', shift: LOOP_PHASE + lap }, { shape: 'infinity', shift: LOOP_PHASE + lap }, 0));
   }
   // the graph shapes: the dots move to the next shape (with a little overshoot), the old links fade out and the new ones in, and the shape is held until its stage ends
   const move = (from: Point[], to: Scene, since: number): Point[] => from.map((point, dot) => lerpPoint(point, to.dots[dot], easeOutBack(clamp01(since / GRAPH_MOVE_MS))));
   const held = (scene: Scene): Layout => ({ dots: scene.dots, curve: RESTING_CURVE, u: null, links: scene.links, curveOpacity: 0, edgeOpacity: 1 });
   if (t < STAR_END) {
-    // the infinity loop's line fades as its dots move, then the star's spokes come in
+    // the loop's line fades as its dots move, then the star's spokes come in
     const k = (t - FLOW_END) / GRAPH_MOVE_MS;
-    const loop = between(INFINITY, INFINITY, 0);
+    const loop = between(LOOP, LOOP, 0);
     return { dots: move(loop.dots, STAR, t - FLOW_END), curve: loop.curve, u: null, links: STAR.links, curveOpacity: 1 - clamp01(k / 0.45), edgeOpacity: clamp01((k - 0.5) / 0.5) };
   }
   if (t < TREE_START) return held(STAR);
@@ -343,11 +392,15 @@ function popAt(since: number): Pick<DotPose, 'scaleX' | 'scaleY' | 'ringScale' |
   return { scaleX: round(1 - 0.5 * spring), scaleY: round(1 + 0.9 * spring), ringScale: round(1 + 2.4 * easeOut(Math.min(ring, 1))), ringOpacity: round(0.7 * (1 - Math.min(ring, 1)) * clamp01(since / 60)) };          // the ring comes in over its first 60 ms, so a cycle can start at rest with the first dot's pulse
 }
 
+/** The SVG transform for a body: squashed and stretched about the ground under the middle of the mark, and lifted off it. */
+export const bodyTransform = (body: Body): string => `translate(${MID_X} ${round(GROUND_Y + body.lift)}) scale(${round(body.scaleX)} ${round(body.scaleY)}) translate(${-MID_X} ${-GROUND_Y})`;
+
 /** Where everything is `t` ms into a cycle (`t` from 0 to LOOP_MS). At 0 and at LOOP_MS it is the plain mark, at rest. */
 export function logoPose(t: number): LogoPose {
   const at = Math.min(Math.max(t, 0), LOOP_MS);
   const scaleY = heightScale(at);
-  const transform = `translate(${MID_X} ${round(GROUND_Y + liftAt(at))}) scale(${round(widthFor(scaleY))} ${round(scaleY)}) translate(${-MID_X} ${-GROUND_Y})`;
+  const body: Body = { lift: liftAt(at), scaleX: widthFor(scaleY), scaleY };
+  const transform = bodyTransform(body);
   const layout = layoutAt(at);
   const run = runAt(at);
   const dots = layout.dots.map((point, dot) => {
@@ -356,6 +409,7 @@ export function logoPose(t: number): LogoPose {
   });
   return {
     transform,
+    body,
     dots,
     links: Array.from({ length: LINK_SLOTS }, (_, slot) => layout.links[slot] ?? null),
     edgeOpacity: round(layout.edgeOpacity),

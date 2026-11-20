@@ -1,0 +1,3014 @@
+{
+  "baseline": {
+    "app": {
+      "3": {
+        "summary": {
+          "n": 25,
+          "hit": 0.96,
+          "mrr": 0.82,
+          "precision": 0.4,
+          "complete": 0.13095238095238096,
+          "wrong": 0.30434782608695654,
+          "by_kind": {
+            "fact": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.8333333333333334
+            },
+            "term": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "date": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "latest": {
+              "n": 1,
+              "hit": 0.0,
+              "mrr": 0.0
+            },
+            "paraphrase": {
+              "n": 6,
+              "hit": 1.0,
+              "mrr": 0.8055555555555555
+            },
+            "synthesis": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.611111111111111
+            },
+            "other_job": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.7777777777777778
+            },
+            "career": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "health": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            }
+          },
+          "top_score_answerable": 0.831040582604542,
+          "top_score_unanswerable": 0.7744712086414256
+        },
+        "cases": [
+          {
+            "id": "ship_week",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.8641539980179656,
+              0.8420087291643565,
+              0.8443352395199808
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8641539980179656
+          },
+          {
+            "id": "manager",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "Resume.pdf"
+            ],
+            "scores": [
+              0.818268524515066,
+              0.8018387508153317,
+              0.8040191420160094
+            ],
+            "hit": true,
+            "coverage": 0.5,
+            "rr": 0.5,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.818268524515066
+          },
+          {
+            "id": "pair_priya",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.8055375213124341,
+              0.8060434290278842,
+              0.797014747975188
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8060434290278842
+          },
+          {
+            "id": "ticket_id",
+            "kind": "term",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-28.json",
+              "week-2026-09-21.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8139909532157371,
+              0.8134295801199201,
+              0.8107089943681598
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.8139909532157371
+          },
+          {
+            "id": "incident_id",
+            "kind": "term",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-12.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8060493021150048,
+              0.7928112262333666,
+              0.7825026477751361
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8060493021150048
+          },
+          {
+            "id": "prod_date",
+            "kind": "date",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-12.json",
+              "week-2026-09-14.json",
+              "Resume.pdf"
+            ],
+            "scores": [
+              0.8307418287187674,
+              0.7952794588224702,
+              0.7909024832539494
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8307418287187674
+          },
+          {
+            "id": "upgrade_date",
+            "kind": "date",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-10-26.json",
+              "week-2026-10-12.json"
+            ],
+            "scores": [
+              0.7838603256920944,
+              0.7831714411780539,
+              0.7736295570024707
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.7838603256920944
+          },
+          {
+            "id": "latest",
+            "kind": "latest",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-05.json",
+              "week-2026-09-07.json"
+            ],
+            "scores": [
+              0.8197838575513678,
+              0.8183421390386811,
+              0.8093389220009375
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.8197838575513678
+          },
+          {
+            "id": "database",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-10-26.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.817370394728404,
+              0.8079373580596791,
+              0.7952492009455476
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.817370394728404
+          },
+          {
+            "id": "update_trap",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-12.json",
+              "week-2026-09-14.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.8301403578219138,
+              0.8223751239163165,
+              0.8173796351622714
+            ],
+            "hit": true,
+            "coverage": 0.6666666666666666,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.8301403578219138
+          },
+          {
+            "id": "validate_trap",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-10-26.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8086752942952753,
+              0.8036400485315109,
+              0.7874644478429422
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.8086752942952753
+          },
+          {
+            "id": "incident",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-12.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8483155526226065,
+              0.8199653488260175,
+              0.8150443952998154
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8483155526226065
+          },
+          {
+            "id": "mentor",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "Beths Letter of Recommendation.pdf",
+              "Resume.pdf",
+              "week-2026-10-19.json"
+            ],
+            "scores": [
+              0.8027472064643391,
+              0.7969255443985941,
+              0.7933668460869928
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 0.3333333333333333,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8027472064643391
+          },
+          {
+            "id": "flaky",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-21.json",
+              "week-2026-10-26.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.792191939773765,
+              0.7939052517259251,
+              0.7783182646365914
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 0.5,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.7939052517259251
+          },
+          {
+            "id": "progress_nw",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8528427634202238,
+              0.8232498724287565,
+              0.802025196596764
+            ],
+            "hit": true,
+            "coverage": 0.125,
+            "rr": 0.3333333333333333,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8528427634202238
+          },
+          {
+            "id": "seven_weeks",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-26.json",
+              "Cover Letter.pdf",
+              "week-2026-09-07.json"
+            ],
+            "scores": [
+              0.8601906369082785,
+              0.8484241272777169,
+              0.8563158039883378
+            ],
+            "hit": true,
+            "coverage": 0.14285714285714285,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8601906369082785
+          },
+          {
+            "id": "growth",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-10-26.json",
+              "Resume.pdf"
+            ],
+            "scores": [
+              0.8847734203916109,
+              0.8330235952809941,
+              0.8254825216338978
+            ],
+            "hit": true,
+            "coverage": 0.125,
+            "rr": 0.5,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8847734203916109
+          },
+          {
+            "id": "harbor_work",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "Beths Letter of Recommendation.pdf",
+              "Cover Letter.pdf",
+              "week-2025-03-10.json"
+            ],
+            "scores": [
+              0.8298717703704666,
+              0.8253882630649623,
+              0.8190050238638438
+            ],
+            "hit": true,
+            "coverage": 0.2,
+            "rr": 0.3333333333333333,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8298717703704666
+          },
+          {
+            "id": "harbor_oncall",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-10.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-19.json"
+            ],
+            "scores": [
+              0.8174087717203213,
+              0.8162909400451847,
+              0.8201299633665082
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8201299633665082
+          },
+          {
+            "id": "harbor_scheduler",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-17.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-12.json"
+            ],
+            "scores": [
+              0.7921467657529222,
+              0.7811729030594272,
+              0.7869160830801696
+            ],
+            "hit": true,
+            "coverage": 0.3333333333333333,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.7921467657529222
+          },
+          {
+            "id": "letter_ownership",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-09-14.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.8637586454078309,
+              0.807136175012007,
+              0.8456820101325966
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8637586454078309
+          },
+          {
+            "id": "resume_skills",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Resume.pdf",
+              "Cover Letter.pdf",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.8357523764868113,
+              0.80972802559604,
+              0.7980669735223878
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8357523764868113
+          },
+          {
+            "id": "why_northwind",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.845835909349676,
+              0.7954136665566578,
+              0.780043466019654
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.845835909349676
+          },
+          {
+            "id": "recovery",
+            "kind": "health",
+            "answerable": true,
+            "sources": [
+              "Workout_Recovery_and_Nutrition.pdf",
+              "Meal_Prep_Guide.pdf",
+              "week-2026-10-05.json"
+            ],
+            "scores": [
+              0.8567816740872001,
+              0.8012292143708681,
+              0.800665915617324
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8567816740872001
+          },
+          {
+            "id": "meal_prep",
+            "kind": "health",
+            "answerable": true,
+            "sources": [
+              "Meal_Prep_Guide.pdf",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "week-2026-09-21.json"
+            ],
+            "scores": [
+              0.8898843630596721,
+              0.8150885605426164,
+              0.7978289132714886
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8898843630596721
+          },
+          {
+            "id": "deductible",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-09-07.json",
+              "Cover Letter.pdf",
+              "Workout_Recovery_and_Nutrition.pdf"
+            ],
+            "scores": [
+              0.766829281561118,
+              0.764666779557281,
+              0.7630059978860679
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.766829281561118
+          },
+          {
+            "id": "capital",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2025-03-17.json",
+              "Meal_Prep_Guide.pdf"
+            ],
+            "scores": [
+              0.7420334206675301,
+              0.7437593900291359,
+              0.7354920530851299
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7437593900291359
+          },
+          {
+            "id": "tax",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2025-03-10.json",
+              "week-2026-09-21.json",
+              "week-2025-03-03.json"
+            ],
+            "scores": [
+              0.8062772723949072,
+              0.7949413630177289,
+              0.8014996407066967
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.8062772723949072
+          },
+          {
+            "id": "chess",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-05.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.7810188905805413,
+              0.7776460762113266,
+              0.7807034549344758
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7810188905805413
+          },
+          {
+            "id": "cabin_wifi",
+            "kind": "isolation",
+            "answerable": false,
+            "sources": [
+              "Sleep_Basics.pdf",
+              "week-2026-09-21.json",
+              "week-2025-03-10.json"
+            ],
+            "scores": [
+              0.7658006087639033,
+              0.7495401265169951,
+              0.75710743082056
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7658006087639033
+          }
+        ]
+      },
+      "5": {
+        "summary": {
+          "n": 25,
+          "hit": 0.96,
+          "mrr": 0.81,
+          "precision": 0.272,
+          "complete": 0.22023809523809523,
+          "wrong": 0.5652173913043478,
+          "by_kind": {
+            "fact": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.8333333333333334
+            },
+            "term": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "date": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "latest": {
+              "n": 1,
+              "hit": 0.0,
+              "mrr": 0.0
+            },
+            "paraphrase": {
+              "n": 6,
+              "hit": 1.0,
+              "mrr": 0.7777777777777778
+            },
+            "synthesis": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.5833333333333334
+            },
+            "other_job": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.7777777777777778
+            },
+            "career": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "health": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            }
+          },
+          "top_score_answerable": 0.831040582604542,
+          "top_score_unanswerable": 0.7744712086414256
+        },
+        "cases": [
+          {
+            "id": "ship_week",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "week-2026-09-28.json",
+              "Meal_Prep_Guide.pdf",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.8641539980179656,
+              0.8420087291643565,
+              0.8443352395199808,
+              0.7808310912986838,
+              0.7974683762479604
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8641539980179656
+          },
+          {
+            "id": "manager",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "Resume.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.818268524515066,
+              0.8018387508153317,
+              0.8040191420160094,
+              0.797655739815137,
+              0.8005841780816858
+            ],
+            "hit": true,
+            "coverage": 0.5,
+            "rr": 0.5,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.818268524515066
+          },
+          {
+            "id": "pair_priya",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "week-2026-09-21.json",
+              "week-2026-09-07.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.8055375213124341,
+              0.8060434290278842,
+              0.8006737008764141,
+              0.804208921941826,
+              0.797014747975188
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8060434290278842
+          },
+          {
+            "id": "ticket_id",
+            "kind": "term",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-28.json",
+              "week-2026-09-21.json",
+              "week-2026-09-14.json",
+              "week-2026-10-05.json",
+              "week-2026-10-12.json"
+            ],
+            "scores": [
+              0.8139909532157371,
+              0.8134295801199201,
+              0.8107089943681598,
+              0.8042124179444632,
+              0.8095428662591658
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.8139909532157371
+          },
+          {
+            "id": "incident_id",
+            "kind": "term",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-12.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2025-03-10.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8060493021150048,
+              0.7928112262333666,
+              0.7692052223386974,
+              0.7885052699871062,
+              0.7825026477751361
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8060493021150048
+          },
+          {
+            "id": "prod_date",
+            "kind": "date",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-12.json",
+              "week-2026-09-14.json",
+              "Cover Letter.pdf",
+              "Resume.pdf",
+              "week-2025-03-03.json"
+            ],
+            "scores": [
+              0.8307418287187674,
+              0.7952794588224702,
+              0.7798287690788142,
+              0.7909024832539494,
+              0.7907964992043317
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8307418287187674
+          },
+          {
+            "id": "upgrade_date",
+            "kind": "date",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-10-26.json",
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.7838603256920944,
+              0.7831714411780539,
+              0.7674895470105323,
+              0.7736295570024707,
+              0.743416574608593
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.7838603256920944
+          },
+          {
+            "id": "latest",
+            "kind": "latest",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-05.json",
+              "week-2026-09-07.json",
+              "Meal_Prep_Guide.pdf",
+              "week-2025-03-17.json"
+            ],
+            "scores": [
+              0.8197838575513678,
+              0.8183421390386811,
+              0.8093389220009375,
+              0.765963922982341,
+              0.8174169774334381
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": true,
+            "top_score": 0.8197838575513678
+          },
+          {
+            "id": "database",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-09-14.json",
+              "week-2026-10-26.json",
+              "week-2026-10-12.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.817370394728404,
+              0.7952492009455476,
+              0.8079373580596791,
+              0.8043240920961335,
+              0.7642599610829928
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.817370394728404
+          },
+          {
+            "id": "update_trap",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-12.json",
+              "week-2026-09-28.json",
+              "week-2026-09-21.json",
+              "week-2026-09-14.json",
+              "week-2025-03-03.json"
+            ],
+            "scores": [
+              0.8301403578219138,
+              0.8173796351622714,
+              0.8237733046804085,
+              0.8223751239163165,
+              0.8174805331842989
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6,
+            "wrong": true,
+            "top_score": 0.8301403578219138
+          },
+          {
+            "id": "validate_trap",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-09-14.json",
+              "week-2026-10-26.json",
+              "week-2026-10-12.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.8086752942952753,
+              0.7874644478429422,
+              0.8036400485315109,
+              0.7878830109883481,
+              0.7564871290651879
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.8086752942952753
+          },
+          {
+            "id": "incident",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-12.json",
+              "week-2026-10-05.json",
+              "week-2026-09-14.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.8483155526226065,
+              0.8199653488260175,
+              0.8185476231313533,
+              0.8150443952998154,
+              0.8169037423273646
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8483155526226065
+          },
+          {
+            "id": "mentor",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "Resume.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-19.json",
+              "Cover Letter.pdf",
+              "week-2026-10-05.json"
+            ],
+            "scores": [
+              0.7969255443985941,
+              0.8027472064643391,
+              0.7933668460869928,
+              0.774253832305815,
+              0.7849674482274802
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 0.3333333333333333,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8027472064643391
+          },
+          {
+            "id": "flaky",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-21.json",
+              "week-2026-09-14.json",
+              "week-2026-10-26.json",
+              "Cover Letter.pdf",
+              "week-2025-03-10.json"
+            ],
+            "scores": [
+              0.792191939773765,
+              0.7905253924966558,
+              0.7939052517259251,
+              0.7783182646365914,
+              0.7829002429649496
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 0.3333333333333333,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.7939052517259251
+          },
+          {
+            "id": "progress_nw",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "Meal_Prep_Guide.pdf",
+              "week-2026-10-26.json",
+              "Workout_Recovery_and_Nutrition.pdf"
+            ],
+            "scores": [
+              0.8528427634202238,
+              0.8232498724287565,
+              0.7735678954606796,
+              0.8205954341910959,
+              0.7846948798899032
+            ],
+            "hit": true,
+            "coverage": 0.125,
+            "rr": 0.25,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8528427634202238
+          },
+          {
+            "id": "seven_weeks",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-26.json",
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "week-2026-10-05.json"
+            ],
+            "scores": [
+              0.8601906369082785,
+              0.8484241272777169,
+              0.8563158039883378,
+              0.7836156322362733,
+              0.8472144770347854
+            ],
+            "hit": true,
+            "coverage": 0.2857142857142857,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": true,
+            "top_score": 0.8601906369082785
+          },
+          {
+            "id": "growth",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-10-26.json",
+              "Resume.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8847734203916109,
+              0.8330235952809941,
+              0.8254825216338978,
+              0.8230998346748932,
+              0.8128575193527802
+            ],
+            "hit": true,
+            "coverage": 0.25,
+            "rr": 0.5,
+            "precision": 0.4,
+            "wrong": true,
+            "top_score": 0.8847734203916109
+          },
+          {
+            "id": "harbor_work",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "Beths Letter of Recommendation.pdf",
+              "Cover Letter.pdf",
+              "week-2025-03-10.json",
+              "week-2026-09-14.json",
+              "Meal_Prep_Guide.pdf"
+            ],
+            "scores": [
+              0.8298717703704666,
+              0.8253882630649623,
+              0.8190050238638438,
+              0.8145304773749622,
+              0.7549650489590747
+            ],
+            "hit": true,
+            "coverage": 0.2,
+            "rr": 0.3333333333333333,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8298717703704666
+          },
+          {
+            "id": "harbor_oncall",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-10.json",
+              "Cover Letter.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-09-28.json",
+              "week-2026-10-19.json"
+            ],
+            "scores": [
+              0.8174087717203213,
+              0.811706344200533,
+              0.8162909400451847,
+              0.8101396357316111,
+              0.8201299633665082
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8201299633665082
+          },
+          {
+            "id": "harbor_scheduler",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-17.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2025-03-10.json",
+              "week-2026-10-12.json",
+              "week-2026-09-21.json"
+            ],
+            "scores": [
+              0.7921467657529222,
+              0.7811729030594272,
+              0.7795995806171484,
+              0.7869160830801696,
+              0.785942461028735
+            ],
+            "hit": true,
+            "coverage": 0.6666666666666666,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": true,
+            "top_score": 0.7921467657529222
+          },
+          {
+            "id": "letter_ownership",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-19.json",
+              "Cover Letter.pdf",
+              "week-2026-09-14.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8637586454078309,
+              0.8179016550496263,
+              0.8456820101325966,
+              0.807136175012007,
+              0.8255000645591983
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8637586454078309
+          },
+          {
+            "id": "resume_skills",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Resume.pdf",
+              "Cover Letter.pdf",
+              "week-2026-10-05.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-19.json"
+            ],
+            "scores": [
+              0.8357523764868113,
+              0.80972802559604,
+              0.8015671685770049,
+              0.7980669735223878,
+              0.8018978007374089
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8357523764868113
+          },
+          {
+            "id": "why_northwind",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "week-2026-10-26.json",
+              "Resume.pdf",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.845835909349676,
+              0.7954136665566578,
+              0.780043466019654,
+              0.7776399850239435,
+              0.7716239643686009
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.845835909349676
+          },
+          {
+            "id": "recovery",
+            "kind": "health",
+            "answerable": true,
+            "sources": [
+              "Workout_Recovery_and_Nutrition.pdf",
+              "Meal_Prep_Guide.pdf",
+              "Sleep_Basics.pdf",
+              "week-2026-10-05.json",
+              "week-2026-09-21.json"
+            ],
+            "scores": [
+              0.8567816740872001,
+              0.8012292143708681,
+              0.8003871052226676,
+              0.800665915617324,
+              0.7957960247342426
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8567816740872001
+          },
+          {
+            "id": "meal_prep",
+            "kind": "health",
+            "answerable": true,
+            "sources": [
+              "Meal_Prep_Guide.pdf",
+              "week-2026-09-21.json",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "week-2026-09-14.json",
+              "Sleep_Basics.pdf"
+            ],
+            "scores": [
+              0.8898843630596721,
+              0.7978289132714886,
+              0.8150885605426164,
+              0.7861910151399253,
+              0.7992028908281339
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8898843630596721
+          },
+          {
+            "id": "deductible",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-09-07.json",
+              "Cover Letter.pdf",
+              "Meal_Prep_Guide.pdf",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.766829281561118,
+              0.764666779557281,
+              0.7469029437720174,
+              0.7630059978860679,
+              0.7461636629815711
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.766829281561118
+          },
+          {
+            "id": "capital",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-10-12.json",
+              "week-2025-03-17.json",
+              "Meal_Prep_Guide.pdf",
+              "Resume.pdf"
+            ],
+            "scores": [
+              0.7420334206675301,
+              0.7397963525966404,
+              0.7437593900291359,
+              0.7354920530851299,
+              0.7432217728783842
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7437593900291359
+          },
+          {
+            "id": "tax",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2025-03-10.json",
+              "Cover Letter.pdf",
+              "week-2025-03-03.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8062772723949072,
+              0.7781063732098573,
+              0.8014996407066967,
+              0.7653035232061833,
+              0.8001777125687006
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.8062772723949072
+          },
+          {
+            "id": "chess",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-05.json",
+              "week-2026-09-28.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.7810188905805413,
+              0.7776460762113266,
+              0.777657231832247,
+              0.7571686342399888,
+              0.7807034549344758
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7810188905805413
+          },
+          {
+            "id": "cabin_wifi",
+            "kind": "isolation",
+            "answerable": false,
+            "sources": [
+              "week-2026-09-14.json",
+              "Sleep_Basics.pdf",
+              "Meal_Prep_Guide.pdf",
+              "week-2025-03-10.json",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.752524230306941,
+              0.7658006087639033,
+              0.7346461058186939,
+              0.75710743082056,
+              0.7334281230351412
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7658006087639033
+          }
+        ]
+      }
+    }
+  },
+  "headers": {
+    "app": {
+      "3": {
+        "summary": {
+          "n": 25,
+          "hit": 0.96,
+          "mrr": 0.8466666666666667,
+          "precision": 0.4133333333333333,
+          "complete": 0.13095238095238096,
+          "wrong": 0.30434782608695654,
+          "by_kind": {
+            "fact": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.8333333333333334
+            },
+            "term": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "date": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "latest": {
+              "n": 1,
+              "hit": 0.0,
+              "mrr": 0.0
+            },
+            "paraphrase": {
+              "n": 6,
+              "hit": 1.0,
+              "mrr": 0.9166666666666666
+            },
+            "synthesis": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.38888888888888884
+            },
+            "other_job": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "career": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "health": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            }
+          },
+          "top_score_answerable": 0.829253376511604,
+          "top_score_unanswerable": 0.7758517072985186
+        },
+        "cases": [
+          {
+            "id": "ship_week",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.8644295829823652,
+              0.834585369967212,
+              0.8409284022019475
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8644295829823652
+          },
+          {
+            "id": "manager",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.8167926258511635,
+              0.8038848196716452,
+              0.80297290447037
+            ],
+            "hit": true,
+            "coverage": 0.25,
+            "rr": 0.5,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8167926258511635
+          },
+          {
+            "id": "pair_priya",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.8003977420315653,
+              0.8048032200498408,
+              0.7947720437438652
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8048032200498408
+          },
+          {
+            "id": "ticket_id",
+            "kind": "term",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-28.json",
+              "week-2026-09-21.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8116473629086203,
+              0.8081664420677761,
+              0.8068066222521878
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.8116473629086203
+          },
+          {
+            "id": "incident_id",
+            "kind": "term",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-12.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8067044267015394,
+              0.7951271498385151,
+              0.7842898880865121
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8067044267015394
+          },
+          {
+            "id": "prod_date",
+            "kind": "date",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-12.json",
+              "week-2026-09-14.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8364520537096238,
+              0.7919604764867908,
+              0.7881843830191999
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8364520537096238
+          },
+          {
+            "id": "upgrade_date",
+            "kind": "date",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-26.json",
+              "week-2026-10-05.json",
+              "week-2026-10-12.json"
+            ],
+            "scores": [
+              0.7942324427021912,
+              0.7818583385629221,
+              0.7737043172226925
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.7942324427021912
+          },
+          {
+            "id": "latest",
+            "kind": "latest",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-09-07.json",
+              "week-2025-03-10.json"
+            ],
+            "scores": [
+              0.8184609673121859,
+              0.8049385623522032,
+              0.8167608088932188
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": true,
+            "top_score": 0.8184609673121859
+          },
+          {
+            "id": "database",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-10-26.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8189495332848721,
+              0.8201293168152737,
+              0.796865570582481
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.8201293168152737
+          },
+          {
+            "id": "update_trap",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-12.json",
+              "week-2026-09-28.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8193294520705653,
+              0.8065303651434481,
+              0.8078529854560368
+            ],
+            "hit": true,
+            "coverage": 0.6666666666666666,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.8193294520705653
+          },
+          {
+            "id": "validate_trap",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-26.json",
+              "week-2026-10-05.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8205553583275316,
+              0.8127504231460703,
+              0.7912282082433909
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.8205553583275316
+          },
+          {
+            "id": "incident",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-12.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8380743938665681,
+              0.8154739691874033,
+              0.8071369336673422
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8380743938665681
+          },
+          {
+            "id": "mentor",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-19.json",
+              "Resume.pdf"
+            ],
+            "scores": [
+              0.7965394538937045,
+              0.7927089549436976,
+              0.7893593715625709
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 0.5,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.7965394538937045
+          },
+          {
+            "id": "flaky",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-26.json",
+              "week-2026-09-14.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.798066511787825,
+              0.7900581978013992,
+              0.7932132168416552
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.798066511787825
+          },
+          {
+            "id": "progress_nw",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8459149852465866,
+              0.8215792984759478,
+              0.7973242138391086
+            ],
+            "hit": true,
+            "coverage": 0.125,
+            "rr": 0.3333333333333333,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8459149852465866
+          },
+          {
+            "id": "seven_weeks",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-07.json",
+              "Cover Letter.pdf",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8509337955323626,
+              0.8488942518553884,
+              0.8492565867532202
+            ],
+            "hit": true,
+            "coverage": 0.14285714285714285,
+            "rr": 0.3333333333333333,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8509337955323626
+          },
+          {
+            "id": "growth",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-10-26.json",
+              "Resume.pdf"
+            ],
+            "scores": [
+              0.8639917783964947,
+              0.8250789803793512,
+              0.8156948420203507
+            ],
+            "hit": true,
+            "coverage": 0.125,
+            "rr": 0.5,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8639917783964947
+          },
+          {
+            "id": "harbor_work",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-10.json",
+              "week-2025-03-03.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.8213348418345192,
+              0.8215174674445103,
+              0.8178252748197095
+            ],
+            "hit": true,
+            "coverage": 0.4,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": false,
+            "top_score": 0.8215174674445103
+          },
+          {
+            "id": "harbor_oncall",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-10.json",
+              "Cover Letter.pdf",
+              "week-2025-03-03.json"
+            ],
+            "scores": [
+              0.8159909516451076,
+              0.8049526464584382,
+              0.8087404824351463
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8159909516451076
+          },
+          {
+            "id": "harbor_scheduler",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-17.json",
+              "week-2025-03-10.json",
+              "week-2026-10-12.json"
+            ],
+            "scores": [
+              0.7933077639579955,
+              0.7848665272924568,
+              0.7864088081210433
+            ],
+            "hit": true,
+            "coverage": 0.6666666666666666,
+            "rr": 1.0,
+            "precision": 0.6666666666666666,
+            "wrong": true,
+            "top_score": 0.7933077639579955
+          },
+          {
+            "id": "letter_ownership",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-09-14.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.8605304910747551,
+              0.7966735861684161,
+              0.8400887599354316
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8605304910747551
+          },
+          {
+            "id": "resume_skills",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Resume.pdf",
+              "Cover Letter.pdf",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.8536414642408885,
+              0.8152311240658587,
+              0.8029197262549886
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8536414642408885
+          },
+          {
+            "id": "why_northwind",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8287924160747322,
+              0.7932335162418986,
+              0.7760013195664746
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": false,
+            "top_score": 0.8287924160747322
+          },
+          {
+            "id": "recovery",
+            "kind": "health",
+            "answerable": true,
+            "sources": [
+              "Workout_Recovery_and_Nutrition.pdf",
+              "Meal_Prep_Guide.pdf",
+              "week-2026-09-21.json"
+            ],
+            "scores": [
+              0.8697378375576306,
+              0.8063821016866378,
+              0.7991689195184599
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8697378375576306
+          },
+          {
+            "id": "meal_prep",
+            "kind": "health",
+            "answerable": true,
+            "sources": [
+              "Meal_Prep_Guide.pdf",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8807582926400379,
+              0.8253426353576498,
+              0.784202618753077
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.3333333333333333,
+            "wrong": true,
+            "top_score": 0.8807582926400379
+          },
+          {
+            "id": "deductible",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-09-07.json",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "Meal_Prep_Guide.pdf"
+            ],
+            "scores": [
+              0.7643271285478177,
+              0.7685826388446901,
+              0.7582047816875298
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7685826388446901
+          },
+          {
+            "id": "capital",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2025-03-17.json",
+              "week-2026-09-14.json",
+              "week-2025-03-24.json"
+            ],
+            "scores": [
+              0.7502342245760352,
+              0.7385805344752089,
+              0.7493691433067678
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7502342245760352
+          },
+          {
+            "id": "tax",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "Resume.pdf",
+              "week-2026-09-21.json",
+              "week-2025-03-10.json"
+            ],
+            "scores": [
+              0.8060249938221755,
+              0.7935685772499075,
+              0.8037406763951327
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.8060249938221755
+          },
+          {
+            "id": "chess",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2025-03-24.json",
+              "week-2026-10-05.json",
+              "week-2025-03-10.json"
+            ],
+            "scores": [
+              0.7785649719511736,
+              0.7699748603282078,
+              0.7761992707516043
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7785649719511736
+          },
+          {
+            "id": "cabin_wifi",
+            "kind": "isolation",
+            "answerable": false,
+            "sources": [
+              "week-2025-03-03.json",
+              "week-2026-10-12.json",
+              "week-2025-03-17.json"
+            ],
+            "scores": [
+              0.7688800069608543,
+              0.7560911688926784,
+              0.7658338996189498
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7688800069608543
+          }
+        ]
+      },
+      "5": {
+        "summary": {
+          "n": 25,
+          "hit": 0.96,
+          "mrr": 0.8366666666666667,
+          "precision": 0.29600000000000004,
+          "complete": 0.21428571428571427,
+          "wrong": 0.5217391304347826,
+          "by_kind": {
+            "fact": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.8333333333333334
+            },
+            "term": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "date": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "latest": {
+              "n": 1,
+              "hit": 0.0,
+              "mrr": 0.0
+            },
+            "paraphrase": {
+              "n": 6,
+              "hit": 1.0,
+              "mrr": 0.8888888888888888
+            },
+            "synthesis": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 0.3611111111111111
+            },
+            "other_job": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "career": {
+              "n": 3,
+              "hit": 1.0,
+              "mrr": 1.0
+            },
+            "health": {
+              "n": 2,
+              "hit": 1.0,
+              "mrr": 1.0
+            }
+          },
+          "top_score_answerable": 0.829253376511604,
+          "top_score_unanswerable": 0.7758517072985186
+        },
+        "cases": [
+          {
+            "id": "ship_week",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "week-2026-09-28.json",
+              "Meal_Prep_Guide.pdf",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.8644295829823652,
+              0.834585369967212,
+              0.8409284022019475,
+              0.7747711738848866,
+              0.7948395007894671
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8644295829823652
+          },
+          {
+            "id": "manager",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-26.json",
+              "Resume.pdf"
+            ],
+            "scores": [
+              0.8167926258511635,
+              0.8038848196716452,
+              0.80297290447037,
+              0.796225622213293,
+              0.7958494131555656
+            ],
+            "hit": true,
+            "coverage": 0.5,
+            "rr": 0.5,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.8167926258511635
+          },
+          {
+            "id": "pair_priya",
+            "kind": "fact",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "week-2026-09-28.json",
+              "week-2026-09-07.json",
+              "week-2026-09-21.json"
+            ],
+            "scores": [
+              0.8003977420315653,
+              0.8048032200498408,
+              0.7947720437438652,
+              0.7990227452657637,
+              0.7901684096298933
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8048032200498408
+          },
+          {
+            "id": "ticket_id",
+            "kind": "term",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-28.json",
+              "week-2026-09-21.json",
+              "week-2026-09-14.json",
+              "week-2026-10-05.json",
+              "week-2026-10-12.json"
+            ],
+            "scores": [
+              0.8116473629086203,
+              0.8081664420677761,
+              0.8068066222521878,
+              0.7978682262299177,
+              0.8043569921454315
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.8116473629086203
+          },
+          {
+            "id": "incident_id",
+            "kind": "term",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-12.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-09-14.json",
+              "week-2026-10-26.json"
+            ],
+            "scores": [
+              0.8067044267015394,
+              0.7951271498385151,
+              0.7708222918287349,
+              0.7917736752152318,
+              0.7842898880865121
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8067044267015394
+          },
+          {
+            "id": "prod_date",
+            "kind": "date",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-12.json",
+              "week-2026-09-14.json",
+              "Cover Letter.pdf",
+              "week-2026-10-26.json",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.8364520537096238,
+              0.7919604764867908,
+              0.772256258166921,
+              0.7881843830191999,
+              0.787458094851945
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8364520537096238
+          },
+          {
+            "id": "upgrade_date",
+            "kind": "date",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-26.json",
+              "week-2026-10-05.json",
+              "week-2025-03-03.json",
+              "week-2026-09-14.json",
+              "week-2026-10-12.json"
+            ],
+            "scores": [
+              0.7942324427021912,
+              0.7818583385629221,
+              0.7718489267298154,
+              0.7678689634923777,
+              0.7737043172226925
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": true,
+            "top_score": 0.7942324427021912
+          },
+          {
+            "id": "latest",
+            "kind": "latest",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-14.json",
+              "week-2026-10-05.json",
+              "week-2026-09-07.json",
+              "week-2025-03-10.json",
+              "Meal_Prep_Guide.pdf"
+            ],
+            "scores": [
+              0.8184609673121859,
+              0.8145633084291721,
+              0.8049385623522032,
+              0.8167608088932188,
+              0.7723418654496667
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": true,
+            "top_score": 0.8184609673121859
+          },
+          {
+            "id": "database",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2026-10-26.json",
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.8189495332848721,
+              0.8201293168152737,
+              0.796865570582481,
+              0.8103939192134371,
+              0.7648352688169122
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.8201293168152737
+          },
+          {
+            "id": "update_trap",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-12.json",
+              "week-2026-09-28.json",
+              "week-2026-09-14.json",
+              "week-2026-09-21.json",
+              "week-2025-03-03.json"
+            ],
+            "scores": [
+              0.8193294520705653,
+              0.8065303651434481,
+              0.8078529854560368,
+              0.8049356538298789,
+              0.8029641061653587
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6,
+            "wrong": true,
+            "top_score": 0.8193294520705653
+          },
+          {
+            "id": "validate_trap",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-26.json",
+              "week-2026-10-05.json",
+              "week-2026-09-14.json",
+              "week-2026-10-12.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.8205553583275316,
+              0.8127504231460703,
+              0.7912282082433909,
+              0.7919589724294325,
+              0.7555096959307107
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.4,
+            "wrong": false,
+            "top_score": 0.8205553583275316
+          },
+          {
+            "id": "incident",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "week-2026-10-12.json",
+              "week-2026-10-05.json",
+              "week-2026-09-14.json",
+              "week-2025-03-10.json"
+            ],
+            "scores": [
+              0.8380743938665681,
+              0.8154739691874033,
+              0.8089696743750906,
+              0.8071369336673422,
+              0.8149149424411521
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8380743938665681
+          },
+          {
+            "id": "mentor",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-10-19.json",
+              "Beths Letter of Recommendation.pdf",
+              "Resume.pdf",
+              "week-2025-03-17.json",
+              "Cover Letter.pdf"
+            ],
+            "scores": [
+              0.7927089549436976,
+              0.7965394538937045,
+              0.7893593715625709,
+              0.7843460550845365,
+              0.7727321292975691
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.7965394538937045
+          },
+          {
+            "id": "flaky",
+            "kind": "paraphrase",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-21.json",
+              "week-2026-09-14.json",
+              "week-2026-10-26.json",
+              "Cover Letter.pdf",
+              "week-2026-09-28.json"
+            ],
+            "scores": [
+              0.789378939721165,
+              0.7900581978013992,
+              0.798066511787825,
+              0.7700736433418734,
+              0.7932132168416552
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 0.3333333333333333,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.798066511787825
+          },
+          {
+            "id": "progress_nw",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "Meal_Prep_Guide.pdf",
+              "week-2026-10-26.json",
+              "Workout_Recovery_and_Nutrition.pdf"
+            ],
+            "scores": [
+              0.8459149852465866,
+              0.8215792984759478,
+              0.7719704275688255,
+              0.8133796741991346,
+              0.7887640299501573
+            ],
+            "hit": true,
+            "coverage": 0.125,
+            "rr": 0.25,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8459149852465866
+          },
+          {
+            "id": "seven_weeks",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "week-2026-09-07.json",
+              "Cover Letter.pdf",
+              "week-2026-10-26.json",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "week-2025-03-10.json"
+            ],
+            "scores": [
+              0.8509337955323626,
+              0.8488942518553884,
+              0.8492565867532202,
+              0.7940042613706126,
+              0.8424052500021167
+            ],
+            "hit": true,
+            "coverage": 0.14285714285714285,
+            "rr": 0.3333333333333333,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8509337955323626
+          },
+          {
+            "id": "growth",
+            "kind": "synthesis",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-10-26.json",
+              "Resume.pdf",
+              "week-2026-09-07.json",
+              "week-2026-09-14.json"
+            ],
+            "scores": [
+              0.8639917783964947,
+              0.8250789803793512,
+              0.8156948420203507,
+              0.8129362505212567,
+              0.8074988067327675
+            ],
+            "hit": true,
+            "coverage": 0.375,
+            "rr": 0.5,
+            "precision": 0.6,
+            "wrong": true,
+            "top_score": 0.8639917783964947
+          },
+          {
+            "id": "harbor_work",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-10.json",
+              "Cover Letter.pdf",
+              "week-2025-03-03.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2025-03-24.json"
+            ],
+            "scores": [
+              0.8213348418345192,
+              0.8178252748197095,
+              0.8215174674445103,
+              0.8049777085283196,
+              0.8195889647999314
+            ],
+            "hit": true,
+            "coverage": 0.6,
+            "rr": 1.0,
+            "precision": 0.6,
+            "wrong": false,
+            "top_score": 0.8215174674445103
+          },
+          {
+            "id": "harbor_oncall",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-10.json",
+              "Cover Letter.pdf",
+              "week-2025-03-03.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2026-10-19.json"
+            ],
+            "scores": [
+              0.8159909516451076,
+              0.8049526464584382,
+              0.8087404824351463,
+              0.7969777776501042,
+              0.8034380676118852
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8159909516451076
+          },
+          {
+            "id": "harbor_scheduler",
+            "kind": "other_job",
+            "answerable": true,
+            "sources": [
+              "week-2025-03-17.json",
+              "week-2025-03-10.json",
+              "week-2026-10-12.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2025-03-24.json"
+            ],
+            "scores": [
+              0.7933077639579955,
+              0.7848665272924568,
+              0.7864088081210433,
+              0.7692371918523655,
+              0.7838892736645964
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.6,
+            "wrong": true,
+            "top_score": 0.7933077639579955
+          },
+          {
+            "id": "letter_ownership",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Beths Letter of Recommendation.pdf",
+              "Cover Letter.pdf",
+              "week-2026-10-19.json",
+              "week-2026-09-14.json",
+              "Resume.pdf"
+            ],
+            "scores": [
+              0.8605304910747551,
+              0.8400887599354316,
+              0.8042492937286142,
+              0.7966735861684161,
+              0.8145319256323376
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8605304910747551
+          },
+          {
+            "id": "resume_skills",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Resume.pdf",
+              "Cover Letter.pdf",
+              "Beths Letter of Recommendation.pdf",
+              "week-2025-03-10.json",
+              "Meal_Prep_Guide.pdf"
+            ],
+            "scores": [
+              0.8536414642408885,
+              0.8152311240658587,
+              0.8029197262549886,
+              0.797158962202906,
+              0.7688943958584918
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8536414642408885
+          },
+          {
+            "id": "why_northwind",
+            "kind": "career",
+            "answerable": true,
+            "sources": [
+              "Cover Letter.pdf",
+              "week-2026-09-07.json",
+              "week-2026-10-26.json",
+              "Resume.pdf",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.8287924160747322,
+              0.7932335162418986,
+              0.7760013195664746,
+              0.7726599761877496,
+              0.7701635310754427
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": false,
+            "top_score": 0.8287924160747322
+          },
+          {
+            "id": "recovery",
+            "kind": "health",
+            "answerable": true,
+            "sources": [
+              "Workout_Recovery_and_Nutrition.pdf",
+              "Meal_Prep_Guide.pdf",
+              "week-2026-09-21.json",
+              "week-2026-10-05.json",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.8697378375576306,
+              0.8063821016866378,
+              0.7991689195184599,
+              0.799114106452831,
+              0.7500138535994626
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8697378375576306
+          },
+          {
+            "id": "meal_prep",
+            "kind": "health",
+            "answerable": true,
+            "sources": [
+              "Meal_Prep_Guide.pdf",
+              "week-2026-09-21.json",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "week-2026-09-14.json",
+              "week-2025-03-17.json"
+            ],
+            "scores": [
+              0.8807582926400379,
+              0.7947362908251028,
+              0.8253426353576498,
+              0.784202618753077,
+              0.7950645768320055
+            ],
+            "hit": true,
+            "coverage": 1.0,
+            "rr": 1.0,
+            "precision": 0.2,
+            "wrong": true,
+            "top_score": 0.8807582926400379
+          },
+          {
+            "id": "deductible",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-09-07.json",
+              "Cover Letter.pdf",
+              "Workout_Recovery_and_Nutrition.pdf",
+              "Meal_Prep_Guide.pdf",
+              "week-2025-03-03.json"
+            ],
+            "scores": [
+              0.7643271285478177,
+              0.758834705667385,
+              0.7685826388446901,
+              0.7582047816875298,
+              0.7602820959235476
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7685826388446901
+          },
+          {
+            "id": "capital",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2026-10-05.json",
+              "week-2025-03-17.json",
+              "Meal_Prep_Guide.pdf",
+              "week-2025-03-24.json",
+              "Beths Letter of Recommendation.pdf"
+            ],
+            "scores": [
+              0.743982258501654,
+              0.7502342245760352,
+              0.7344947536862272,
+              0.7493691433067678,
+              0.7353852108631153
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7502342245760352
+          },
+          {
+            "id": "tax",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "Resume.pdf",
+              "Cover Letter.pdf",
+              "week-2025-03-10.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2025-03-03.json"
+            ],
+            "scores": [
+              0.8060249938221755,
+              0.7873410277641404,
+              0.8037406763951327,
+              0.7750549594374013,
+              0.8033908553029419
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.8060249938221755
+          },
+          {
+            "id": "chess",
+            "kind": "unanswerable",
+            "answerable": false,
+            "sources": [
+              "week-2025-03-24.json",
+              "Beths Letter of Recommendation.pdf",
+              "week-2025-03-10.json",
+              "Meal_Prep_Guide.pdf",
+              "week-2025-03-03.json"
+            ],
+            "scores": [
+              0.7785649719511736,
+              0.7554742007800203,
+              0.7761992707516043,
+              0.7485340565136029,
+              0.7750349869876574
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7785649719511736
+          },
+          {
+            "id": "cabin_wifi",
+            "kind": "isolation",
+            "answerable": false,
+            "sources": [
+              "week-2025-03-03.json",
+              "Meal_Prep_Guide.pdf",
+              "week-2025-03-17.json",
+              "Beths Letter of Recommendation.pdf",
+              "Sleep_Basics.pdf"
+            ],
+            "scores": [
+              0.7688800069608543,
+              0.748785040784517,
+              0.7658338996189498,
+              0.7419424350398329,
+              0.7631434071807479
+            ],
+            "hit": false,
+            "coverage": 0.0,
+            "rr": 0.0,
+            "precision": 0.0,
+            "wrong": false,
+            "top_score": 0.7688800069608543
+          }
+        ]
+      }
+    }
+  }
+}

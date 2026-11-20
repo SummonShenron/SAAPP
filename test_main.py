@@ -351,17 +351,22 @@ class TestGraphState(unittest.TestCase):
         stream_llm.astream.assert_not_called()
         saved.assert_not_called()
 
+    # The keyword router is the older "auto" setting (SEARCH_STRATEGY=auto); hybrid is the default now (backend/tests/test_search.py).
     def test_detect_strategy_lexical(self):
-        assert _detect_routing_strategy("latest release date") == "lexical"
+        with patch.dict(os.environ, {"SEARCH_STRATEGY": "auto"}):
+            assert _detect_routing_strategy("latest release date") == "lexical"
 
     def test_detect_strategy_hybrid(self):
-        assert _detect_routing_strategy("compare sonic vs shadow") == "hybrid"
+        with patch.dict(os.environ, {"SEARCH_STRATEGY": "auto"}):
+            assert _detect_routing_strategy("compare sonic vs shadow") == "hybrid"
 
     def test_detect_strategy_hybrid_long_query(self):
-        assert _detect_routing_strategy("Who is Sonic and how does his relationship with Shadow progress the narrative in Sonic Adventure 2?") == "hybrid"
+        with patch.dict(os.environ, {"SEARCH_STRATEGY": "auto"}):
+            assert _detect_routing_strategy("Who is Sonic and how does his relationship with Shadow progress the narrative in Sonic Adventure 2?") == "hybrid"
 
     def test_detect_strategy_vector(self):
-        assert _detect_routing_strategy("tell me about sonic") == "vector"
+        with patch.dict(os.environ, {"SEARCH_STRATEGY": "auto"}):
+            assert _detect_routing_strategy("tell me about sonic") == "vector"
 
 
 
