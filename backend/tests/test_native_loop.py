@@ -620,8 +620,17 @@ def test_with_a_folder_connected_the_prompt_says_the_files_can_be_changed_and_no
     assert "CAN change the person's files" in messages[0].content and "save_draft" not in [t["name"] for t in tools]
     assert "WHERE YOU ARE READING FROM" in messages[1].content and "LOCAL WORKSPACE" in messages[1].content
     plain = ToolLLM(answers("done"))
-    go(plain, tools=TOOLS, environment_note="ignored without the edit tool")
-    assert "CAN change the person's files" not in plain.calls[0][0][0].content and "WHERE YOU ARE" not in plain.calls[0][0][1].content
+    go(plain, tools=TOOLS, environment_note="where reads come from, and what was already read")
+    assert "CAN change the person's files" not in plain.calls[0][0][0].content, "no edit tool, no edit rules"
+    # A turn that only READS the repo still gets the note (2026-11-20): it carries what this conversation already read, its summary and working notes, and was left out of every plain question,
+    # which is where the repeated reads happened (52% of reads were repeats).
+    assert "WHERE YOU ARE READING FROM" in plain.calls[0][0][1].content and "what was already read" in plain.calls[0][0][1].content
+
+
+def test_a_turn_with_no_repo_tool_does_not_pay_for_the_environment_note():
+    web_only = ToolLLM(answers("done"))
+    go(web_only, tools=[{"name": "web_search", "description": "search the web"}], environment_note="repo=x, LOCAL WORKSPACE: reads come from the folder")
+    assert "WHERE YOU ARE" not in web_only.calls[0][0][1].content and "LOCAL WORKSPACE" not in web_only.calls[0][0][1].content
 
 
 def test_an_answer_without_a_proposal_on_a_change_request_is_sent_back_and_the_proposal_then_goes_through_the_shared_dispatcher():

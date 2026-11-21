@@ -37,7 +37,8 @@ def test_every_knowledge_endpoint_is_behind_the_global_admin_check():
     source = open("app.py", encoding="utf-8").read()
     for route in ('@app.get("/api/admin/knowledge")', '@app.post("/api/admin/knowledge/{key}/approve")', '@app.post("/api/admin/knowledge/{key}/reject")', '@app.post("/api/admin/knowledge/{key}/remove")'):
         start = source.index(route)
-        assert "Depends(require_global_admin)" in source[start:source.index("\n\n", start)], route
+        end = source.find("\n\n", start)
+        assert "Depends(require_global_admin)" in source[start:end if end != -1 else len(source)], route
 
 
 def test_the_view_lists_what_waits_and_what_is_live(db):

@@ -165,9 +165,9 @@ def test_the_gpt_reply_and_the_gpt_tool_loop_are_separate_models_with_their_own_
 # ---- the app ------------------------------------------------------------------------------------------------------------
 
 def test_the_app_has_signed_in_endpoints_for_the_base_model_and_offers_gpt_only_when_it_can():
-    for route in ('@app.get("/api/settings/reply-model")', '@app.put("/api/settings/reply-model")'):
+    for route, dependency in (('@app.get("/api/settings/reply-model")', "Depends(get_current_user)"), ('@app.put("/api/settings/reply-model")', "Depends(get_member_user)")):
         start = APP.index(route)
-        assert "Depends(get_current_user)" in APP[start: start + 260], route
+        assert dependency in APP[start: start + 260], route
     assert "reply_model_view(username, openai_available(), lite_reply_available(), haiku_reply_available())" in APP
     assert "save_reply_model_choice(username, payload.reply_model, openai_available(), lite_reply_available(), haiku_reply_available())" in APP
     assert "save_tool_model_choice(username, payload.tool_model, claude_available(), sonnet_available(), openai_available())" in APP

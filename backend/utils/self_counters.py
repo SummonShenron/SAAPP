@@ -173,6 +173,16 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   # ceiling had eased or they were still low. Counts only.
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
 _PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + VERIFY_KEYS + ADVISOR_KEYS + REASONER_KEYS + SUBSTANCE_KEYS + RUNNER_FILES_KEYS + PATTERN_KEYS + STEPS_KEYS + PROACTIVE_KEYS
+# A model provider refusing Sonic's API key, and accepting it again (backend/utils/provider_health.py). Counted at most once a minute while it lasts: minutes with a refusal, not calls.
+PROVIDER_KEYS = ("llm_key_rejected_claude", "llm_key_rejected_openai", "llm_key_recovered_claude", "llm_key_recovered_openai")
+_PLAIN_KEYS = _PLAIN_KEYS + PROVIDER_KEYS
+# Turns where the person had said the conversation is about a project outside the connected repo, so the repo tools were switched off (backend/utils/repo_scope.py). Counts only.
+REPO_SCOPE_KEYS = ("repo_scope_outside_turns",)
+# Commit, push and pull request on ONE runner card (backend/utils/pr_followup.py): cards shown with a pull request on them, pull requests opened after the push, and ones that could not be (the push worked). Counts only.
+COMMIT_PR_KEYS = ("commit_pr_one_card_shown", "commit_pr_one_card_opened", "commit_pr_one_card_failed")
+# Command lines Sonic put on a runner card, by program family (git, a text search, a look at files, the project's tools, other), by class (read, run, change) and `git grep` (backend/utils/cli_use.py). Counts only.
+CLI_KEYS = ("cli_prog_git", "cli_prog_search", "cli_prog_look", "cli_prog_tool", "cli_prog_other", "cli_git_grep", "cli_class_read", "cli_class_run", "cli_class_change")
+_PLAIN_KEYS = _PLAIN_KEYS + REPO_SCOPE_KEYS + COMMIT_PR_KEYS + CLI_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

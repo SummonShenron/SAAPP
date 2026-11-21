@@ -204,6 +204,6 @@ def test_the_edit_endpoint_needs_a_signed_in_user_returns_no_embedding_and_maps_
     source = open("app.py", encoding="utf-8").read()
     start = source.index('@app.put("/api/memory/{fact_id}")')
     endpoint = source[start:source.index('@app.delete("/api/memory/{fact_id}/links/{other_id}")')]
-    assert "Depends(get_current_user)" in endpoint and "edit_user_fact" in endpoint and "asyncio.to_thread" in endpoint
+    assert "Depends(get_member_user)" in endpoint and "edit_user_fact" in endpoint and "asyncio.to_thread" in endpoint
     assert "except FactEditError" in endpoint and "status_code=400" in endpoint and "status_code=404" in endpoint
     assert "fact_for_state(edited)" in endpoint and "linked_fact_summaries(edited, by_id)" in endpoint and "embedding" not in endpoint.replace("fact_for_state", "")

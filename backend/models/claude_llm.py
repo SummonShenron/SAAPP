@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from backend.utils import llm_usage
+from backend.utils import llm_usage, provider_health
 
 logger = logging.getLogger("SASS Logger")
 
@@ -151,6 +151,7 @@ class ClaudeLLM:
         return _messages(prompt)
 
     def _metered(self, response: Any, label: str) -> Any:
+        provider_health.note_ok("claude")          # a call that went through: a key that was refused is accepted again
         try:
             llm_usage.record(llm_usage.served_by(response, self.model_name), label, llm_usage.usage_of(response))
         except Exception:
@@ -158,6 +159,7 @@ class ClaudeLLM:
         return response
 
     def _gave_up(self, error: Exception) -> None:
+        provider_health.note_failure("claude", error)          # a refused key (401/403) is logged loudly, counted and shown to an admin (backend/utils/provider_health.py)
         # Only the kind of failure is logged, never its message: an API error can quote what was sent.
         logger.warning("[claude] %s failed (%s); using the fallback model.", self.model_name, type(error).__name__)
 
@@ -199,11 +201,14 @@ class ClaudeLLM:
                 async for chunk in self._client().astream(self._to_messages(prompt), *args, **kwargs):
                     llm_usage.add_into(streamed, llm_usage.usage_of(chunk))
                     answered_by = llm_usage.served_by(chunk, answered_by)
+                    if not started:
+                        provider_health.note_ok("claude")          # the first words arrived: the key is accepted
                     started = True
                     yield chunk
                 return
             except Exception as error:
                 if started or self.fallback is None:
+                    provider_health.note_failure("claude", error)          # nothing to fall back to, so _gave_up is not called: a refused key must still be noticed
                     raise
                 self._gave_up(error)
             finally:

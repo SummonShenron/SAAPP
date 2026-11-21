@@ -487,10 +487,15 @@ def test_creating_a_pull_request_uses_the_requesting_users_own_token(db, monkeyp
         sent.append(headers["Authorization"])
         return _Resp(201, {"number": 2, "html_url": "https://github.com/x/y/pull/2"})
 
+    def fake_put(url, headers=None, json=None, timeout=None):          # a created PR is merged straight away, with the same person's token: that second call is faked too
+        sent.append(headers["Authorization"])
+        return _Resp(200, {})
+
     monkeypatch.setattr(aw.requests, "post", fake_post)
+    monkeypatch.setattr(aw.requests, "put", fake_put)
     aw._execute_create_pr("alice", {"repo": "x/y", "title": "t", "body": "b", "head_branch": "feat", "base_branch": "main"})
 
-    assert sent == [f"Bearer {ALICE_TOKEN}"]
+    assert sent == [f"Bearer {ALICE_TOKEN}", f"Bearer {ALICE_TOKEN}"]
 
 
 def test_the_branch_diff_uses_the_token_it_is_given_and_only_falls_back_to_the_env_var(monkeypatch):

@@ -6,7 +6,7 @@ import re
 import threading
 import uuid
 import json
-from typing import List, Any, Dict, Optional
+from typing import List, Any, Dict, Optional, Tuple
 import logging
 import requests
 import erragent
@@ -118,7 +118,7 @@ from backend.services import image_gen, knowledge_cards, library_search, native_
 from backend.utils import handback_check, kb_candidates, knowledge_base
 from backend.services import native_tools as native_tools_module
 from backend.utils import loop_rhythm
-from backend.utils import diff_review, lesson_proposals, library_questions, place_questions, project_guidance
+from backend.utils import diff_review, lesson_proposals, library_questions, place_questions, project_guidance, repo_scope
 from backend.services import maps_tools
 from backend.utils import code_plan, budget_guard, date_resolve, llm_turns, memory_grounding, progress_notes, orientation, reading_shelf, routines, runner_commands, runner_jobs, self_report, targeted_read
 from backend.services.repo_checkout import (
@@ -201,6 +201,27 @@ _REPO_SOURCE_TOOLS = frozenset({
     "diff_branches", "list_commits", "list_pull_requests", "propose_local_edits", "run_repo_tests", "run_snippet",
 })
 
+# Taken off the menu when the person has said the conversation is about a project OUTSIDE the connected repo (backend/utils/repo_scope.py): everything that reads, searches, changes or commits to that repo. The
+# page tools, the web, the library, memory and the local runner stay.
+_REPO_ONLY_TOOLS = frozenset({
+    "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol", "search_literal", "diff_branches", "list_commits", "list_pull_requests",
+    "propose_local_edits", "run_repo_tests", "propose_commit", "propose_git_commit", "propose_merge", "check_deploy_status",
+})
+
+
+def _outside_repo(state: Dict[str, Any]) -> bool:
+    """Whether the person has said this conversation is about a project outside the connected repo and has not brought the repo back (backend/utils/repo_scope.py). A message that names a GitHub repo
+    to read brings it back. Decided from the saved messages, in code. Never raises."""
+    try:
+        messages = state.get("messages") or []
+        if not messages or not repo_scope.outside_repo(messages):
+            return False
+        latest = getattr(messages[-1], "content", "") or ""
+        return not (isinstance(latest, str) and extract_github_repo(latest, fallback=None))
+    except Exception:
+        return False
+
+
 # Tools whose results are text written by someone else (web pages, email, shared documents, the person's library, app logs). Once one has been used in a turn, propose_commit is refused
 # in that turn: an instruction hidden in that text must not be able to lead to a commit. The person can ask again in the next message.
 _UNTRUSTED_CONTENT_TOOLS = frozenset({
@@ -214,6 +235,9 @@ _UNTRUSTED_CONTENT_TOOLS = frozenset({
     "mcp__maps__find_places",    # Google's summary of places quotes reviews written by other people
     "mcp__maps__travel_times",
 })
+# Of those, what is written by OTHER people (web, email, shared documents, the library, shared logs). A pull request is not opened in a message that read any of it (propose_git_commit with open_pull_request),
+# while the person's own machine does not count: the normal flow is a look at git status first, then the commit, push and pull request.
+_THIRD_PARTY_TEXT_TOOLS = _UNTRUSTED_CONTENT_TOOLS - {"run_local_check", "run_local_command", "start_local_server", "look_at_local_page"}
 
 # A real production trace showed a "final" confidently and repeatedly denying browser access
 # ("I don't actually have a live browser tool...") while browser_navigate sat in that exact
@@ -1110,8 +1134,24 @@ async def reasoner_node(state: GraphState) -> GraphState:
             "needs_update_calendar_event", "needs_calendar_lookup", "needs_gmail_lookup",
             "needs_drive_lookup", "needs_send_email", "needs_pr_summary",
         )
+        # The person said this is about a project outside the connected repo (backend/utils/repo_scope.py): the repo flag is cleared (the reasoner's own rules send any code-like message and any short
+        # follow-up to a coding turn to the repo tools), and the edit backstop below does not run. Other flags (web search, a PR the person named) stand.
+        outside_repo = _outside_repo(state)
+        if outside_repo and isinstance(flags, dict):
+            if flags.get("needs_github_search"):
+                flags["needs_github_search"] = False
+                if not any(flags.get(k) for k in ("needs_web_search", "needs_code_interpreter", "needs_retrieval", "needs_memory_save", "needs_memory_recall", *_other_action_flags)):
+                    flags["needs_conversation"] = True
+            logger.info("[Reasoner] The person said this is outside the connected repo — repo tools are off for this turn.")
+            try:
+                from backend.utils.self_counters import record_turn_counts
+
+                await asyncio.to_thread(record_turn_counts, {"repo_scope_outside_turns": 1})
+            except Exception:
+                logger.warning("[Reasoner] could not record the repo-scope count.")
         if (
-            isinstance(flags, dict)
+            not outside_repo
+            and isinstance(flags, dict)
             and not flags.get("needs_github_search")
             and not any(flags.get(k) for k in _other_action_flags)
             and workspace_status(_workspace_user(state))["connected"]
@@ -2101,6 +2141,10 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         local_workspace_handle = get_workspace_handle(workspace_user)
         # The demo needs no folder in the browser: its diff card has no Apply, only the sign-up button.
         can_apply_here = local_workspace_handle is not None and (demo_turn or state.get("folder_in_browser", True) is not False)
+        # The person said this conversation is about a project outside the connected repo (backend/utils/repo_scope.py): no folder edits, plans or reads this turn, and the menu below loses its repo tools.
+        outside_repo = _outside_repo(state)
+        if outside_repo:
+            can_apply_here = False
         # A connected folder AND a message that asks for a change (directly, or as "do it" /
         # "why won't you just make the change" after an earlier request or refusal): the only way
         # to satisfy it is propose_local_edits, so the loop is told so mechanically — see
@@ -2149,7 +2193,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         # Announced when a repo or folder tool is first used (see _counted_act), not up front: a turn that never touches code (a web search,
         # an email lookup) has nothing to do with the repo, and a "Reading from GitHub" step there is just noise.
         source_announced = {"done": False}
-        if local_workspace_handle is not None:
+        if outside_repo:
+            msg = f"{msg}\n\n{repo_scope.OUTSIDE_NOTE}"      # in the question, not the environment note: that reaches the prompt only on an edit turn
+        if local_workspace_handle is not None and not outside_repo:
             workspace_name = workspace_status(workspace_user).get("name", "local folder")
             if demo_turn:
                 schema_parts.append(DEMO_PROJECT_NOTE if is_guest_username(username) else DEMO_PROJECT_NOTE_MEMBER)
@@ -3155,15 +3201,19 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "adding, committing, pushing, pulling, merging locally. Look first if you need to (git status, git branch) so the steps name real files and branches, then call it. Example for \"new branch, commit "
                 "and push\": [{\"title\": \"Create the branch\", \"line\": \"git switch -c feat/x\"}, {\"title\": \"Stage the changes\", \"line\": \"git add -A\"}, {\"title\": \"Commit\", \"line\": \"git commit -m 'feat: ...'\"}, "
                 "{\"title\": \"Push the branch\", \"line\": \"git push -u origin feat/x\"}]. A local merge is steps too (git switch main, git pull, git merge feat/x, git push origin main). Deleting a branch is refused "
-                "by the runner, so leave it out. Merging a pull request ON GITHUB is not a command step: use propose_merge for that. When a pull request is part of what they asked for AND they want the steps, give the git steps "
+                "by the runner, so leave it out. Merging a pull request ON GITHUB is not a command step: use propose_merge for that. When they only asked to commit, push and open a pull request, that is ONE card with propose_git_commit (open_pull_request), not steps. When a pull request is part of what they asked for AND they want the steps, give the git steps "
                 "(branch, stage, commit, push) with propose_steps and say the pull request is opened afterwards with its own card (propose_commit with open_pull_request). Finish with a short answer on what the steps do and "
                 "in what order."
             )
             menu_lines.append(
                 "- propose_git_commit — args: message (what the change DOES, a short subject line), paths (the files to commit, one by one; new files must be listed; omit to commit only files git already tracks), "
-                "everything (optional: true to also commit new untracked files, only after looking at git status --short), new_branch (optional), push (optional: true to push afterwards). Commits with REAL git on "
+                "everything (optional: true to also commit new untracked files, only after looking at git status --short), new_branch (optional), push (optional: true to push afterwards), "
+                "open_pull_request (optional: true to ALSO open a pull request after the push; it implies push), pr_title (optional, defaults to the commit subject), pr_base (optional, defaults to the default branch), "
+                "pr_draft (optional: true for a draft). Commits with REAL git on "
                 "THEIR OWN machine as one command line built for you: they see a card with the exact line and press Run, and it needs the stronger confirmation. Use it INSTEAD of propose_commit whenever it is "
-                "listed; propose_commit is for when no runner is connected, or to open a pull request. It is ONE click for a plain commit (and push) on the current branch or one new branch, and nothing else: if "
+                "listed; propose_commit is for when no runner is connected. \"Commit, push and open a pull request\" is ONE card, ONE approval: pass open_pull_request=true (and new_branch unless the folder is already on a branch "
+                "of its own); the card says in words that a pull request follows, the server opens it with the person's own GitHub token only after the push succeeds, and the result tells you the link. "
+                "It is ONE click for a commit (and push, and pull request) on the current branch or one new branch, and nothing else: if "
                 "they ask for the steps or the commands, or the job also needs a branch to be checked out or switched, a pull, or a merge, use propose_steps instead. It waits for them and for the run and returns the real exit code and output."
             )
         # Whether this coding turn can run checks itself, said in the trace and counted (backend/utils/handback_check.py): a hand-back ("run the tests on your end") cannot be told from "no tool was offered" without it.
@@ -3216,6 +3266,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "- ask_choice — args: question, options (two to four of {\"label\", \"description\"}), recommended (the number of the option you recommend). Shows the person ONE question as a card with a button per option and "
                 "WAITS for their answer; use it only when you cannot tell which of a few concrete things they mean and reading would not settle it, and never for something you can look up."
             )
+        if outside_repo:
+            menu_lines = repo_scope.without_repo_lines(menu_lines, _REPO_ONLY_TOOLS)      # nothing to read, search or change in a project that is not connected
         if not can_apply_here:
             menu_lines = [line for line in menu_lines if not line.startswith(_NEEDS_THIS_BROWSERS_FOLDER)]
         elif demo_turn:
@@ -3224,7 +3276,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         coding_preferences = await asyncio.to_thread(fetch_coding_preferences, username)
         # The connected folder's own notes on where things are (.sonic/AGENTS.md, else AGENTS.md or CLAUDE.md): read from the server's copy of the folder, about a thousand tokens, the same every turn so the
         # prompt cache keeps them, and labelled as data (backend/utils/project_guidance.py). It rides with the person's coding preferences, at the stable start of the prompt, for both engines.
-        if local_workspace_handle is not None:
+        if local_workspace_handle is not None and not outside_repo:
             guidance = await asyncio.to_thread(project_guidance.read, Path(local_workspace_handle.root))
             if guidance:
                 coding_preferences = coding_preferences + project_guidance.block(guidance)
@@ -3389,22 +3441,40 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 await asyncio.to_thread(record_turn_counts, counts)
             return result
 
-        async def _run_local_command(args: dict) -> str:
-            """Asks the person to run one command line on their machine, waits for their answer and the run, and returns the real result (backend/utils/runner_jobs.py). The line is checked here with the
-            same rules their runner has, so a refused line is told to the model at once and never becomes a card; the runner decides again on their computer."""
+        async def _run_command_card(args: dict) -> Tuple[Optional[str], Optional[dict]]:
+            """Shows one command line on a card, waits for the person's answer and the run: (error text, None) when it never became a card, else (None, the job as it ended or as it stands (None if it vanished))."""
             if runner_for_checks is None or not runner_jobs.commands_supported(runner_for_checks):
-                return "ERROR: no runner of theirs that can run commands is connected right now. Tell them how to start or update it (Settings, Run checks on your machine), or use another way."
+                return "ERROR: no runner of theirs that can run commands is connected right now. Tell them how to start or update it (Settings, Run checks on your machine), or use another way.", None
             db = get_db()
             try:
-                job, reused = await asyncio.to_thread(runner_jobs.create_or_reuse_command_job, db, username, runner_for_checks["id"], args.get("line"), runner_for_checks.get("project_id"))
+                job, reused = await asyncio.to_thread(runner_jobs.create_or_reuse_command_job, db, username, runner_for_checks["id"], args.get("line"), runner_for_checks.get("project_id"), None, args.get("follow_up_text") or "")
             except runner_jobs.RunnerError as problem:
-                return f"ERROR: {problem.message}"
+                return f"ERROR: {problem.message}", None
+            if not reused:
+                # Which programs Sonic reaches for on the person's machine (backend/utils/cli_use.py): counts by family and class only, once per new card.
+                from backend.utils import cli_use
+                from backend.utils.self_counters import record_turn_counts
+
+                counted = cli_use.counts_for(job.get("command_shown"), job.get("command_class"))
+                if counted:
+                    await asyncio.to_thread(record_turn_counts, counted)
             await safe_emit_event("runner_check", {"job": job, "runner": {"name": runner_for_checks.get("name"), "root_name": runner_for_checks.get("root_name")}})
 
             async def _still_waiting(seconds: int, job_status: str) -> None:
                 await safe_emit_event("trace_detail", {"node": "tool_agent_node", **runner_jobs.waiting_text(seconds, job_status)})
 
             finished = await runner_jobs.wait_for_result(db, username, job["id"], on_tick=_still_waiting)
+            if finished and finished.get("status") == runner_jobs.RUNNING and args.get("follow_up_text"):
+                # Approved near the end of the wait and still running: a push that has the pull request behind it gets a few more minutes, so the card's promise is kept.
+                finished = await runner_jobs.wait_for_result(db, username, job["id"], timeout=300, on_tick=_still_waiting)
+            return None, finished
+
+        async def _run_local_command(args: dict) -> str:
+            """Asks the person to run one command line on their machine, waits for their answer and the run, and returns the real result (backend/utils/runner_jobs.py). The line is checked here with the
+            same rules their runner has, so a refused line is told to the model at once and never becomes a card; the runner decides again on their computer."""
+            problem_text, finished = await _run_command_card(args)
+            if problem_text:
+                return problem_text
             return runner_jobs.format_result(finished) if finished else "ERROR: that command is no longer there."
 
         async def _wait_on_card(job: dict, runner: dict) -> Optional[dict]:
@@ -3505,15 +3575,44 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         async def _propose_git_commit(args: dict) -> str:
             """A commit (and optionally a push) with real git on the person's machine, as the ONE command line backend/utils/git_terminal.py builds, run through the same card and the same checks as
             run_local_command. A request that cannot be made safe is told to the model in words, and nothing is shown to the person."""
-            from backend.utils import git_terminal
+            from backend.services import git_commit as gc
+            from backend.utils import git_terminal, pr_followup
+            from backend.utils.self_counters import record_turn_counts
 
+            wants_pr = bool(args.get("open_pull_request"))
+            follow = None
+            token_value = None
             try:
                 line = git_terminal.build_commit_line(
-                    args.get("message"), new_branch=args.get("new_branch"), push=bool(args.get("push")), paths=args.get("paths"), everything=bool(args.get("everything")),
+                    args.get("message"), new_branch=args.get("new_branch"), push=bool(args.get("push")) or wants_pr, paths=args.get("paths"), everything=bool(args.get("everything")),
                 )
-            except git_terminal.GitTerminalError as problem:
+                if wants_pr:
+                    # One approval for commit, push AND pull request (backend/utils/pr_followup.py): everything the pull request needs is checked now, before a card exists, and its words go on the card.
+                    from backend.utils.user_settings_utils import get_user_github_token
+
+                    token_value = await asyncio.to_thread(get_user_github_token, username)
+                    if not token_value:
+                        return "ERROR: opening the pull request uses the person's own GitHub token, and none is set. Tell them to add one under Integrations (it needs write access to the repository), or commit without the pull request."
+                    head = args.get("new_branch") or (state.get("git_branch") or "")
+                    subject = git_terminal.clean_message(args.get("message")).split("\n", 1)[0]
+                    follow = pr_followup.build(args, repo=repo, head=head, default_base=default_branch, subject=subject)
+                    await asyncio.to_thread(pr_followup.check_before_card, gc.GitHubApi(token_value), follow)
+            except (git_terminal.GitTerminalError, pr_followup.PrFollowupError, gc.GitCommitError) as problem:
                 return f"ERROR: {problem}"
-            return await _run_local_command({"line": line})
+            if follow is None:
+                return await _run_local_command({"line": line})
+            await asyncio.to_thread(record_turn_counts, {"commit_pr_one_card_shown": 1})
+            problem_text, finished = await _run_command_card({"line": line, "follow_up_text": pr_followup.card_text(follow)})
+            if problem_text:
+                return problem_text
+            if not finished:
+                return "ERROR: that command is no longer there."
+            text = runner_jobs.format_result(finished)
+            if finished.get("status") != runner_jobs.DONE or finished.get("exit_code") != 0 or finished.get("timed_out"):
+                return text + "\nThe pull request was NOT opened, because the push did not finish successfully."
+            opened = await asyncio.to_thread(pr_followup.open_after_push, gc.GitHubApi(token_value), follow, git_terminal.clean_message(args.get("message")))
+            await asyncio.to_thread(record_turn_counts, {"commit_pr_one_card_failed" if opened.get("error") else "commit_pr_one_card_opened": 1})
+            return text + pr_followup.result_text(opened, follow)
 
         async def _submit_plan(args: dict) -> str:
             """Checks the plan against the folder (an existing file must exist, a new one must not), stores it for the person to approve, and shows it as a card. Nothing is edited."""
@@ -3772,6 +3871,10 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             if tool_action == "propose_git_commit":
                 if plan_phase == code_plan.PLAN_PHASE:
                     return "ERROR: this turn is for the plan only; call submit_plan. A commit can be made once the plan is approved."
+                if args.get("open_pull_request") and (untrusted_used & _THIRD_PARTY_TEXT_TOOLS):
+                    # Like propose_commit: text written by someone else (a web page, an email, a shared document, logs) must not be able to lead to an outward action in the same message.
+                    return ("ERROR: this message already read content written by someone else (a web page, an email, a shared document or logs), and a pull request is not opened in the same message as that. "
+                            "Tell the person to ask for the pull request in a new message. A commit without the pull request is still possible.")
                 return await _propose_git_commit(args)
 
             if tool_action == "run_mongo_query":

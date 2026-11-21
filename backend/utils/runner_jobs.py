@@ -686,7 +686,7 @@ def create_job(db: Any, username: str, runner_id: str, check: Any, files: Any = 
     return get_job(db, username, job_id, now) or {}
 
 
-def create_command_job(db: Any, username: str, runner_id: str, line: Any, project_id: Optional[str] = None, now: Optional[datetime] = None) -> Dict[str, Any]:
+def create_command_job(db: Any, username: str, runner_id: str, line: Any, project_id: Optional[str] = None, now: Optional[datetime] = None, follow_up_text: str = "") -> Dict[str, Any]:
     """Asks for a command line to be run in one project, waiting for the person's approval on a card that shows the line exactly as it will run. The line is read and classified here with the SAME rules
     the runner has (runner_commands.py): a refused line never becomes a card. One that only looks (read) is approved at once when the person turned that on for this computer (`read_only_auto`, off by
     default); the others wait for a click, and one that changes things needs a second, stronger confirmation. Whatever is decided here, the runner decides again on the person's own computer. Blocking."""
@@ -717,11 +717,12 @@ def create_command_job(db: Any, username: str, runner_id: str, line: Any, projec
     job_id = uuid.uuid4().hex
     fields: Dict[str, Any] = {"status": APPROVED, "approved_at": now, "auto_approved": True} if automatic else {"status": AWAITING, "expires_at": now + timedelta(minutes=JOB_APPROVAL_MINUTES)}
     db[JOBS].insert_one({"_id": job_id, "username": username, "runner_id": runner_id, "project_id": project["id"], "project_name": project["name"], "kind": KIND_COMMAND, "check": "command",
-                         "command_shown": shown, "command_class": plan.klass, "command_notes": plan.notes[:6], "files": [], "created_at": now, **fields})
+                         "command_shown": shown, "command_class": plan.klass, "command_notes": plan.notes[:6], "files": [], "created_at": now,
+                         **({"follow_up_text": _clean_label(follow_up_text, 400)} if follow_up_text else {}), **fields})      # words for the card only: the runner is never sent them (claim_next), and nothing runs from them here
     return get_job(db, username, job_id, now) or {}
 
 
-def create_or_reuse_command_job(db: Any, username: str, runner_id: str, line: Any, project_id: Optional[str] = None, now: Optional[datetime] = None) -> Tuple[Dict[str, Any], bool]:
+def create_or_reuse_command_job(db: Any, username: str, runner_id: str, line: Any, project_id: Optional[str] = None, now: Optional[datetime] = None, follow_up_text: str = "") -> Tuple[Dict[str, Any], bool]:
     """Like `create_command_job`, except that when the same line is already open in the same project (its card is waiting, or it is running) that job is returned instead of a second card. Blocking."""
     now = now or _now()
     sweep(db, username, now)
@@ -730,9 +731,9 @@ def create_or_reuse_command_job(db: Any, username: str, runner_id: str, line: An
     except runner_commands.commands.CommandError as problem:
         raise RunnerError("bad_command", str(problem)) from None
     for job in db[JOBS].find({"username": username, "runner_id": runner_id, "status": {"$in": list(OPEN_STATES)}}):
-        if job.get("kind") == KIND_COMMAND and job.get("command_shown") == shown and (not project_id or job.get("project_id") == project_id):
+        if job.get("kind") == KIND_COMMAND and job.get("command_shown") == shown and (not project_id or job.get("project_id") == project_id) and (job.get("follow_up_text") or "") == _clean_label(follow_up_text, 400):
             return public_job(job), True
-    return create_command_job(db, username, runner_id, line, project_id, now), False
+    return create_command_job(db, username, runner_id, line, project_id, now, follow_up_text), False
 
 
 def create_or_reuse_job(db: Any, username: str, runner_id: str, check: Any, files: Any = None, now: Optional[datetime] = None, project_id: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
@@ -1109,7 +1110,7 @@ def public_job(doc: Dict[str, Any]) -> Dict[str, Any]:
             "created_at": stamp("created_at"), "expires_at": stamp("expires_at"), "finished_at": stamp("finished_at"), "exit_code": doc.get("exit_code"),
             "output_tail": doc.get("output_tail") or (doc.get("live_output") or "" if doc.get("status") == RUNNING else ""),      # a running command shows what it has printed so far
             "truncated": bool(doc.get("truncated")), "timed_out": bool(doc.get("timed_out")), "duration": doc.get("duration"), "error": doc.get("error") or "",
-            "kind": doc.get("kind") or KIND_CHECK, "command_class": doc.get("command_class") or "", "command_notes": doc.get("command_notes") or [], "auto_approved": bool(doc.get("auto_approved")),
+            "kind": doc.get("kind") or KIND_CHECK, "command_class": doc.get("command_class") or "", "command_notes": doc.get("command_notes") or [], "auto_approved": bool(doc.get("auto_approved")), "follow_up_text": doc.get("follow_up_text") or "",
             "needs_confirm": doc.get("command_class") == runner_commands.commands.CHANGE,
             "server": doc.get("server") or {}, "look": doc.get("look") or {}, "has_screenshot": bool(doc.get("screenshot_b64")), "url": doc.get("url") or "", "device": doc.get("device") or "",
             "session": doc.get("session") is True, "session_stopped": bool(doc.get("session_stopped_at")), "session_looks_left": max(SESSION_MAX_LOOKS - int(doc.get("session_looks_used") or 0), 0) if doc.get("kind") == KIND_SERVE else None}

@@ -107,7 +107,7 @@ SYSTEM_PROMPT = """You are Sonic Assistant, working in tool mode. You answer by 
 - You can only use the tools you were given. If the request needs something none of them can do (an email inbox, a calendar, a drive, a database, a browser), say plainly that you can't do that from here. Never claim to have made a call you did not make, and never invent an outage, a timeout or a stuck process to explain it.
 - When asked to write or change code, call save_draft with your draft (the code, in full) as soon as you know roughly what to change, together with any reads you still need: it costs no step. Check the draft against what you read, save a corrected whole draft if anything is wrong, and start your answer from it.
 - What you said earlier in the conversation about your own jobs, schedule, reading or status came from your own records, which you cannot check with these tools; it stands. Never retract, correct or comment on an earlier reply unless the person asks about it or what you read this turn directly contradicts it.
-- Read where the work is. Never read a file from line 1 (it is imports and setup): search_literal for a word from the task, then read_repo_file with start_line a little before the match and line_count about 60. A read from the top of a big file is refused with a map of the file. Do not read a file you already read this turn: its result is in the conversation above.
+- Read where the work is. Never read a file from line 1 (it is imports and setup): search_literal for a word from the task, then read_repo_file with start_line a little before the match and line_count about 60. A read from the top of a big file is refused with a map of the file. Do not read a file you already read this turn: its result is in the conversation above. To find where something is defined or used, SEARCH before you read (search_literal; when run_local_command is among your tools, `git grep -n term` or `grep -rn term dir` also work, and `git log -S term` finds when it changed), then read only the lines that match: never open a file just to look for something in it, and do not read again a place the list of what you already read names.
 - Answer in plain, concise prose. Cite the file paths and line numbers you actually read. Ask the user a question in your answer only when the request is genuinely ambiguous or missing a detail only they can supply and no tool could resolve it (two equally plausible repos, a time range that was never given, \"that file\" with nothing identifying which). "
     "It is not for a search that came back empty: that is an honest \"I checked X and Y, nothing conclusive turned up\". Ask one clear, specific question, never a vague \"can you tell me more?\"; their next message carries on the same conversation."""
 
@@ -274,12 +274,15 @@ async def run(
         tools = list(tools) + [SAVE_DRAFT_TOOL]
         offered = offered | {"save_draft"}
     latest_draft: Optional[str] = None
-    messages: List[Any] = [SystemMessage(content=system_prompt), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map, user_memory, environment_note if can_edit else "", leanings))]
+    # The environment note (where reads come from, the folder's notes, what this conversation already read, its summary and working notes) goes to every turn that has the repo tools, not only an edit turn: on a plain
+    # question it was left out, so the "already read" list never reached the turns that re-read (2026-11-20: 52% of reads were repeats).
+    environment_for_turn = environment_note if (can_edit or offered & _REPO_TOOLS) else ""
+    messages: List[Any] = [SystemMessage(content=system_prompt), HumanMessage(content=build_context(question, history, time_line, coding_preferences, architecture_map, user_memory, environment_for_turn, leanings))]
     # Sizes of the prompt's parts and of everything every call sends (backend/utils/prompt_meter.py): counts only, recorded once at the end.
     meter = PromptMeter()
     meter.part("instructions", system_prompt)
     meter.tools(tools)
-    for name, text in (("preferences", coding_preferences), ("architecture", architecture_map), ("memory", user_memory), ("history", history), ("leanings", leanings), ("environment", environment_note if can_edit else ""),
+    for name, text in (("preferences", coding_preferences), ("architecture", architecture_map), ("memory", user_memory), ("history", history), ("leanings", leanings), ("environment", environment_for_turn),
                        ("request", question)):
         meter.part(name, text)
     attempts: List[Dict[str, str]] = []

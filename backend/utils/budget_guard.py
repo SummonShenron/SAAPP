@@ -817,6 +817,11 @@ def public_view(state: Optional[Dict[str, Any]], admin: bool) -> Dict[str, Any]:
         view["message"] = f"{round(state.get('fraction', 0) * 100)}% of the {_SCOPE_TEXT.get(scope, scope)} usage budget is used."
     else:
         view["message"] = ""
+    if admin:
+        # A model provider refusing Sonic's API key is shown to an admin whatever the budget says, even with no budget set at all (backend/utils/provider_health.py).
+        from backend.utils import provider_health
+
+        view["provider_alerts"] = provider_health.alerts()
     if admin and level != OFF:
         view.update({
             "fraction": state.get("fraction"), "scope": scope, "unit": state.get("unit"),

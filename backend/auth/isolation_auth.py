@@ -1,6 +1,6 @@
 import jwt
 import requests
-from fastapi import Request, HTTPException, Security
+from fastapi import Depends, Request, HTTPException, Security
 from fastapi.security import HTTPBearer
 import os
 import asyncio
@@ -147,6 +147,23 @@ async def get_current_user(request: Request):
         return {**payload, "sub": verified_email, "email": verified_email}
 
     return payload
+
+# The two identities get_current_user hands out WITHOUT a signed-in account (the public demo and the embedded widget). Anyone can claim them: `X-Principal: guest`, or one of the fixed guest tokens, is the whole key.
+GUEST_SUBJECTS = frozenset({"guest-recruiter@example.com", "guest_bty"})
+
+
+def is_guest_subject(subject) -> bool:
+    return str(subject or "").strip().lower() in GUEST_SUBJECTS
+
+
+async def get_member_user(current_user=Depends(get_current_user)):
+    """get_current_user, but never the shared guest. Every endpoint that writes or costs something and is not part of the demo takes THIS: the guest identity is claimed by anyone with one header, so an endpoint that
+    forgot to turn guests away was open to the whole internet (the launch probe, 2026-11-19; backend/auth/guest_policy.py lists the few writes a guest may make, and a test fails for any other that has not been
+    classified)."""
+    if is_guest_subject(current_user.get("sub")):
+        raise HTTPException(status_code=403, detail="Sign in to use this.")
+    return current_user
+
 
 def record_login_event(user_id: str, email: str, is_guest: bool = False, ip_address: str = None):
     """

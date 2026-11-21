@@ -82,6 +82,11 @@ export function filesLine(job: Pick<RunnerJob, 'files'>): string {
   return (job.files ?? []).join(', ');
 }
 
+/** The sentence about what follows the command on its card ("Then Sonic opens a pull request ..."), or "" when nothing does. Part of what the person approves, so it is always shown while the card waits. */
+export function followUpLine(job: Pick<RunnerJob, 'follow_up_text'>): string {
+  return (job.follow_up_text ?? '').trim();
+}
+
 /** Whether a check is turned on for a project (every check is, until the person turns it off). */
 export function checkIsOn(settings: ProjectSettings, name: string): boolean {
   return !settings.disabled.includes(name);
