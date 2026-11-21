@@ -511,6 +511,19 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "ci_status_and_logs",
+        "requires": [
+            "backend/services/ci_status.py::def ci_status",
+            "backend/services/ci_status.py::def read_ci_log",
+            "backend/services/agent_workflow.py::ci_status.read_ci_log",
+        ],
+        "month": "2026-11",
+        "title": "Checking CI and reading why it failed",
+        "line": "I can now check whether your latest GitHub Actions runs passed, name the jobs and steps that failed, and read the part of the log that says why, so you no longer have to paste it to me.",
+        "keywords": ["is ci green", "why did ci fail", "github actions", "build failed", "workflow run", "failed run", "did my push pass"],
+        "volunteer": [],
+    },
+    {
         "id": "commit_push_pr_one_card",
         "requires": [
             "backend/utils/pr_followup.py::def open_after_push",

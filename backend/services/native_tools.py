@@ -43,6 +43,15 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "state": {"type": "string", "enum": ["open", "closed", "all"]},
         "limit": _INTEGER,
     }),
+    # CI (backend/services/ci_status.py): the workflow runs for a branch, commit or pull request, and the failing part of one job's log. Read-only.
+    "ci_status": _object({
+        "ref": {"type": "string", "description": "a branch name, a commit sha, or a pull request number; the default branch when left out"},
+        "limit": {"type": "integer", "description": "how many recent runs, default 5, max 10"},
+    }),
+    "read_ci_log": _object({
+        "job_id": {"type": "integer", "description": "a job id printed by ci_status"},
+        "lines": {"type": "integer", "description": "how many lines of the failing part, default 80, max 200"},
+    }, ["job_id"]),
     # the person's own document libraries (backend/services/library_search.py)
     "search_library": _object({
         "query": {"type": "string", "description": "words to look for in the person's own documents: a name, topic, date or kind of document"},
