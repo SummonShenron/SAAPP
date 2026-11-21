@@ -35,8 +35,8 @@ def make(**over):
 
 def test_the_pull_request_is_built_from_the_branch_the_base_and_the_commit_subject():
     follow = make()
-    assert follow == {"repo": REPO, "head": "sonic/fix-x", "base": "main", "title": "fix: stop the loop", "draft": False}
-    assert make(args={"pr_title": "Stop the plan loop", "pr_base": "develop", "pr_draft": True}) == {"repo": REPO, "head": "sonic/fix-x", "base": "develop", "title": "Stop the plan loop", "draft": True}
+    assert follow == {"repo": REPO, "head": "sonic/fix-x", "base": "main", "title": "fix: stop the loop", "draft": False, "merge": None}
+    assert make(args={"pr_title": "Stop the plan loop", "pr_base": "develop", "pr_draft": True}) == {"repo": REPO, "head": "sonic/fix-x", "base": "develop", "title": "Stop the plan loop", "draft": True, "merge": None}
 
 
 @pytest.mark.parametrize("over, why", [
@@ -364,7 +364,7 @@ def test_a_pull_request_is_not_opened_in_a_message_that_read_what_other_people_w
     record, _ = connect_runner(db)
     web = {"tool_action": "read_url", "args": {"url": "https://example.com/post"}}
     seen = run(drive(monkeypatch, [web, decision(open_pull_request=True)], db=db, github=github))
-    assert "not opened in the same message" in seen["observations"][1]
+    assert "not opened or merged in the same message" in seen["observations"][1]
     assert seen["cards"] == [] and github.calls == []
 
 

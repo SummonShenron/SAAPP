@@ -48,6 +48,15 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "ref": {"type": "string", "description": "a branch name, a commit sha, or a pull request number; the default branch when left out"},
         "limit": {"type": "integer", "description": "how many recent runs, default 5, max 10"},
     }),
+    # pull requests, read-only (backend/services/pr_read.py): one pull request with what people said and decided, and one changed file's patch.
+    "read_pull_request": _object({
+        "number": {"type": "integer", "description": "the pull request number (list_pull_requests lists them)"},
+    }, ["number"]),
+    "read_pr_file_diff": _object({
+        "number": {"type": "integer", "description": "the pull request number"},
+        "path": {"type": "string", "description": "a changed file's name exactly as read_pull_request listed it"},
+        "part": {"type": "integer", "description": "which part of a long patch; default 1"},
+    }, ["number", "path"]),
     "read_ci_log": _object({
         "job_id": {"type": "integer", "description": "a job id printed by ci_status"},
         "lines": {"type": "integer", "description": "how many lines of the failing part, default 80, max 200"},
@@ -229,6 +238,8 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "pr_title": {"type": "string", "description": "optional: the pull request's title; the commit subject when left out"},
         "pr_base": {"type": "string", "description": "optional: the branch the pull request goes into; the repository's default branch when left out"},
         "pr_draft": {"type": "boolean", "description": "optional: true to open it as a draft"},
+        "merge_after": {"type": "boolean", "description": "optional, admins only: true to ALSO merge the pull request once its checks pass (implies open_pull_request and push). Only when the person asked for the merge in this request; the card says so, and nothing is merged if a check fails or is unfinished"},
+        "merge_method": {"type": "string", "description": "optional: squash (default), merge or rebase"},
     }, ["message"]),
     # plan mode (backend/utils/code_plan.py), offered only on a plan turn: the plan the person approves before anything is edited. Nothing is written to their folder.
     "submit_plan": _object({
@@ -352,7 +363,8 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "untracked. The message says what the change DOES. It waits for them and for the run, then returns the real exit code and output: say what happened, and never that it was committed unless the exit code is 0. "
         "Use this INSTEAD of propose_commit whenever it is among your tools; propose_commit is for when no runner is connected. To also open a pull request pass open_pull_request=true (it implies push; give "
         "new_branch unless the folder is already on a branch of its own): the same card says in words that a pull request follows, so ONE approval covers commit, push and pull request, and after a successful push the "
-        "server opens it with the person's own GitHub token and the result gives you the link; never say it was opened unless the result says so. It is ONE click for a commit (and push, and pull request) on the "
+        "server opens it with the person's own GitHub token and the result gives you the link; never say it was opened unless the result says so. For admins, merge_after=true adds the merge to the same card: the server waits "
+        "for the pull request's checks (no model call, up to ten minutes) and merges only if they pass, then the result says whether it merged; never say it merged unless the result says so. It is ONE click for a commit (and push, and pull request) on the "
         "current branch or one new branch, and nothing else: if they ask for the steps or the commands, or the job also needs a branch to be checked out or switched, a pull, or a merge, use propose_steps instead. It cannot merge, pull or switch to another branch."
     ),
     "propose_merge": (

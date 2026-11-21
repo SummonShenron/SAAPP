@@ -511,6 +511,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "pull_request_details",
+        "requires": [
+            "backend/services/pr_read.py::def read_pull_request",
+            "backend/services/pr_read.py::def read_pr_file_diff",
+            "backend/utils/pr_questions.py::def asks_pr_details",
+            "backend/services/agent_workflow.py::_pr_details_wanted",
+        ],
+        "month": "2026-11",
+        "title": "Reading pull request comments and reviews",
+        "line": "I can now read what people said on a pull request, whether it was approved or had changes requested, whether its checks passed, and one file's changes, then answer follow-ups about it.",
+        "keywords": ["what did", "say on pr", "is the pr approved", "pr comments", "review comments", "pull request checks", "changes requested", "who reviewed"],
+        "volunteer": [],
+    },
+    {
         "id": "ci_status_and_logs",
         "requires": [
             "backend/services/ci_status.py::def ci_status",
@@ -521,6 +535,19 @@ CHANGELOG = [
         "title": "Checking CI and reading why it failed",
         "line": "I can now check whether your latest GitHub Actions runs passed, name the jobs and steps that failed, and read the part of the log that says why, so you no longer have to paste it to me.",
         "keywords": ["is ci green", "why did ci fail", "github actions", "build failed", "workflow run", "failed run", "did my push pass"],
+        "volunteer": [],
+    },
+    {
+        "id": "commit_push_pr_merge_one_turn",
+        "requires": [
+            "backend/utils/pr_followup.py::def merge_now",
+            "backend/utils/pr_followup.py::def asks_to_merge",
+            "backend/services/agent_workflow.py::_merge_when_green",
+        ],
+        "month": "2026-11",
+        "title": "Commit, push, pull request and merge in one turn",
+        "line": "As an admin I can go all the way in one turn: commit, push, open the pull request and merge it, when you ask for the merge. The card says so, I wait for the checks, and I only merge if they pass.",
+        "keywords": ["and merge it", "merge when green", "commit push pr and merge", "merge the pull request", "squash merge", "all in one turn"],
         "volunteer": [],
     },
     {
