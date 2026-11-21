@@ -85,13 +85,47 @@ def describe_expired_token(token: str, now: float = None) -> str:
         return "token timing could not be read"
 
 
+def clock_skew_seconds(raw=None) -> int:
+    """How many seconds this server's clock may disagree with Clerk's before a token is refused (JWT_CLOCK_SKEW_SECONDS): 10 by default, never below 0 or above 120. Pure.
+    WHY. The check had no tolerance at all, so a machine whose clock ran even a second behind Clerk's refused every fresh token ("The token is not yet valid (iat)") and the page stopped working: a Run
+    button that never answered, a chat that fell over. (Found on a local server, 2026-11-21.) Clerk's own SDKs allow a few seconds; a session token lives about 60, so 10 is a small widening."""
+    try:
+        value = int(float(os.getenv("JWT_CLOCK_SKEW_SECONDS", "10") if raw is None else raw))
+    except (TypeError, ValueError):
+        value = 10
+    return max(0, min(value, 120))
+
+
+CLOCK_SKEW_SECONDS = clock_skew_seconds()
+
+
+def describe_early_token(token: str, now: float = None) -> str:
+    """Timing facts about a token that was refused as not yet valid, for the log: how far ahead of this machine's clock Clerk stamped it. Only numbers, nothing from the token's content. Never raises."""
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False, "verify_exp": False, "verify_iat": False, "verify_nbf": False})
+        issued = claims.get("iat")
+        moment = time.time() if now is None else now
+        if not isinstance(issued, (int, float)):
+            return "token has no iat claim"
+        ahead = int(issued - moment)
+        return (
+            f"issued_ahead_of_this_clock_by={ahead}s, allowed_skew={CLOCK_SKEW_SECONDS}s (this computer's clock is behind Clerk's by about that much: "
+            f"sync it, on Windows `w32tm /resync` in an administrator PowerShell, or raise JWT_CLOCK_SKEW_SECONDS for a machine that cannot)"
+        )
+    except Exception:
+        return "token timing could not be read"
+
+
 def _verify_clerk_jwt(token: str) -> dict:
     try:
         header = jwt.get_unverified_header(token)
         jwks = get_clerk_public_key()
         key_data = next(k for k in jwks['keys'] if k['kid'] == header['kid'])
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-        return jwt.decode(token, public_key, algorithms=["RS256"])
+        return jwt.decode(token, public_key, algorithms=["RS256"], leeway=CLOCK_SKEW_SECONDS)
+    except jwt.ImmatureSignatureError as e:
+        logger.error(f"Manual JWT verification failed: {e} [{describe_early_token(token)}]")
+        raise HTTPException(status_code=401, detail="Authentication failed")
     except jwt.ExpiredSignatureError as e:
         logger.error(f"Manual JWT verification failed: {e} [{describe_expired_token(token)}]")
         raise HTTPException(status_code=401, detail="Authentication failed")

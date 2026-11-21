@@ -252,6 +252,32 @@ def m_hops2(seeds, facts, graph, k):
     return [n for n, _ in sorted(score.items(), key=lambda item: (-item[1], item[0]))[:k]]
 
 
+def personalized_pagerank(graph: nx.Graph, personalization: Dict[str, float], alpha: float = 0.85, tol: float = 1e-12, max_iter: int = 500) -> Dict[str, float]:
+    """Personalized PageRank by power iteration, in plain Python: the walk follows an edge with probability `alpha` and otherwise jumps back to one of the seeds, in proportion to `personalization`. A node with no
+    edges sends its rank back to the seeds too (the same rule networkx uses). Written here, not taken from `nx.pagerank`, because networkx's version needs SciPy, which is not in requirements.txt: the first
+    time this eval's tests ran in CI they failed with "No module named 'scipy'" (PR #185, 2026-11-21). With 40 nodes the loop is instant. Pure."""
+    nodes = list(graph)
+    if not nodes:
+        return {}
+    total = sum(max(w, 0.0) for w in personalization.values())
+    if total <= 0:
+        raise ValueError("personalization needs a positive weight on at least one node")
+    jump = {v: max(personalization.get(v, 0.0), 0.0) / total for v in nodes}
+    degree = {v: graph.degree(v) for v in nodes}
+    rank = dict(jump)
+    for _ in range(max_iter):
+        stuck = sum(rank[v] for v in nodes if degree[v] == 0)
+        fresh = {}
+        for v in nodes:
+            inflow = sum(rank[u] / degree[u] for u in graph[v])
+            fresh[v] = alpha * (inflow + stuck * jump[v]) + (1.0 - alpha) * jump[v]
+        moved = sum(abs(fresh[v] - rank[v]) for v in nodes)
+        rank = fresh
+        if moved < len(nodes) * tol:
+            break
+    return rank
+
+
 def _ppr_ranked(seeds, graph) -> List[Tuple[float, str]]:
     """Personalized PageRank from the seeds (weighted by their similarity): (rank, fact id) best first, for the facts in a seed's connected component only. The solver leaves a few millionths of rank on facts
     that are not connected to anything the seeds touch; only the component is ranked, so an isolated fact gets no extras however the numbers fall."""
@@ -263,7 +289,7 @@ def _ppr_ranked(seeds, graph) -> List[Tuple[float, str]]:
     weights = {f.id: max(s, 1e-6) for f, s in seeds if f.id in graph}
     if not weights:
         return []
-    rank = nx.pagerank(graph, alpha=0.85, personalization=weights, tol=1e-12, max_iter=500)
+    rank = personalized_pagerank(graph, weights)
     return sorted(((r, n) for n, r in rank.items() if n in reachable and n not in seed_ids), key=lambda pair: (-pair[0], pair[1]))
 
 

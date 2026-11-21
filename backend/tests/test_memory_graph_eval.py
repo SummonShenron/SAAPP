@@ -271,3 +271,64 @@ def test_the_real_embedder_is_used_only_when_asked_for_and_its_cache_is_saved(mo
     monkeypatch.setattr(rag_eval, "Embedder", Fake)
     assert ev.main(["--embeddings", "real", "--cache", str(tmp_path / "c.json"), "--trials", "1", "--seed-source", "similarity"]) == 0
     assert calls == {"cache": str(tmp_path / "c.json"), "saved": True}
+
+
+# ---- PageRank without SciPy (CI failed on `nx.pagerank`: "No module named 'scipy'", PR #185) ------------------------------------------------------------
+
+def test_the_pagerank_gives_the_hand_worked_answer_on_two_connected_facts():
+    graph = nx.Graph([("a", "b")])
+    rank = ev.personalized_pagerank(graph, {"a": 1.0})
+    # x_a = 0.85 * x_b + 0.15, x_b = 0.85 * x_a  =>  x_a = 0.15 / (1 - 0.7225)
+    assert rank["a"] == pytest.approx(0.15 / (1 - 0.85 ** 2), abs=1e-9)
+    assert rank["b"] == pytest.approx(0.85 * rank["a"], abs=1e-9)
+    assert sum(rank.values()) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_the_pagerank_keeps_all_of_an_unconnected_seeds_rank_on_it_and_none_leaks():
+    graph = nx.Graph([("a", "b")])
+    graph.add_node("c")
+    rank = ev.personalized_pagerank(graph, {"c": 1.0})
+    assert rank["c"] == pytest.approx(1.0, abs=1e-9) and rank["a"] < 1e-9 and rank["b"] < 1e-9
+
+
+def test_the_pagerank_is_even_across_a_symmetric_graph_with_even_seeds_and_follows_the_seed_weights():
+    triangle = nx.Graph([("a", "b"), ("b", "c"), ("a", "c")])
+    even = ev.personalized_pagerank(triangle, {"a": 1.0, "b": 1.0, "c": 1.0})
+    assert all(value == pytest.approx(1 / 3, abs=1e-9) for value in even.values())
+    tilted = ev.personalized_pagerank(triangle, {"a": 3.0, "b": 1.0})
+    assert tilted["a"] > tilted["b"] > tilted["c"]
+
+
+def test_the_pagerank_refuses_a_personalization_with_no_weight_and_copes_with_an_empty_graph():
+    with pytest.raises(ValueError):
+        ev.personalized_pagerank(nx.Graph([("a", "b")]), {})
+    with pytest.raises(ValueError):
+        ev.personalized_pagerank(nx.Graph([("a", "b")]), {"a": 0.0, "b": -1.0})
+    assert ev.personalized_pagerank(nx.Graph(), {"a": 1.0}) == {}
+
+
+def test_it_agrees_with_networkx_where_networkx_can_run(monkeypatch):
+    pytest.importorskip("scipy")            # networkx's own version needs SciPy: only a machine that has it can compare
+    facts = ev.build_facts(ev.OfflineEmbedder(), ev.LINKS)
+    graph = ev.graph_of(facts)
+    for case in ev.CASES:
+        weights = {fact.id: 1.0 for fact, _ in ev.seeds_for(None, facts, 3, case, "oracle")}
+        ours = ev.personalized_pagerank(graph, weights)
+        theirs = nx.pagerank(graph, alpha=0.85, personalization=weights, tol=1e-12, max_iter=500)
+        assert max(abs(ours[n] - theirs[n]) for n in graph) < 1e-8, case.name
+
+
+def test_the_whole_eval_runs_with_scipy_missing_exactly_as_it_does_in_ci(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "scipy", None)            # `import scipy` now raises, as on a machine that installed only requirements.txt
+    results = ev.run(ev.OfflineEmbedder(), trials=1, conditions=["perfect", "both"], methods=["onehop", "hops2", "ppr", "ppr_rel"])
+    assert results["summary"]["perfect|ppr|3"]["recall"] > results["summary"]["perfect|onehop|3"]["recall"]
+
+
+def test_requirements_do_not_have_to_grow_for_this_eval():
+    """The eval needs networkx (graph structure) and nothing that networkx only uses for PageRank."""
+    source = open("backend/evals/memory_graph_eval.py", encoding="utf-8").read()
+    assert "nx.pagerank(" not in source, "a call to networkx's PageRank (which needs SciPy) is back"
+    requirements = open("requirements.txt", encoding="utf-8").read().lower()
+    assert "networkx" in requirements and "scipy" not in requirements

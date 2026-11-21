@@ -140,5 +140,9 @@ def test_the_chat_endpoint_sends_and_saves_the_view_but_never_for_a_guest():
 
 def test_the_browser_opens_the_viewer_for_the_new_link_and_for_the_old_download_link():
     chat = open("local/src/pages/Chat.tsx", encoding="utf-8").read()
-    assert "href === '#memory-source'" in chat and "endsWith('/api/documents/download/user_memory')" in chat
-    assert "payload.event === 'memory_sources'" in chat and "m.memory_sources" in chat and "<MemorySourceDialog" in chat
+    markdown = open("local/src/components/MessageMarkdown.tsx", encoding="utf-8").read()       # the message's Markdown (and so its links) moved out of Chat.tsx into its own memoized component
+    assert "href === '#memory-source'" in markdown and "endsWith('/api/documents/download/user_memory')" in markdown
+    assert "onOpenMemory(messageId)" in markdown, "the citation opens the memory of the message it is in"
+    assert "onOpenMemory={openMemory}" in chat and "setMemoryViewer(found)" in chat and "m.memory_sources" in chat
+    assert "payload.event === 'memory_sources'" in chat and "<MemorySourceDialog" in chat
+    assert "memoryViewer.memorySources" in chat, "the dialog is given the sources kept on the message that was clicked"
