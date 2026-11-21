@@ -280,6 +280,8 @@ div.chat-page.chat-page { flex: 1 1 auto; min-height: 0; display: flex; flex-dir
 /* Streamed reply text: each word fades in as it first appears (components/streamFade.ts wraps the words of a reply that is still arriving). Backwards fill: nothing is held once it has played. */
 @keyframes stream-word-in { from { opacity: 0; } to { opacity: 1; } }
 .stream-word { animation: stream-word-in 0.3s ease-out backwards; }
+/* A word that was already on screen (components/streamFade.ts makeSeenWordsPlugin): re-created when the Markdown changes shape, but it must not fade in a second time. */
+.stream-word-seen { animation: none; }
 @media (prefers-reduced-motion: reduce) { .stream-word { animation: none; } }
 
 /* Phones: the gutters stacked (page, then chat window) and left the text about three quarters of the screen's width. */

@@ -14,7 +14,7 @@ const TOOL_KIND: Readonly<Record<string, StepKind>> = {
   // writing, running and changing code (and the git side of it)
   run_python: 'code', run_snippet: 'code', run_local_command: 'code', run_local_check: 'code', run_repo_tests: 'code', run_sandbox_tests: 'code',
   propose_local_edits: 'code', propose_commit: 'code', propose_git_commit: 'code', propose_merge: 'code', propose_append_target_doc: 'code',
-  start_local_server: 'code', stop_local_server: 'code', diff_branches: 'code', list_commits: 'code', list_pull_requests: 'code', ci_status: 'code', read_ci_log: 'code', check_deploy_status: 'code',
+  start_local_server: 'code', stop_local_server: 'code', diff_branches: 'code', list_commits: 'code', list_pull_requests: 'code', ci_status: 'code', read_ci_log: 'code', read_pull_request: 'code', read_pr_file_diff: 'code', check_deploy_status: 'code',
   // the web
   web_search: 'web', read_url: 'web',
   // a database: the person's memory, knowledge base and documents, and the app's own records

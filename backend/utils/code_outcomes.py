@@ -42,7 +42,7 @@ CODE_MARK = "code_turn"
 # The tools that read or change the repo or the connected folder (the same set the trace announces as "Reading from": backend/services/agent_workflow.py _REPO_SOURCE_TOOLS).
 REPO_TOOLS = frozenset({
     "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol", "search_literal",
-    "diff_branches", "list_commits", "list_pull_requests", "ci_status", "read_ci_log", "propose_local_edits", "run_repo_tests", "run_snippet",
+    "diff_branches", "list_commits", "list_pull_requests", "ci_status", "read_ci_log", "read_pull_request", "read_pr_file_diff", "propose_local_edits", "run_repo_tests", "run_snippet",
 })
 EDIT_TOOLS = frozenset({"propose_local_edits"})
 TEST_TOOLS = frozenset({"run_repo_tests", "run_snippet", "run_sandbox_tests", "run_local_check"})

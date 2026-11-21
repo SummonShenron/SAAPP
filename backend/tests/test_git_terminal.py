@@ -119,7 +119,7 @@ def test_the_tool_is_registered_described_and_listed_and_a_commit_is_a_free_acti
 
     assert "propose_git_commit" in native_tools.REGISTRY and "propose_git_commit" in native_tools.NATIVE_DESCRIPTIONS
     assert native_tools.REGISTRY["propose_git_commit"]["required"] == ["message"]
-    assert set(native_tools.REGISTRY["propose_git_commit"]["properties"]) == {"message", "paths", "everything", "new_branch", "push", "open_pull_request", "pr_title", "pr_base", "pr_draft"}
+    assert set(native_tools.REGISTRY["propose_git_commit"]["properties"]) == {"message", "paths", "everything", "new_branch", "push", "open_pull_request", "pr_title", "pr_base", "pr_draft", "merge_after", "merge_method"}
     assert "INSTEAD of propose_commit" in native_tools.NATIVE_DESCRIPTIONS["propose_git_commit"]
     assert "use that instead for committing and pushing" in native_tools.NATIVE_DESCRIPTIONS["propose_commit"]
     assert "propose_git_commit" in native_loop.ACTION_TOOLS

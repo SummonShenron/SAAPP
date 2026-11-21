@@ -179,7 +179,7 @@ _PLAIN_KEYS = _PLAIN_KEYS + PROVIDER_KEYS
 # Turns where the person had said the conversation is about a project outside the connected repo, so the repo tools were switched off (backend/utils/repo_scope.py). Counts only.
 REPO_SCOPE_KEYS = ("repo_scope_outside_turns",)
 # Commit, push and pull request on ONE runner card (backend/utils/pr_followup.py): cards shown with a pull request on them, pull requests opened after the push, and ones that could not be (the push worked). Counts only.
-COMMIT_PR_KEYS = ("commit_pr_one_card_shown", "commit_pr_one_card_opened", "commit_pr_one_card_failed")
+COMMIT_PR_KEYS = ("commit_pr_one_card_shown", "commit_pr_one_card_opened", "commit_pr_one_card_failed", "commit_merge_merged", "commit_merge_not_merged")
 # Command lines Sonic put on a runner card, by program family (git, a text search, a look at files, the project's tools, other), by class (read, run, change) and `git grep` (backend/utils/cli_use.py). Counts only.
 CLI_KEYS = ("cli_prog_git", "cli_prog_search", "cli_prog_look", "cli_prog_tool", "cli_prog_other", "cli_git_grep", "cli_class_read", "cli_class_run", "cli_class_change")
 _PLAIN_KEYS = _PLAIN_KEYS + REPO_SCOPE_KEYS + COMMIT_PR_KEYS + CLI_KEYS

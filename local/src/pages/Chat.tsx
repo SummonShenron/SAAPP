@@ -59,19 +59,16 @@ import InputGlow from '../components/InputGlow';
 import Icon from '../components/icons';
 import { BRAND_NAME, BRAND_TAGLINE } from '../components/brand';
 import { shell } from '../components/shellStore';
-import ReactMarkdown from 'react-markdown';
 import '../components/__styles__/ReplyText.css';
 import '../components/__styles__/FeedbackTime.css';
-import remarkGfm from 'remark-gfm';
 import { CODE_BOX_STYLE } from '../components/codeBoxStyle';
 import { useAuth } from '@clerk/clerk-react';
 import { describeChatError, toChatSendError } from '../chatErrors';
 import { formatMessageTime, fullMessageTime } from '../messageTime';
-import { rehypeStreamWords } from '../components/streamFade';
+import { MessageMarkdown } from '../components/MessageMarkdown';
+import { StreamPacer } from '../components/streamPacer';
 import { startInitialPin } from './initialPin';
-
-// While a reply is still arriving its words fade in one at a time (components/streamFade.ts). Defined once so ReactMarkdown is handed the same list on every token.
-const STREAM_REHYPE = [rehypeStreamWords];
+import { StreamFollower } from './streamFollow';
 
 // A guest's base-model choice, kept in this browser (the shared guest has no settings record of their own). Only the cheaper choices are ever honoured by the server.
 const GUEST_REPLY_MODEL_KEY = 'guest-reply-model';
@@ -100,7 +97,7 @@ interface Message {
   id: string;
   sender: 'user' | 'ai' | 'system';
   text: string;
-  streaming?: boolean; // true while this reply's tokens are still arriving: its words fade in one at a time (STREAM_REHYPE); cleared when the turn ends, however it ends
+  streaming?: boolean; // true while this reply's words are still being shown (they fade in one at a time: components/MessageMarkdown.tsx); cleared when the turn ends and the last words are out, however it ends
   feedback?: 'like' | 'dislike' | null;
   sentAt?: string; // ISO time the message was sent: the server's stamp for a saved message, the browser's clock for one sent now (shown beside the feedback hearts on hover)
   images?: MessageImage[];
@@ -324,6 +321,13 @@ const ChatMessageList = React.memo(function ChatMessageList({
   // The reply whose "Source: Memory" citation was clicked: its viewer is open while this is set.
   const [memoryViewer, setMemoryViewer] = useState<Message | null>(null);
   const closeMemoryViewer = useCallback(() => setMemoryViewer(null), []);
+  // One stable function for every message's "Source: Memory" link (it reads the newest list when clicked), so no message re-renders because another one's callback changed.
+  const messagesRef = useRef(messages);
+  useEffect(() => { messagesRef.current = messages; });
+  const openMemory = useCallback((messageId: string) => {
+    const found = messagesRef.current.find(m => m.id === messageId);
+    if (found) setMemoryViewer(found);
+  }, []);
   if (!hasChatted) return null;
   // The reply being written right now (the last message, while a turn runs) holds the live steps itself.
   const lastMessage = messages[messages.length - 1];
@@ -421,99 +425,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                 />
               ))}
               <div className="message-text">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={msg.streaming ? STREAM_REHYPE : undefined}
-                  components={{
-                    // A language-less fenced block (bare ```) gets no className at all —
-                    // identical to a true inline `code` span — so neither className nor
-                    // content (a single-line fenced block has no internal newline either)
-                    // reliably tells them apart from inside `code` itself. `pre`, though, is
-                    // structurally guaranteed by the CommonMark AST to appear only for a
-                    // fenced block and never for an inline span (verified directly), so it
-                    // does the block/inline split instead, reaching into the `code` element
-                    // it wraps (already rendered by the branch below) for the language + text.
-                    code: ({ children, ...rest }: any) => (
-                      <code {...rest} className="reply-code">
-                        {children}
-                      </code>
-                    ),
-                    pre: ({ children }: any) => {
-                      const codeEl = children as { props?: { className?: string; children?: React.ReactNode } };
-                      const match = /language-(\w+)/.exec(codeEl?.props?.className || '');
-                      const raw = String(codeEl?.props?.children ?? '').replace(/\n$/, '');
-                      return <CodeBlock language={match ? match[1] : 'text'} code={raw} />;
-                    },
-                    a: ({ href, children, node, ...rest }: any) => {
-                      const finalHref = href?.startsWith('/')
-                        ? `${BASE_URL.replace(/\/$/, '')}${href}`
-                        : href;
-                      // The citation for the person's own memory is not a file: it opens the memory the answer drew on. (Replies saved before this carry the old download link.)
-                      const isMemoryLink = href === '#memory-source' || finalHref?.endsWith('/api/documents/download/user_memory');
-                      const isDownloadLink = !isMemoryLink && finalHref?.includes('/api/documents/download/');
-                      const normalizedLabel = React.Children.toArray(children)
-                        .map((child) => (typeof child === 'string' ? child : ''))
-                        .join(' ')
-                        .replace(/\s+/g, ' ')
-                        .trim();
-
-                      const handleClick = async (e: React.MouseEvent) => {
-                        if (isDownloadLink && finalHref) {
-                          e.preventDefault();
-                          const newTab = window.open('', '_blank');
-                          if (newTab) {
-                            newTab.document.write('<html><body style="background: #121824; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;"><h3>Loading secure document preview...</h3></body></html>');
-                          }
-                          try {
-                            let token = null;
-                            const isGuest = ['guest', 'guest_bty'].includes(localStorage.getItem('principal') || '');
-                            if (isGuest) {
-                              token = localStorage.getItem('guest_token');
-                            } else if (getTokenRef.current) {
-                              token = await getTokenRef.current();
-                            }
-                            const response = await fetch(finalHref, {
-                              headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                            });
-                            if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
-                            const blob = await response.blob();
-                            const blobUrl = window.URL.createObjectURL(blob);
-                            if (newTab) newTab.location.href = blobUrl;
-                            else window.open(blobUrl, '_blank');
-                          } catch (err) {
-                            console.error("Document preview failed:", err);
-                            if (newTab) newTab.close();
-                            alert("Failed to load document. Please check your session.");
-                          }
-                        }
-                      };
-
-                      if (isMemoryLink) {
-                        return (
-                          <button type="button" className="citation-link citation-link-document citation-link-memory" onClick={() => setMemoryViewer(msg)}>
-                            Source: Memory
-                          </button>
-                        );
-                      }
-
-                      return (
-                        <a
-                          {...rest}
-                          href={finalHref}
-                          onClick={handleClick}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={isDownloadLink ? 'citation-link citation-link-document' : 'citation-link'}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          {normalizedLabel || children}
-                        </a>
-                      );
-                    },
-                  }}
-                >
-                  {cleanContent}
-                </ReactMarkdown>
+                <MessageMarkdown content={cleanContent} streaming={!!msg.streaming} messageId={msg.id} onOpenMemory={openMemory} getTokenRef={getTokenRef} CodeBlock={CodeBlock} />
               </div>
 
               {msg.sender === 'user' && formatMessageTime(msg.sentAt) && (
@@ -1146,6 +1058,9 @@ useEffect(() => {
   // No-ops when not embedded in an iframe. '*' target is fine here because the
   // payload carries no sensitive data; the parent origin-checks on receipt.
   const hasStreamedRef = useRef<boolean>(false);
+  // The running turn's pacer: tokens go in as they arrive and come out a word at a time, on animation frames (components/streamPacer.ts).
+  const pacerRef = useRef<StreamPacer | null>(null);
+  useEffect(() => () => pacerRef.current?.dispose(), []);
   const postPatchyStatus = (status: 'idle' | 'thinking' | 'streaming' | 'done' | 'error') => {
     if (window.parent === window) return;
     window.parent.postMessage({ source: 'sonic-assistant', patchyStatus: status }, '*');
@@ -1761,6 +1676,9 @@ useEffect(() => {
     syncQuestionPool();
   }, [allowedAffiliates, selectedAffiliate, principal, isEmbedded]);
 
+  // True while a turn is running and for as long as its last words are still being shown (the reply's `streaming` flag is cleared after the pacer has drained): the page follows the reply for all of it.
+  const followingTurn = loading || messages.some(m => m.streaming);
+
   useEffect(() => {
     // A brand-new message (user sends, or the assistant's reply bubble first appears) gets one
     // smooth scroll into view. Streaming tokens into that SAME last message only grows its height
@@ -1796,11 +1714,11 @@ useEffect(() => {
     // Only the user's own new message pulls the view down. A poll that adds a message (e.g. a pending edit card) must not move the viewport.
     const newestIsUser = messages[messages.length - 1]?.sender === 'user';
     if (isNewMessage && newestIsUser) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    } else if (loading && chatWindowRef.current && nearBottomRef.current) {
-      // Follow a running turn only while the user is already at the bottom; a poll must not move a user who scrolled up.
-      pinToBottom(chatWindowRef.current);
-    } else if ((justFinishedLoading || isInitialLoad) && chatWindowRef.current) {
+      // A message that starts a turn is followed down by the stream follower (below), which eases to the bottom frame by frame; a one-off smooth scroll here would be cancelled by its first frame.
+      if (!loading) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } else if (loading) {
+      // A running turn is followed by the stream follower (pages/streamFollow.ts), not pinned here on every token: an instant jump per token was the lurching. Nothing to do.
+    } else if (!followingTurn && (justFinishedLoading || isInitialLoad) && chatWindowRef.current) {
       // The spinner/loader row between the messages and the bottom anchor unmounts the instant
       // loading flips false, and that message's follow-up/feedback controls mount at the same
       // moment — both change the container's scrollHeight right here. Without re-pinning, the
@@ -1808,7 +1726,19 @@ useEffect(() => {
       // an unwanted scroll-up right as each response finishes.
       pinToBottom(chatWindowRef.current);
     }
-  }, [messages, loading, tracePanelSteps.length]);      // a new step grows the running turn's list, so the page follows it down like it follows the reply
+  }, [messages, loading, followingTurn, tracePanelSteps.length]);      // a new step grows the running turn's list, so the page follows it down like it follows the reply
+
+  // The page follows the reply down while a turn runs and for as long as its last words are still being shown (pages/streamFollow.ts): eased, frame by frame, and let go of the moment the person scrolls up.
+  const followerRef = useRef<StreamFollower | null>(null);
+  useEffect(() => {
+    if (followingTurn) {
+      if (!followerRef.current) followerRef.current = new StreamFollower(() => chatWindowRef.current);
+      followerRef.current.start();
+    } else {
+      followerRef.current?.release();      // finishes the last sweep to the bottom, then stops by itself
+    }
+  }, [followingTurn]);
+  useEffect(() => () => followerRef.current?.stop(), []);
 
   const addTraceStep = (payload: any) => {
     const title = payload?.title || payload?.message || "Agent step";
@@ -1933,6 +1863,12 @@ useEffect(() => {
     setToolSteps(0);
     setAgentPath([]);
     hasStreamedRef.current = false;
+    // This turn's reply is shown through its own pacer, into this turn's reply by id (a steer message added above it must not receive the words).
+    pacerRef.current?.dispose();
+    const pacer = new StreamPacer(words => setMessages(prev => prev.map(m => (m.id === aiMessageId ? { ...m, streaming: true, text: (m.text || '') + words } : m))));
+    pacerRef.current = pacer;
+    // Whether any tokens of this reply have arrived since it began or was last rewritten: a reply that arrives whole (only the finished text) is then shown through the pacer too, a word at a time.
+    let streamedText = false;
     postPatchyStatus('thinking');
 
     const controller = new AbortController();
@@ -2092,18 +2028,8 @@ useEffect(() => {
                   hasStreamedRef.current = true;
                   postPatchyStatus('streaming');
                 }
-                setMessages(prev => {
-                  const updated = [...prev];
-                  const lastIndex = updated.length - 1;
-                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
-                    updated[lastIndex] = {
-                      ...updated[lastIndex],
-                      streaming: true,
-                      text: (updated[lastIndex].text || '') + payload.text
-                    };
-                  }
-                  return updated;
-                });
+                streamedText = true;
+                pacer.push(payload.text);      // shown a word at a time, not as it arrives
               }
               if (payload.event === 'noted' && typeof payload.text === 'string') {
                 setMessages(prev => {
@@ -2132,6 +2058,8 @@ useEffect(() => {
                 // A retry (self-correction or rewrite fallback) is about to stream a fresh
                 // response — clear the in-progress bubble so its tokens don't concatenate
                 // onto the previous (discarded) attempt's text.
+                pacer.reset();      // and neither do the words of that attempt still waiting to be shown
+                streamedText = false;
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
@@ -2174,17 +2102,21 @@ useEffect(() => {
                   hasStreamedRef.current = true;
                   postPatchyStatus('streaming');
                 }
-                setMessages(prev => {
-                  const updated = [...prev];
-                  const lastIndex = updated.length - 1;
-                  if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
-                    updated[lastIndex] = { ...updated[lastIndex], streaming: false, text: payload.text };
-                  }
-                  return updated;
-                });
+                const finalText = payload.text;
+                const settle = () => setMessages(prev => prev.map(m => (m.id === aiMessageId ? { ...m, streaming: false, text: finalText } : m)));
+                if (!streamedText && typeof finalText === 'string' && finalText.trim()) {
+                  // A reply that arrives whole (no tokens came): it flows in a word at a time, like a streamed one, and the turn ending does not hurry it (components/streamPacer.ts drain).
+                  streamedText = true;
+                  pacer.push(finalText);
+                  pacer.drain(settle);
+                } else {
+                  // Words still waiting are shown first (quickly), then the full text replaces them, so the end of a reply does not jump.
+                  pacer.finish(settle);
+                }
                 markTraceComplete();
               }
               if (payload.event === 'error') {
+                pacer.reset();
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastIndex = updated.length - 1;
@@ -2223,6 +2155,7 @@ useEffect(() => {
         setUploadedFiles([]);
       }
     } catch (err) {
+      pacer.flush();      // whatever had arrived but was not shown yet is shown now, before a Stop or an error notice is put after it
       if (err instanceof DOMException && err.name === 'AbortError') {
         stoppedByUser = true;
         // A deliberate Stop, not a failure — leave whatever partial text already streamed in
@@ -2279,7 +2212,8 @@ useEffect(() => {
       lostTurnRef.current = false;
       setLoading(false);
       // However the turn ended (answered, failed, stopped), the reply is no longer arriving: its words stop fading in.
-      setMessages(prev => (prev.some(m => m.streaming) ? prev.map(m => (m.streaming ? { ...m, streaming: false } : m)) : prev));
+      // (After the last words are out: a reply that ends with a backlog finishes showing it in a fraction of a second first. Nothing waiting: at once.)
+      pacer.finish(() => setMessages(prev => (prev.some(m => m.streaming) ? prev.map(m => (m.streaming ? { ...m, streaming: false } : m)) : prev)));
       // This turn's steps go onto its reply (see attachTurnSteps): now with what is drawn, once the page has rendered the last of it, and again when the replay of late steps catches up.
       endedTurnRef.current = aiMessageId;
       window.setTimeout(() => attachTurnSteps(!isProcessingQueue.current && nodeQueueRef.current.length === 0), 80);

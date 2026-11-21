@@ -65,6 +65,7 @@ RUNNER_LAUNCHES = ("service", "hand")
 AWAITING, APPROVED, RUNNING, DONE, CANCELLED, EXPIRED, FAILED = "awaiting_approval", "approved", "running", "done", "cancelled", "expired", "failed"
 OPEN_STATES = (AWAITING, APPROVED, RUNNING)
 KIND_CHECK, KIND_COMMAND = "check", "command"
+FOLLOW_UP_CHARS = 1000      # the sentence on a card about what happens AFTER the command (a pull request, and a merge): all of it is shown, because it is part of what the person approves
 KIND_SERVE, KIND_STOP, KIND_LOOK = "serve", "stop", "look"
 # A PREVIEW SESSION: the person approves ONE card that starts the project's server, and Sonic may then look at that server's pages without a click each time, up to this many looks and until this long
 # with no use. A look at any other address, or past these limits, needs its own card.
@@ -718,7 +719,7 @@ def create_command_job(db: Any, username: str, runner_id: str, line: Any, projec
     fields: Dict[str, Any] = {"status": APPROVED, "approved_at": now, "auto_approved": True} if automatic else {"status": AWAITING, "expires_at": now + timedelta(minutes=JOB_APPROVAL_MINUTES)}
     db[JOBS].insert_one({"_id": job_id, "username": username, "runner_id": runner_id, "project_id": project["id"], "project_name": project["name"], "kind": KIND_COMMAND, "check": "command",
                          "command_shown": shown, "command_class": plan.klass, "command_notes": plan.notes[:6], "files": [], "created_at": now,
-                         **({"follow_up_text": _clean_label(follow_up_text, 400)} if follow_up_text else {}), **fields})      # words for the card only: the runner is never sent them (claim_next), and nothing runs from them here
+                         **({"follow_up_text": _clean_label(follow_up_text, FOLLOW_UP_CHARS)} if follow_up_text else {}), **fields})      # words for the card only: the runner is never sent them (claim_next), and nothing runs from them here
     return get_job(db, username, job_id, now) or {}
 
 
@@ -731,7 +732,7 @@ def create_or_reuse_command_job(db: Any, username: str, runner_id: str, line: An
     except runner_commands.commands.CommandError as problem:
         raise RunnerError("bad_command", str(problem)) from None
     for job in db[JOBS].find({"username": username, "runner_id": runner_id, "status": {"$in": list(OPEN_STATES)}}):
-        if job.get("kind") == KIND_COMMAND and job.get("command_shown") == shown and (not project_id or job.get("project_id") == project_id) and (job.get("follow_up_text") or "") == _clean_label(follow_up_text, 400):
+        if job.get("kind") == KIND_COMMAND and job.get("command_shown") == shown and (not project_id or job.get("project_id") == project_id) and (job.get("follow_up_text") or "") == _clean_label(follow_up_text, FOLLOW_UP_CHARS):
             return public_job(job), True
     return create_command_job(db, username, runner_id, line, project_id, now, follow_up_text), False
 
