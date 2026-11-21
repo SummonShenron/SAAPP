@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import os
 import datetime
 import json
@@ -72,7 +73,6 @@ from backend.utils.app_utils import (
     validate_app_ingest_identity,
     pick_repo_from_metadata,
     resolve_target_repo,
-    run_synthetic_read_only_question,
     index_conversation_turn,
     collect_kb_images
 )
@@ -228,11 +228,13 @@ from backend.services.microsoft_oauth import MicrosoftOAuth
 from backend.services.reward_evaluator import evaluate_response, build_correction_prompt, REWARD_EVAL_SOURCE_TYPES
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
+from backend.utils.body_limit import BodySizeLimitMiddleware
+from backend.utils import provider_health
 from backend.state import graph_db
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, load_directory, make_personal_kb_id, new_personal_kb, personal_kb_groups, personal_kb_update, resolve_kb_display_names
 from backend.utils.db_utils import get_db, save_error_event, test_connection
 from backend.utils import memory_erase
-from backend.auth.isolation_auth import get_current_user, record_login_event
+from backend.auth.isolation_auth import get_current_user, get_member_user, record_login_event
 from backend.services.checkpoint_retention import run_checkpoint_retention_loop, prune_thread_checkpoints_async
 from backend.services.attachment_retention import run_attachment_retention_loop
 from contextlib import asynccontextmanager
@@ -357,6 +359,8 @@ async def lifespan(app: FastAPI):
     chat_sessions = {}
 # 3. Pass the lifespan to the app
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
+# Inside the CORS layer (added first, so a 413 still carries the CORS headers the browser needs to read it): no request may be bigger than backend/utils/body_limit.py allows.
+app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://(saapp|saapp-[\w-]+)\.vercel\.app",
@@ -539,9 +543,6 @@ class IngestPayload(BaseModel):
 class StatusUpdate(BaseModel):
     status: str
 
-
-class SyntheticAskRequest(BaseModel):
-    question: str = Field(..., min_length=1, max_length=2000)
 
 @app.middleware("http")
 async def capture_unhandled_errors(request: Request, call_next) -> Response:
@@ -2418,7 +2419,7 @@ def sync_run_script(script_path):
 async def upload_and_ingest_documents(
     affiliate: str = Query(...),
     files: List[UploadFile] = File(...),
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_member_user)
 ):
     if not verify_user_ingest_access(current_user.get("sub"), affiliate):
         raise HTTPException(status_code=403, detail="Unauthorized")
@@ -2484,7 +2485,7 @@ import re  # Ensure 're' is imported at top of app.py
 async def delete_document(
     doc_id: str, 
     affiliate: str = Query(...),
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_member_user)
 ):
     # Security Check
     user_id = current_user.get("sub")
@@ -2780,7 +2781,7 @@ async def list_runners(current_user = Depends(get_current_user)):
 
 
 @app.post("/api/runner/pairings")
-async def create_runner_pairing(body: RunnerPairingRequest, http_request: Request, current_user = Depends(get_current_user)):
+async def create_runner_pairing(body: RunnerPairingRequest, http_request: Request, current_user = Depends(get_member_user)):
     """A one-time pairing code for a new runner, and (the install address is built from the runner version, backend/utils/runner_scripts.py) the starter scripts that carry it and the same setup as commands to type. The
     code is shown once. The scripts carry the code, never a key."""
     username = _runner_person(current_user)
@@ -2806,7 +2807,7 @@ async def create_runner_pairing(body: RunnerPairingRequest, http_request: Reques
 
 
 @app.post("/api/runner/runners/{runner_id}/settings")
-async def update_runner_settings(runner_id: str, body: RunnerSettingsRequest, current_user = Depends(get_current_user)):
+async def update_runner_settings(runner_id: str, body: RunnerSettingsRequest, current_user = Depends(get_member_user)):
     """Which of a runner's checks are on, and whether checks use a fake AI key. Names and a yes or no only: this can never change a command."""
     username = _runner_person(current_user)
     saved = await asyncio.to_thread(runner_jobs.update_settings, _runner_db_or_503(), username, runner_id, body.model_dump(exclude_none=True))
@@ -2816,7 +2817,7 @@ async def update_runner_settings(runner_id: str, body: RunnerSettingsRequest, cu
 
 
 @app.post("/api/runner/runners/{runner_id}/projects")
-async def add_runner_project(runner_id: str, body: RunnerProjectRequest, current_user = Depends(get_current_user)):
+async def add_runner_project(runner_id: str, body: RunnerProjectRequest, current_user = Depends(get_member_user)):
     """The person asks for a project to be added to one of their runners. Only a folder NAME is sent: the runner shows a dialog on their own computer and they choose the folder there."""
     username = _runner_person(current_user)
     try:
@@ -2829,7 +2830,7 @@ async def add_runner_project(runner_id: str, body: RunnerProjectRequest, current
 
 
 @app.post("/api/runner/runners/{runner_id}/share-files")
-async def share_runner_project_files(runner_id: str, body: RunnerFilesRequest, current_user = Depends(get_current_user)):
+async def share_runner_project_files(runner_id: str, body: RunnerFilesRequest, current_user = Depends(get_member_user)):
     """The person asks one of their runner's projects to send its files to SAAPP so Sonic can read them. Nothing is sent from here: the runner shows a window on their own computer and only a yes there starts it."""
     username = _runner_person(current_user)
     try:
@@ -2857,7 +2858,7 @@ async def runner_workspace_clear(key = Depends(get_runner_key)):
 
 
 @app.delete("/api/runner/runners/{runner_id}/projects/{project_id}")
-async def remove_runner_project(runner_id: str, project_id: str, current_user = Depends(get_current_user)):
+async def remove_runner_project(runner_id: str, project_id: str, current_user = Depends(get_member_user)):
     """The person removes a project from one of their runners: no check can be asked for it any more, and the runner forgets it the next time it asks."""
     username = _runner_person(current_user)
     if not await asyncio.to_thread(runner_jobs.request_remove_project, _runner_db_or_503(), username, runner_id, project_id):
@@ -2866,7 +2867,7 @@ async def remove_runner_project(runner_id: str, project_id: str, current_user = 
 
 
 @app.post("/api/runner/runners/{runner_id}/update")
-async def update_runner(runner_id: str, current_user = Depends(get_current_user)):
+async def update_runner(runner_id: str, current_user = Depends(get_member_user)):
     """The person pressed Update on a runner of theirs. The runner is told a version NUMBER the next time it asks and installs it from where it was installed; nothing here names an address."""
     username = _runner_person(current_user)
     try:
@@ -2879,7 +2880,7 @@ async def update_runner(runner_id: str, current_user = Depends(get_current_user)
 
 
 @app.delete("/api/runner/keys/{key_id}")
-async def remove_runner(key_id: str, current_user = Depends(get_current_user)):
+async def remove_runner(key_id: str, current_user = Depends(get_member_user)):
     username = _runner_person(current_user)
     if not await asyncio.to_thread(runner_jobs.revoke_key, _runner_db_or_503(), username, key_id):
         raise HTTPException(status_code=404, detail="No runner of yours has that id.")
@@ -2903,7 +2904,7 @@ async def list_runner_jobs(runner_id: str = Query(...), project_id: str = Query(
 
 
 @app.post("/api/runner/jobs")
-async def create_runner_command(body: RunnerCommandRequest, current_user = Depends(get_current_user)):
+async def create_runner_command(body: RunnerCommandRequest, current_user = Depends(get_member_user)):
     """The person types a command line in the Terminal card. It becomes the same job Sonic's commands do (backend/utils/runner_jobs.py): read and classified with the runner's own rules, a refused line
     never becomes a job, and one that changes things still needs the stronger confirmation and the runner's own window. Only the person's own runner and project."""
     username = _runner_person(current_user)
@@ -2915,7 +2916,7 @@ async def create_runner_command(body: RunnerCommandRequest, current_user = Depen
 
 
 @app.post("/api/runner/jobs/{job_id}/approve")
-async def approve_runner_job(job_id: str, body: Optional[RunnerApproveRequest] = None, current_user = Depends(get_current_user)):
+async def approve_runner_job(job_id: str, body: Optional[RunnerApproveRequest] = None, current_user = Depends(get_member_user)):
     """The person presses Run on the card. Only their own job, only while it waits and has not expired. A command that changes things needs `confirmed` as well."""
     username = _runner_person(current_user)
     try:
@@ -2928,7 +2929,7 @@ async def approve_runner_job(job_id: str, body: Optional[RunnerApproveRequest] =
 
 
 @app.post("/api/runner/jobs/{job_id}/cancel")
-async def cancel_runner_job(job_id: str, current_user = Depends(get_current_user)):
+async def cancel_runner_job(job_id: str, current_user = Depends(get_member_user)):
     username = _runner_person(current_user)
     job = await asyncio.to_thread(runner_jobs.cancel_job, _runner_db_or_503(), username, job_id)
     if job is None:
@@ -2947,7 +2948,7 @@ async def get_runner_job_screenshot(job_id: str, current_user = Depends(get_curr
 
 
 @app.post("/api/runner/runners/{runner_id}/stop-server")
-async def stop_runner_server(runner_id: str, body: RunnerStopServerRequest = Body(...), current_user = Depends(get_current_user)):
+async def stop_runner_server(runner_id: str, body: RunnerStopServerRequest = Body(...), current_user = Depends(get_member_user)):
     """The person presses Stop on a running preview session: the runner stops the project's server and everything it started. No card is needed to end something the person started."""
     username = _runner_person(current_user)
     try:
@@ -3043,7 +3044,7 @@ class MemoryEdit(BaseModel):
 
 
 @app.put("/api/memory/{fact_id}")
-async def edit_memory_fact(fact_id: str, payload: MemoryEdit, current_user = Depends(get_current_user)):
+async def edit_memory_fact(fact_id: str, payload: MemoryEdit, current_user = Depends(get_member_user)):
     """The person rewrites a saved note, or re-files it under another part of their life; returns it as the list shows it (with its fresh links)."""
     username = current_user.get("sub")
     if payload.fact is None and payload.category is None and payload.domain is None:
@@ -3061,7 +3062,7 @@ async def edit_memory_fact(fact_id: str, payload: MemoryEdit, current_user = Dep
 
 
 @app.delete("/api/memory/{fact_id}/links/{other_id}")
-async def delete_memory_link(fact_id: str, other_id: str, current_user = Depends(get_current_user)):
+async def delete_memory_link(fact_id: str, other_id: str, current_user = Depends(get_member_user)):
     """The person says two notes do not belong together: the link is removed both ways."""
     username = current_user.get("sub")
     removed = await asyncio.to_thread(unlink_user_facts, username, fact_id, other_id)
@@ -3071,7 +3072,7 @@ async def delete_memory_link(fact_id: str, other_id: str, current_user = Depends
 
 
 @app.delete("/api/memory/{fact_id}")
-async def delete_memory_fact(fact_id: str, current_user = Depends(get_current_user)):
+async def delete_memory_fact(fact_id: str, current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     deleted = delete_user_fact(username, fact_id)
     if not deleted:
@@ -3086,7 +3087,7 @@ async def memory_stored(current_user = Depends(get_current_user)):
 
 
 @app.delete("/api/memory")
-async def clear_memory(current_user = Depends(get_current_user)):
+async def clear_memory(current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     result = await asyncio.to_thread(memory_erase.erase_user_memory, get_db(), username)
     await asyncio.to_thread(open_loops_utils.forget_all_loops, username)
@@ -3135,7 +3136,7 @@ async def edit_open_loop(loop_id: str, payload: dict = Body(...), current_user =
 
 
 @app.delete("/api/open-loops/{loop_id}")
-async def delete_open_loop(loop_id: str, current_user = Depends(get_current_user)):
+async def delete_open_loop(loop_id: str, current_user = Depends(get_member_user)):
     deleted = await asyncio.to_thread(open_loops_utils.forget_loop, current_user.get("sub"), loop_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="That upcoming item was not found")
@@ -3175,7 +3176,7 @@ async def list_user_tasks(current_user = Depends(get_current_user)):
 
 
 @app.post("/api/tasks")
-async def create_user_task(payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def create_user_task(payload: dict = Body(...), current_user = Depends(get_member_user)):
     username = _tasks_user(current_user)
     db = _tasks_db_or_503()
     tz = await asyncio.to_thread(get_user_timezone, username)
@@ -3192,7 +3193,7 @@ async def create_user_task(payload: dict = Body(...), current_user = Depends(get
 
 
 @app.patch("/api/tasks/{task_id}")
-async def update_user_task(task_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def update_user_task(task_id: str, payload: dict = Body(...), current_user = Depends(get_member_user)):
     username = _tasks_user(current_user)
     task, issue = await asyncio.to_thread(user_tasks_utils.update_task, _tasks_db_or_503(), username, task_id, payload)
     if issue:
@@ -3201,7 +3202,7 @@ async def update_user_task(task_id: str, payload: dict = Body(...), current_user
 
 
 @app.delete("/api/tasks/{task_id}")
-async def delete_user_task(task_id: str, current_user = Depends(get_current_user)):
+async def delete_user_task(task_id: str, current_user = Depends(get_member_user)):
     username = _tasks_user(current_user)
     if not await asyncio.to_thread(user_tasks_utils.delete_task, _tasks_db_or_503(), username, task_id):
         raise HTTPException(status_code=404, detail="That task isn't there.")
@@ -3220,14 +3221,14 @@ async def list_user_task_runs(task_id: str, current_user = Depends(get_current_u
 
 
 @app.post("/api/tasks/{task_id}/seen")
-async def mark_user_task_seen(task_id: str, current_user = Depends(get_current_user)):
+async def mark_user_task_seen(task_id: str, current_user = Depends(get_member_user)):
     username = _tasks_user(current_user)
     await asyncio.to_thread(user_tasks_utils.mark_seen, _tasks_db_or_503(), username, task_id)
     return {"status": "ok"}
 
 
 @app.post("/api/tasks/{task_id}/run")
-async def run_user_task_now(task_id: str, current_user = Depends(get_current_user)):
+async def run_user_task_now(task_id: str, current_user = Depends(get_member_user)):
     """Runs one task now, in the background (it counts toward the day's runs). The page checks back for the result."""
     username = _tasks_user(current_user)
     db = _tasks_db_or_503()
@@ -3295,7 +3296,7 @@ async def meetings_state(session_id: str = Query(""), current_user = Depends(get
 
 
 @app.post("/api/meetings")
-async def create_user_meeting(payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def create_user_meeting(payload: dict = Body(...), current_user = Depends(get_member_user)):
     username = _meetings_user(current_user)
     spec, issue = meetings_utils.validate_meeting({**payload, "tz": await asyncio.to_thread(get_user_timezone, username)})
     if issue:
@@ -3307,7 +3308,7 @@ async def create_user_meeting(payload: dict = Body(...), current_user = Depends(
 
 
 @app.patch("/api/meetings/notes/{note_id}")
-async def update_user_meeting_note(note_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def update_user_meeting_note(note_id: str, payload: dict = Body(...), current_user = Depends(get_member_user)):
     username = _meetings_user(current_user)
     note = await asyncio.to_thread(meetings_utils.update_note, _meetings_db_or_503(), username, note_id, payload)
     if note is None:
@@ -3316,7 +3317,7 @@ async def update_user_meeting_note(note_id: str, payload: dict = Body(...), curr
 
 
 @app.delete("/api/meetings/notes/{note_id}")
-async def delete_user_meeting_note(note_id: str, current_user = Depends(get_current_user)):
+async def delete_user_meeting_note(note_id: str, current_user = Depends(get_member_user)):
     username = _meetings_user(current_user)
     if not await asyncio.to_thread(meetings_utils.delete_note, _meetings_db_or_503(), username, note_id):
         raise HTTPException(status_code=404, detail="That note isn't there.")
@@ -3324,7 +3325,7 @@ async def delete_user_meeting_note(note_id: str, current_user = Depends(get_curr
 
 
 @app.patch("/api/meetings/{meeting_id}")
-async def update_user_meeting(meeting_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def update_user_meeting(meeting_id: str, payload: dict = Body(...), current_user = Depends(get_member_user)):
     username = _meetings_user(current_user)
     meeting, issue = await asyncio.to_thread(meetings_utils.update_meeting, _meetings_db_or_503(), username, meeting_id, payload)
     if issue:
@@ -3333,7 +3334,7 @@ async def update_user_meeting(meeting_id: str, payload: dict = Body(...), curren
 
 
 @app.delete("/api/meetings/{meeting_id}")
-async def delete_user_meeting(meeting_id: str, current_user = Depends(get_current_user)):
+async def delete_user_meeting(meeting_id: str, current_user = Depends(get_member_user)):
     username = _meetings_user(current_user)
     if not await asyncio.to_thread(meetings_utils.delete_meeting, _meetings_db_or_503(), username, meeting_id):
         raise HTTPException(status_code=404, detail="That meeting isn't there.")
@@ -3363,7 +3364,7 @@ async def list_progress_notes(meeting_id: str, current_user = Depends(get_curren
 
 
 @app.post("/api/meetings/{meeting_id}/progress-notes")
-async def add_progress_note(meeting_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def add_progress_note(meeting_id: str, payload: dict = Body(...), current_user = Depends(get_member_user)):
     username = _meetings_user(current_user)
     db = _meetings_db_or_503()
     if await asyncio.to_thread(meetings_utils.get_meeting, db, username, meeting_id) is None:
@@ -3377,7 +3378,7 @@ async def add_progress_note(meeting_id: str, payload: dict = Body(...), current_
 
 
 @app.patch("/api/progress-notes/{note_id}")
-async def update_progress_note(note_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def update_progress_note(note_id: str, payload: dict = Body(...), current_user = Depends(get_member_user)):
     username = _meetings_user(current_user)
     note = await asyncio.to_thread(progress_notes_utils.update_note, _meetings_db_or_503(), username, note_id, payload)
     if note is None:
@@ -3386,7 +3387,7 @@ async def update_progress_note(note_id: str, payload: dict = Body(...), current_
 
 
 @app.delete("/api/progress-notes/{note_id}")
-async def delete_progress_note(note_id: str, current_user = Depends(get_current_user)):
+async def delete_progress_note(note_id: str, current_user = Depends(get_member_user)):
     username = _meetings_user(current_user)
     if not await asyncio.to_thread(progress_notes_utils.delete_note, _meetings_db_or_503(), username, note_id):
         raise HTTPException(status_code=404, detail="That note was not found.")
@@ -3394,7 +3395,7 @@ async def delete_progress_note(note_id: str, current_user = Depends(get_current_
 
 
 @app.post("/api/meetings/{meeting_id}/start")
-async def start_user_meeting(meeting_id: str, payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def start_user_meeting(meeting_id: str, payload: dict = Body(...), current_user = Depends(get_member_user)):
     """Starts office hours in a conversation: only ever from the person pressing the button."""
     username = _meetings_user(current_user)
     run, issue = await asyncio.to_thread(meetings_utils.start_run, _meetings_db_or_503(), username, meeting_id, str(payload.get("session_id") or ""))
@@ -3404,7 +3405,7 @@ async def start_user_meeting(meeting_id: str, payload: dict = Body(...), current
 
 
 @app.post("/api/meetings/runs/{run_id}/end")
-async def end_user_meeting(run_id: str, current_user = Depends(get_current_user)):
+async def end_user_meeting(run_id: str, current_user = Depends(get_member_user)):
     """Ends the meeting and saves its notes (a small model call, skipped in low-power mode)."""
     username = _meetings_user(current_user)
     db = _meetings_db_or_503()
@@ -3450,7 +3451,7 @@ async def get_calendar_headsups(current_user = Depends(get_current_user)):
 
 
 @app.put("/api/calendar-headsups")
-async def put_calendar_headsups(payload: dict = Body(...), current_user = Depends(get_current_user)):
+async def put_calendar_headsups(payload: dict = Body(...), current_user = Depends(get_member_user)):
     username = _headsups_user(current_user)
     db = get_db()
     if db is None:
@@ -3498,7 +3499,7 @@ async def sync_local_workspace(payload: LocalWorkspaceSync, current_user = Depen
 
 
 @app.delete("/api/local-workspace")
-async def disconnect_local_workspace(current_user = Depends(get_current_user)):
+async def disconnect_local_workspace(current_user = Depends(get_member_user)):
     await asyncio.to_thread(clear_local_workspace, current_user.get("sub"))
     return {"status": "disconnected"}
 
@@ -3510,14 +3511,14 @@ async def memory_compaction_meter(current_user = Depends(get_current_user)):
 
 
 @app.post("/api/memory/compact")
-async def compact_memory(current_user = Depends(get_current_user)):
+async def compact_memory(current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     result = await compact_user_memory(get_db(), services.get("user_memory_vector_store"), username)
     return result
 
 
 @app.post("/api/memory/compact-meta")
-async def compact_meta_memory_endpoint(current_user = Depends(get_current_user)):
+async def compact_meta_memory_endpoint(current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     result = await compact_meta_memory(get_db(), services.get("user_memory_vector_store"), username)
     return result
@@ -3603,7 +3604,7 @@ async def get_tool_model_setting(current_user = Depends(get_current_user)):
 
 
 @app.put("/api/settings/tool-model")
-async def update_tool_model_setting(payload: ToolModelUpdate, current_user = Depends(get_current_user)):
+async def update_tool_model_setting(payload: ToolModelUpdate, current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     view, problem = save_tool_model_choice(username, payload.tool_model, claude_available(), sonnet_available(), openai_available())
     if problem:
@@ -3620,7 +3621,7 @@ async def get_reply_model_setting(current_user = Depends(get_current_user)):
 
 
 @app.put("/api/settings/reply-model")
-async def update_reply_model_setting(payload: ReplyModelUpdate, current_user = Depends(get_current_user)):
+async def update_reply_model_setting(payload: ReplyModelUpdate, current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     view, problem = save_reply_model_choice(username, payload.reply_model, openai_available(), lite_reply_available(), haiku_reply_available())
     if problem:
@@ -3636,7 +3637,7 @@ async def get_execute_model_setting(current_user = Depends(get_current_user)):
 
 
 @app.put("/api/settings/execute-model")
-async def update_execute_model_setting(payload: ExecuteModelUpdate, current_user = Depends(get_current_user)):
+async def update_execute_model_setting(payload: ExecuteModelUpdate, current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     view, problem = save_execute_model_choice(username, payload.execute_model, claude_available(), sonnet_available(), openai_available())
     if problem:
@@ -3694,7 +3695,7 @@ async def _budget_view_with_request(username: str, state: dict, admin: bool) -> 
 
 
 @app.post("/api/budget/request-increase")
-async def request_budget_increase(current_user = Depends(get_current_user)):
+async def request_budget_increase(current_user = Depends(get_member_user)):
     """The signed-in person asks the admins to raise their own limit by 25% for the one that is furthest along (the 5-hour window or the day),
     until it resets. Only available from their own notice line (80%) onward; a second ask while one is waiting changes nothing."""
     username = current_user.get("sub")
@@ -3716,7 +3717,7 @@ async def request_budget_increase(current_user = Depends(get_current_user)):
 
 
 @app.post("/api/budget/extend")
-async def extend_budget(current_user = Depends(get_current_user)):
+async def extend_budget(current_user = Depends(get_member_user)):
     """A global admin raises the limit of whatever shared budget is at its notice line (80% by default) or past it by another 25%, until that budget resets
     (backend/utils/budget_guard.py). Each click adds another 25%; nothing happens if no shared budget is that far along. Each grant is saved with who and when."""
     username = current_user.get("sub")
@@ -3798,7 +3799,7 @@ async def get_target_repo_setting(current_user = Depends(get_current_user)):
 
 
 @app.put("/api/settings/target-repo")
-async def update_target_repo_setting(payload: TargetRepoUpdate, current_user = Depends(get_current_user)):
+async def update_target_repo_setting(payload: TargetRepoUpdate, current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     saved = set_user_target_repo(username, payload.target_repo)
     return {"target_repo": saved}
@@ -3811,7 +3812,7 @@ async def get_target_doc_setting(current_user = Depends(get_current_user)):
 
 
 @app.put("/api/settings/target-doc")
-async def update_target_doc_setting(payload: TargetDocUpdate, current_user = Depends(get_current_user)):
+async def update_target_doc_setting(payload: TargetDocUpdate, current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     saved = set_user_target_doc_id(username, payload.doc_url_or_id)
     warning = None
@@ -3837,7 +3838,7 @@ async def get_github_token_setting(current_user = Depends(get_current_user)):
 
 
 @app.put("/api/settings/github-token")
-async def update_github_token_setting(payload: GitHubTokenUpdate, current_user = Depends(get_current_user)):
+async def update_github_token_setting(payload: GitHubTokenUpdate, current_user = Depends(get_member_user)):
     """Saves (or, with an empty token, removes) the user's own GitHub token. The token is checked with
     GitHub first and only stored, encrypted, if GitHub accepts it, so a typo is never saved as if it worked."""
     username = current_user.get("sub")
@@ -3881,7 +3882,7 @@ async def update_timezone_setting(payload: TimezoneUpdate, current_user = Depend
 
 
 @app.post("/api/calendar/connect/start")
-async def start_calendar_connection(return_to: str = Query(...), current_user = Depends(get_current_user)):
+async def start_calendar_connection(return_to: str = Query(...), current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     if username in CALENDAR_LOCKED_USERS:
         raise HTTPException(status_code=403, detail="Google Calendar is not available for this account")
@@ -3933,7 +3934,7 @@ async def get_calendar_status(current_user = Depends(get_current_user)):
 
 
 @app.post("/api/calendar/disconnect")
-async def disconnect_calendar(current_user = Depends(get_current_user)):
+async def disconnect_calendar(current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     GoogleCalendarOAuth().revoke(username)
     delete_calendar_connection(username)
@@ -3941,7 +3942,7 @@ async def disconnect_calendar(current_user = Depends(get_current_user)):
 
 
 @app.post("/api/microsoft/connect/start")
-async def start_microsoft_connection(return_to: str = Query(...), current_user = Depends(get_current_user)):
+async def start_microsoft_connection(return_to: str = Query(...), current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     if username in microsoft_utils.MICROSOFT_LOCKED_USERS:
         raise HTTPException(status_code=403, detail="Microsoft is not available for this account")
@@ -3990,7 +3991,7 @@ async def get_microsoft_status(current_user = Depends(get_current_user)):
 
 
 @app.post("/api/microsoft/disconnect")
-async def disconnect_microsoft(current_user = Depends(get_current_user)):
+async def disconnect_microsoft(current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     await asyncio.to_thread(MicrosoftOAuth().revoke, username)
     await asyncio.to_thread(microsoft_utils.delete_connection, username)
@@ -4007,7 +4008,7 @@ async def ingest_error_webhook(
         logger.error("INGEST_WEBHOOK_SECRET is not configured")
         raise HTTPException(status_code=503, detail="Ingest is not configured")
 
-    if x_ingest_secret != configured_secret:
+    if not hmac.compare_digest((x_ingest_secret or "").encode("utf-8"), configured_secret.encode("utf-8")):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"accepted": False, "error": "invalid_ingest_secret"},
@@ -4068,16 +4069,15 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 
     # The raw body is needed to check GitHub's signature, so it is read once and parsed from here.
     raw_body = await request.body()
+    # No secret, no webhook. It used to accept unsigned events when the secret was not set, and a forged "pull request opened" event for any repo a token could reach made the server read the PR, call a
+    # model and post a comment on it (found by the launch probe, 2026-11-19). Now an unconfigured server refuses, the way the ingest webhook does.
     webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
-    if webhook_secret:
-        if not verify_github_signature(webhook_secret, raw_body, request.headers.get("X-Hub-Signature-256")):
-            logger.warning("Rejected a GitHub webhook with a missing or invalid signature.")
-            raise HTTPException(status_code=401, detail="Invalid webhook signature.")
-    else:
-        logger.warning(
-            "GITHUB_WEBHOOK_SECRET is not set, so /webhooks/github accepts unsigned requests. "
-            "Set it (and the same secret on the GitHub webhook) to reject forged events."
-        )
+    if not webhook_secret:
+        logger.error("GITHUB_WEBHOOK_SECRET is not set, so /webhooks/github refuses every request. Set it (and the same secret on the GitHub webhook).")
+        raise HTTPException(status_code=503, detail="Webhook is not configured.")
+    if not verify_github_signature(webhook_secret, raw_body, request.headers.get("X-Hub-Signature-256")):
+        logger.warning("Rejected a GitHub webhook with a missing or invalid signature.")
+        raise HTTPException(status_code=401, detail="Invalid webhook signature.")
 
     try:
         payload = json.loads(raw_body or b"{}")
@@ -4115,10 +4115,12 @@ def saapp_health_check():
     Used by errAgent to monitor uptime and latency.
     """
     db_status = "connected" if test_connection() else "disabled_or_failed"
+    keys_rejected = provider_health.degraded()          # a model provider is refusing the API key: errAgent's uptime check sees "degraded" (backend/utils/provider_health.py); which one is for the admin banner
 
     return {
-        "status": "ok" if db_status == "connected" else "degraded",
+        "status": "ok" if db_status == "connected" and not keys_rejected else "degraded",
         "db": db_status,
+        "llm": "degraded" if keys_rejected else "ok",
         "service": "SAAPP Widget",
         "version": "1.0.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -4483,7 +4485,7 @@ async def billing_quote(amount_usd: float = Query(...), current_user = Depends(g
 
 
 @app.post("/api/billing/checkout", tags=["Billing"])
-async def billing_checkout(payload: BillingTopUpRequest, current_user = Depends(get_current_user)):
+async def billing_checkout(payload: BillingTopUpRequest, current_user = Depends(get_member_user)):
     """Starts a top-up through the payment provider's hosted page (backend/services/payments.py). 503 until a provider is set up."""
     username = _billing_user(current_user)
     return_url = os.getenv("BILLING_RETURN_URL", "")
@@ -4507,7 +4509,7 @@ async def billing_webhook(request: Request):
 
 
 @app.put("/api/billing/ceiling", tags=["Billing"])
-async def billing_set_own_ceiling(payload: BillingCeilingRequest, current_user = Depends(get_current_user)):
+async def billing_set_own_ceiling(payload: BillingCeilingRequest, current_user = Depends(get_member_user)):
     """The person sets their own daily limit for paid use, lower than the server's (null clears it)."""
     username = _billing_user(current_user)
     ok, message, now_in_force = await asyncio.to_thread(credits.set_own_ceiling, get_db(), username, payload.daily_usd)
@@ -4580,7 +4582,7 @@ async def get_working_notes(session_id: str = Query(...), current_user = Depends
 
 
 @app.patch("/api/working-notes")
-async def edit_working_notes(edit: WorkingNoteEdit, session_id: str = Query(...), current_user = Depends(get_current_user)):
+async def edit_working_notes(edit: WorkingNoteEdit, session_id: str = Query(...), current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     view = await asyncio.to_thread(
         working_state_utils.edit_item, get_db(), username, session_id.strip(), edit.item_id.strip(), edit.text, datetime.now(timezone.utc), kind=(edit.kind or "").strip() or None,
@@ -4591,7 +4593,7 @@ async def edit_working_notes(edit: WorkingNoteEdit, session_id: str = Query(...)
 
 
 @app.delete("/api/working-notes")
-async def clear_working_notes(session_id: str = Query(...), current_user = Depends(get_current_user)):
+async def clear_working_notes(session_id: str = Query(...), current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     await asyncio.to_thread(working_state_utils.clear, get_db(), username, session_id.strip())
     return {"status": "cleared"}
@@ -4610,7 +4612,7 @@ async def get_conversation_summary(session_id: str = Query(...), current_user = 
 
 
 @app.patch("/api/conversation-summary")
-async def edit_conversation_summary(edit: ConversationSummaryEdit, session_id: str = Query(...), current_user = Depends(get_current_user)):
+async def edit_conversation_summary(edit: ConversationSummaryEdit, session_id: str = Query(...), current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     view = await asyncio.to_thread(
         conversation_summary_utils.edit_item, get_db(), username, session_id.strip(), edit.item_id.strip(), edit.text, datetime.now(timezone.utc), kind=(edit.kind or "").strip() or None,
@@ -4622,7 +4624,7 @@ async def edit_conversation_summary(edit: ConversationSummaryEdit, session_id: s
 
 
 @app.delete("/api/conversation-summary")
-async def clear_conversation_summary(session_id: str = Query(...), current_user = Depends(get_current_user)):
+async def clear_conversation_summary(session_id: str = Query(...), current_user = Depends(get_member_user)):
     username = current_user.get("sub")
     await asyncio.to_thread(conversation_summary_utils.clear, get_db(), username, session_id.strip())
     return {"status": "cleared"}
@@ -4781,23 +4783,3 @@ async def remove_learned_knowledge(key: str, admin = Depends(require_global_admi
         raise HTTPException(status_code=404, detail="No such card.")
     logger.info("[knowledge base] an admin removed a card.")
     return await asyncio.to_thread(knowledge_base_utils.admin_view, db)
-
-
-@app.post("/api/synthetic/ask")
-async def synthetic_ask(
-    request: SyntheticAskRequest,
-    current_user=Depends(get_current_user),
-):
-    workflow = services.get("compiled_workflow")
-
-    answer = await run_synthetic_read_only_question(
-        workflow=workflow,
-        question=request.question,
-        username=current_user.get("sub", "synthetic-check"),
-    )
-
-    return {
-        "status": "ok",
-        "answer": answer,
-        "request_id": uuid.uuid4().hex,
-    }

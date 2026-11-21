@@ -1,0 +1,39 @@
+/* The strip an admin sees while a model provider is refusing Sonic's API key (components/ProviderAlert.tsx). Meant to be noticed and not to be pretty: it is gone the moment the key is fixed. */
+.provider-alert {
+  --alert-accent: #dc2626;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--alert-accent) 45%, var(--border-color));
+  background: color-mix(in srgb, var(--alert-accent) 9%, var(--bg-surface));
+  color: var(--text-main);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.provider-alert-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.provider-alert-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--alert-accent);
+}
+
+.provider-alert-since {
+  color: color-mix(in srgb, var(--text-main) 65%, transparent);
+}
+
+.provider-alert-text {
+  margin: 0.2rem 0 0 1.05rem;
+  color: color-mix(in srgb, var(--text-main) 85%, transparent);
+}
+
+/* the dark theme (index.css: .theme-shadow) */
+.theme-shadow .provider-alert { --alert-accent: #f87171; }

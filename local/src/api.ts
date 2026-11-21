@@ -3,6 +3,7 @@ import type { SessionCheck } from './utils/authReady';
 import { IDLE_LIMIT_MS, isKeepaliveLine, readOrGiveUp } from './streamWatchdog';
 import { ChatSendError, kindForStatus, safeDetail, toChatSendError } from './chatErrors';
 import type { GuestAllowance } from './guestAllowanceLogic';
+import type { ProviderAlertItem } from './components/providerAlertLogic';
 import { SyncRequestError } from './localWorkspaceCore';
 import { nameKnowledgeBases } from './pages/sonicHealthFormat';
 
@@ -844,6 +845,8 @@ export interface BudgetView {
   own_extended_by?: number;
   /** Where their request for more stands: waiting for an admin, or declined for this period. */
   increase_request?: 'pending' | 'declined' | null;
+  /** Admins only, whatever the budget says: a model provider is refusing Sonic's API key (backend/utils/provider_health.py). Empty or absent when every key is accepted. */
+  provider_alerts?: ProviderAlertItem[];
 }
 
 export interface BudgetIncreaseRequest {
@@ -2229,6 +2232,8 @@ export interface RunnerJob {
   kind?: 'check' | 'command' | 'serve' | 'stop' | 'look';
   /** For a command: read (only looks), run (runs a program) or change (changes files, the project or uses the network), and why. */
   command_class?: 'read' | 'run' | 'change' | ''; command_notes?: string[]; auto_approved?: boolean; needs_confirm?: boolean;
+  /** A sentence Sonic printed on the card about what happens AFTER the command (a pull request opened once the push succeeds): part of what pressing Run approves. Never sent to the runner. */
+  follow_up_text?: string;
   /** A server job (kind 'serve' or 'stop'): what the runner said about it. `session_looks_left` is how many looks the preview session still allows without a click (serve jobs only). */
   server?: { status?: string; name?: string; port?: number | null; exposed?: boolean }; session_looks_left?: number | null; /** true once the server of this session was stopped */ session_stopped?: boolean;
   /** A look (kind 'look'): the address, the window size, whether it rides on a preview session (no click), and what the runner read (the picture is fetched separately: see `getLookPicture`). */

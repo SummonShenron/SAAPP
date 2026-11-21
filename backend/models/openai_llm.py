@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage
 
-from backend.utils import llm_usage
+from backend.utils import llm_usage, provider_health
 
 logger = logging.getLogger("SASS Logger")
 
@@ -110,6 +110,7 @@ class OpenAILLM:
         return self.model_name if served.startswith(self.model_name) else served
 
     def _metered(self, response: Any, label: str) -> Any:
+        provider_health.note_ok("openai")
         try:
             llm_usage.record(self._served_as(response), label, llm_usage.usage_of(response))
         except Exception:
@@ -119,6 +120,7 @@ class OpenAILLM:
     def _gave_up(self, error: Exception) -> None:
         # Only the kind of failure is logged, never its message: an API error can quote what was sent.
         self._last_failure = type(error).__name__
+        provider_health.note_failure("openai", error)
         logger.warning("[openai] %s failed (%s); using the fallback model.", self.model_name, self._last_failure)
 
     def _no_fallback(self) -> Exception:
@@ -157,6 +159,8 @@ class OpenAILLM:
             answered_by, started = self.model_name, False
             try:
                 async for chunk in self._client().astream(_messages(prompt), *args, **kwargs):
+                    if not started:
+                        provider_health.note_ok("openai")
                     started = True
                     llm_usage.add_into(streamed, llm_usage.usage_of(chunk))
                     answered_by = llm_usage.served_by(chunk, answered_by)

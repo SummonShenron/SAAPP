@@ -30,7 +30,8 @@ def test_the_runners_own_calls_are_authenticated_by_its_key_and_never_by_a_perso
 @pytest.mark.parametrize("route", PAGE_SIDE)
 def test_the_pages_calls_need_a_signed_in_non_guest_person(route):
     text = block(route)
-    assert "Depends(get_current_user)" in text and "_runner_person(current_user)" in text and "get_runner_key" not in text
+    dependency = "Depends(get_current_user)" if route.startswith("@app.get") else "Depends(get_member_user)"          # a write refuses the guest at the door (backend/auth/guest_policy.py); a read still checks inside
+    assert dependency in text and "_runner_person(current_user)" in text and "get_runner_key" not in text
 
 
 def test_pairing_is_the_one_call_with_no_sign_in_because_the_single_use_code_is_the_proof():
@@ -83,7 +84,7 @@ def test_the_settings_call_takes_check_names_and_a_yes_or_no_and_nothing_that_co
 
 def test_the_update_call_needs_a_signed_in_person_names_no_address_and_the_next_poll_ends_early_for_an_update():
     text = block('@app.post("/api/runner/runners/{runner_id}/update")', 1100)
-    assert "Depends(get_current_user)" in text and "_runner_person(current_user)" in text and "runner_jobs.request_update" in text and "asyncio.to_thread(" in text and "status_code=404" in text
+    assert "Depends(get_member_user)" in text and "_runner_person(current_user)" in text and "runner_jobs.request_update" in text and "asyncio.to_thread(" in text and "status_code=404" in text
     assert "https://" not in text and "github" not in text.lower() and "install_url" not in text and ".zip" not in text      # nothing here names where to install from
     nxt = block('@app.get("/api/runner/next")', 900)
     assert 'answer["job"] or answer["update"]' in nxt

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type RunnerJob } from '../api';
-import { SESSION_IDLE_MINUTES, canStopServer, classSentence, deviceLabel, filesLine, headline, isCommand, isFinal, isLook, isServe, lookLines, lookNote, needsSecondStep, serveNote, serverExposed, verdict } from '../runnerLogic';
+import { SESSION_IDLE_MINUTES, canStopServer, classSentence, deviceLabel, filesLine, followUpLine, headline, isCommand, isFinal, isLook, isServe, lookLines, lookNote, needsSecondStep, serveNote, serverExposed, verdict } from '../runnerLogic';
 import './__styles__/RunnerCheckCard.css';
 
 interface RunnerCheckCardProps {
@@ -89,6 +89,7 @@ export default function RunnerCheckCard({ job: first, runner }: RunnerCheckCardP
   const look = isLook(job);
   const second = needsSecondStep(job);
   const files = filesLine(job);
+  const followUp = followUpLine(job);
   const where = [runner?.name, runner?.root_name].filter(Boolean).join(' · ');
   const facts = look ? lookLines(job) : [];
   return (
@@ -106,13 +107,14 @@ export default function RunnerCheckCard({ job: first, runner }: RunnerCheckCardP
       <pre className="rcc-command" aria-label={look ? 'The address that will be opened' : 'The command that will run'}>{job.command_shown}</pre>
       {command && classSentence(job.command_class) && <div className="rcc-note">{classSentence(job.command_class)}</div>}
       {command && (job.command_notes ?? []).length > 0 && <ul className="rcc-notes">{(job.command_notes ?? []).map(note => <li key={note}>{note}</li>)}</ul>}
+      {followUp && <div className="rcc-followup" data-testid="rcc-followup">{followUp}</div>}
       {files && <div className="rcc-files"><span className="rcc-label">On these files:</span> {files}</div>}
       {kind === 'waiting' && serve && <div className="rcc-note">{serveNote(job)}</div>}
       {(kind === 'waiting' || kind === 'running') && look && <div className="rcc-note">{lookNote(job)}</div>}
       {kind === 'waiting' && !serve && !look && <div className="rcc-note">This runs on your own computer, with your own privileges. Read the command before you press Run.</div>}
       {kind === 'waiting' && second && confirming && (
         <div className="rcc-strong" role="alert">
-          <strong>This command changes things.</strong> Read the line above once more. After you confirm, your computer shows its own window asking again, and nothing runs unless you say yes there too.
+          <strong>This command changes things.</strong> Read the line above once more{followUp ? ', and the sentence under it about what happens next, which this also approves' : ''}. After you confirm, your computer shows its own window asking again, and nothing runs unless you say yes there too.
         </div>
       )}
       <div className="rcc-status" role="status">{headline(job)}</div>

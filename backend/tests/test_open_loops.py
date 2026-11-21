@@ -525,9 +525,9 @@ def test_forgetting_everything_also_forgets_the_loops_and_the_endpoints_require_
     source = _app_source()
     clear = source[source.index("async def clear_memory"): source.index('@app.get("/api/open-loops")')]
     assert "forget_all_loops" in clear
-    for route in ('@app.get("/api/open-loops")', '@app.delete("/api/open-loops/{loop_id}")'):
+    for route, dependency in (('@app.get("/api/open-loops")', "Depends(get_current_user)"), ('@app.delete("/api/open-loops/{loop_id}")', "Depends(get_member_user)")):
         start = source.index(route)
-        assert "Depends(get_current_user)" in source[start: start + 200], route
+        assert dependency in source[start: start + 200], route
 
 
 def test_the_counters_know_the_new_keys_and_the_voice_prompt_carries_the_block():

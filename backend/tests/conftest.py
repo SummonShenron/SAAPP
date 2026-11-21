@@ -154,3 +154,34 @@ def scripted_tool_agent_model(monkeypatch):
     scripted = ScriptedDecisionLLM()
     monkeypatch.setattr(aw.lite_llm, "ainvoke_tools", scripted.ainvoke_tools, raising=False)
     monkeypatch.setattr(aw.lite_llm_deep, "ainvoke_tools", scripted.ainvoke_tools, raising=False)
+
+
+class _RealNetworkCallBlocked(RuntimeError):
+    pass
+
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "testserver"}
+
+
+@pytest.fixture(autouse=True)
+def block_real_network_calls(monkeypatch):
+    """Global safety net for the internet, same family as the model, embedding and database blocks above. A test that fakes `requests.post` but forgets the call that follows it (a PUT to GitHub's merge
+    endpoint, found 2026-11-20) quietly sends a REAL request: it passes while the machine is online, the service answers 401 to the fake token and the code carries on, and it fails the moment the machine is
+    offline, so a green run can depend on the network. The choke point is the adapter every `requests` call goes through; anything not aimed at this machine is refused. A test that replaces `requests.get`,
+    `post`, `put` and so on (the normal pattern in this suite) never reaches it. Calls to localhost are left alone (some tests talk to a server they start themselves)."""
+    from urllib.parse import urlparse
+
+    import requests.adapters
+
+    real_send = requests.adapters.HTTPAdapter.send
+
+    def guarded(self, request, *args, **kwargs):
+        host = (urlparse(request.url).hostname or "").lower()
+        if host not in _LOOPBACK_HOSTS:
+            raise _RealNetworkCallBlocked(
+                f"A test attempted a real network request ({request.method} to {host}) instead of mocking it. "
+                "Mock the call (monkeypatch.setattr(module.requests, 'put', fake)); every verb the code under test uses needs one."
+            )
+        return real_send(self, request, *args, **kwargs)
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", guarded)

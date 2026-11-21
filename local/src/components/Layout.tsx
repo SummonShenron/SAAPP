@@ -12,6 +12,7 @@ import Spinner from "../components/Spinner";
 import HelpPanel from "../components/HelpPanel";
 import Rail from "./Rail";
 import TopBar from "./TopBar";
+import ProviderAlert from "./ProviderAlert";
 import { HelpModeProvider } from "./HelpMode";
 import { useShell } from "./shellStore";
 import { useAuth } from '@clerk/clerk-react';
@@ -229,6 +230,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
 
       <div className="app-main">
         <TopBar title={title} isMobile={isMobile} onOpenMenu={() => setDrawerOpen(true)} actions={onChat ? topBarActions : null} />
+        <ProviderAlert enabled={isAdmin && authReady} />
         <div className="app-content">
           {/* Main page content: only once the person is fully signed in */}
           {authReady ? (

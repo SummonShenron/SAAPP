@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { OS_LABEL, agoText, checkIsOn, detectOs, filesLine, headline, isFinal, isOlderVersion, canSelfUpdate, launchHint, minutesLeft, noChecksLine, notConnectedReason, parseVersion, requestSentence, requestsOpen, requestsToShow, runHint, statusSentence, updateNote, verdict, withAutoUpdate, withCheck, withFakeKeys, classSentence, isCommand, needsSecondStep, withReadOnlyAuto } from './runnerLogic.ts';
+import { OS_LABEL, agoText, checkIsOn, detectOs, filesLine, followUpLine, headline, isFinal, isOlderVersion, canSelfUpdate, launchHint, minutesLeft, noChecksLine, notConnectedReason, parseVersion, requestSentence, requestsOpen, requestsToShow, runHint, statusSentence, updateNote, verdict, withAutoUpdate, withCheck, withFakeKeys, classSentence, isCommand, needsSecondStep, withReadOnlyAuto } from './runnerLogic.ts';
 
 const job = (over = {}) => ({ id: 'j1', runner_id: 'r1', check: 'tests', command_shown: 'pytest -q {files}', files: [], status: 'done', created_at: null, expires_at: null, finished_at: null, exit_code: 0, output_tail: '', truncated: false, timed_out: false, duration: 1.5, error: '', ...over });
 
@@ -303,4 +303,13 @@ test('the card asks twice for a change, sends the confirmation only on the secon
   assert.match(api, /JSON\.stringify\(\{ confirmed \}\)/);
   assert.match(settings, /read_only_auto: on/);
   assert.match(settings, /runner\.commands &&/);                                                      // the choice is shown only for a runner that can run commands
+});
+
+test('the sentence about what follows a command is trimmed, empty when nothing follows, and printed on the card where the person approves', () => {
+  assert.equal(followUpLine(cmd({ follow_up_text: '  Then Sonic opens a pull request on GitHub.  ' })), 'Then Sonic opens a pull request on GitHub.');
+  assert.equal(followUpLine(cmd()), '');
+  assert.equal(followUpLine({}), '');
+  const card = readFileSync(new URL('./components/RunnerCheckCard.tsx', import.meta.url), 'utf8');
+  assert.match(card, /\{followUp && <div className="rcc-followup"/);        // shown whatever state the card is in, so it is on screen when Run is pressed
+  assert.match(card, /which this also approves/);                         // and the second, stronger confirmation points at it
 });

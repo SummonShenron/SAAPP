@@ -511,6 +511,32 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "commit_push_pr_one_card",
+        "requires": [
+            "backend/utils/pr_followup.py::def open_after_push",
+            "backend/utils/pr_followup.py::def card_text",
+            "backend/services/agent_workflow.py::pr_followup.open_after_push",
+        ],
+        "month": "2026-11",
+        "title": "Commit, push and pull request in one approval",
+        "line": "With your runner connected I can commit, push and open the pull request from one card and one approval: the card says the pull request follows, and I open it with your own GitHub token only after the push succeeds.",
+        "keywords": ["commit and push and open a pr", "open a pull request", "commit push and pr", "one approval", "one card", "push and open a pr"],
+        "volunteer": [],
+    },
+    {
+        "id": "outside_repo_scope",
+        "requires": [
+            "backend/utils/repo_scope.py::def outside_repo",
+            "backend/services/agent_workflow.py::_outside_repo",
+            "backend/services/agent_workflow.py::_REPO_ONLY_TOOLS",
+        ],
+        "month": "2026-11",
+        "title": "Talking about projects outside the repo",
+        "line": "When you tell me a project isn't the connected repo (\"this isn't about the repo\", \"my other project\"), I stop searching the repo for it and just talk it through, until you say we're back on the repo.",
+        "keywords": ["not about the repo", "my other project", "outside the repo", "different project", "not in this repo", "back to the repo"],
+        "volunteer": [],
+    },
+    {
         "id": "plan_stall_guard",
         "requires": [
             "backend/utils/code_plan.py::def after_turn",

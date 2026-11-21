@@ -251,7 +251,7 @@ def test_the_memory_endpoints_send_no_embeddings_and_let_a_link_be_removed():
     listing = source[source.index('@app.get("/api/memory")'):source.index('@app.delete("/api/memory/{fact_id}/links/{other_id}")')]
     assert "fact_for_state(f)" in listing and "linked_fact_summaries(f, by_id)" in listing and "f.dict()" not in listing
     unlink = source[source.index('@app.delete("/api/memory/{fact_id}/links/{other_id}")'):source.index('@app.delete("/api/memory/{fact_id}")')]
-    assert "Depends(get_current_user)" in unlink and "unlink_user_facts" in unlink and "status_code=404" in unlink
+    assert "Depends(get_member_user)" in unlink and "unlink_user_facts" in unlink and "status_code=404" in unlink
 
 
 def refusing_second_look(monkeypatch, verdict):

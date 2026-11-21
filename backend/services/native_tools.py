@@ -216,6 +216,10 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "everything": {"type": "boolean", "description": "true: also commit new untracked files (git add -A). Only after you looked at git status --short and nothing secret or unwanted is in it"},
         "new_branch": {"type": "string", "description": "optional: create this branch first and commit to it, for example sonic/fix-clamp"},
         "push": {"type": "boolean", "description": "optional: also push the branch to origin afterwards"},
+        "open_pull_request": {"type": "boolean", "description": "optional: true to ALSO open a pull request on GitHub after the push (implies push); it is stated on the same card, so one approval covers all of it"},
+        "pr_title": {"type": "string", "description": "optional: the pull request's title; the commit subject when left out"},
+        "pr_base": {"type": "string", "description": "optional: the branch the pull request goes into; the repository's default branch when left out"},
+        "pr_draft": {"type": "boolean", "description": "optional: true to open it as a draft"},
     }, ["message"]),
     # plan mode (backend/utils/code_plan.py), offered only on a plan turn: the plan the person approves before anything is edited. Nothing is written to their folder.
     "submit_plan": _object({
@@ -337,7 +341,9 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "identity, hooks and credentials, can commit files the GitHub route refuses (dependency manifests, lockfiles, CI workflows) and never forces or resets anything. Look first with "
         "run_local_command (git status --short, git diff --stat) when you are not sure what changed, then list the files in `paths`; use everything=true only after you saw nothing secret or unwanted is "
         "untracked. The message says what the change DOES. It waits for them and for the run, then returns the real exit code and output: say what happened, and never that it was committed unless the exit code is 0. "
-        "Use this INSTEAD of propose_commit whenever it is among your tools; propose_commit is for when no runner is connected, or to open a pull request. It is ONE click for a plain commit (and push) on the "
+        "Use this INSTEAD of propose_commit whenever it is among your tools; propose_commit is for when no runner is connected. To also open a pull request pass open_pull_request=true (it implies push; give "
+        "new_branch unless the folder is already on a branch of its own): the same card says in words that a pull request follows, so ONE approval covers commit, push and pull request, and after a successful push the "
+        "server opens it with the person's own GitHub token and the result gives you the link; never say it was opened unless the result says so. It is ONE click for a commit (and push, and pull request) on the "
         "current branch or one new branch, and nothing else: if they ask for the steps or the commands, or the job also needs a branch to be checked out or switched, a pull, or a merge, use propose_steps instead. It cannot merge, pull or switch to another branch."
     ),
     "propose_merge": (

@@ -30,6 +30,7 @@
   overflow-wrap: anywhere;
 }
 
+.rcc-followup { margin: 0.4rem 0; padding: 0.4rem 0.65rem; border-left: 3px solid var(--accent-primary); font-size: 0.85rem; overflow-wrap: anywhere; }
 .rcc-files { margin: 0.35rem 0; overflow-wrap: anywhere; }
 .rcc-label { color: var(--text-muted); }
 .rcc-note { margin: 0.35rem 0; color: var(--text-muted); font-size: 0.8rem; }
