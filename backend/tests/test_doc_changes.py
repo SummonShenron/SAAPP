@@ -155,7 +155,7 @@ def test_text_under_a_heading_that_is_the_last_line_of_the_document_starts_a_new
     built = dc.build_request(change(action="insert_after_heading", doc_id=DOC_ID, heading="Open questions", text="Who owns it?"), doc)
     at = h["end"] - 1                                                          # before the heading's own line break, which the new paragraph then follows
     assert built["requests"][0] == {"insertText": {"location": {"index": at}, "text": "\nWho owns it?"}}
-    assert built["requests"][1]["updateParagraphStyle"]["range"] == {"startIndex": at + 1, "endIndex": at + 1 + len("Who owns it?") + 1}
+    assert built["requests"][1] == {"updateParagraphStyle": {"range": {"startIndex": at + 1, "endIndex": at + 1 + len("Who owns it?") + 1}, "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"}, "fields": "namedStyleType"}}
 
 
 def test_several_lines_under_a_heading_are_all_covered_by_the_plain_style():

@@ -3333,7 +3333,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "text (what to add or start with), find and replace_with (replace: an exact phrase and what replaces it), heading (insert_after_heading: the exact heading to add the text under). Shows the person ONE card for a "
                 "change to one of their own Google Docs and WAITS for Apply or Decline. Find the document first and never guess an id; read it first (read_drive_file) before a replace or an insert so the phrase or heading is exact."
             )
-            pass       # the card tool covers it, for any document and without the text approval
+            menu_lines = [line for line in menu_lines if not line.startswith("- propose_append_target_doc")]       # the card tool covers it, for any document and without the text approval
         if outside_repo:
             menu_lines = repo_scope.without_repo_lines(menu_lines, _REPO_ONLY_TOOLS)      # nothing to read, search or change in a project that is not connected
         if not can_apply_here:
