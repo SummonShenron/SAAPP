@@ -26,7 +26,7 @@ const TOOL_KIND: Readonly<Record<string, StepKind>> = {
   search_drive_files: 'search', search_onedrive_files: 'search', list_app_incidents: 'search',
   // mail and calendar
   search_gmail: 'mail', read_gmail_message: 'mail', get_gmail_attachment: 'mail', search_outlook_mail: 'mail', read_outlook_message: 'mail', get_outlook_attachment: 'mail', propose_send_email: 'mail',
-  list_google_calendar_events: 'calendar', list_outlook_calendar_events: 'calendar',
+  list_google_calendar_events: 'calendar', list_outlook_calendar_events: 'calendar', propose_calendar_change: 'calendar', find_google_docs: 'search', propose_doc_change: 'add',
   // looking at a page in a browser
   look_at_local_page: 'browser',
   // working out a plan, and talking to the person

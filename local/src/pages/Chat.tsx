@@ -7,6 +7,8 @@ import { useRunnerPing } from '../hooks/useRunnerPing';
 import LocalEditCard from '../components/LocalEditCard';
 import RunnerCheckCard from '../components/RunnerCheckCard';
 import ChoiceCard from '../components/ChoiceCard';
+import ChangeCard from '../components/ChangeCard';
+import { parseChangeCard, type ChangeCardData } from '../components/changeCardLogic';
 import { parseChoiceCard, type ChoiceCardData } from '../components/choiceCardLogic';
 import CommandStepsCard from '../components/CommandStepsCard';
 import type { CommandStep } from '../stepsLogic';
@@ -104,6 +106,7 @@ interface Message {
   liveBrowserUrl?: string; // view-only browserless.io LiveURL — see browser_live_view handling
   editProposals?: EditProposal[]; // diff cards for edits proposed to the connected local folder: one per proposal, in the order they came (a reply can carry several)
   runnerCheck?: { job: RunnerJob; runner?: { name?: string | null; root_name?: string | null } }; // a check Sonic asked to run on the person's own machine (Run / Cancel card)
+  changeCard?: ChangeCardData; // one change to the person's Google Calendar (its propose_calendar_change tool): Apply / Decline, the turn is waiting for the press
   choiceCard?: ChoiceCardData; // one question from Sonic with a few options (its ask_choice tool): the card answers it straight back to the turn that is waiting
   commandSteps?: { steps: CommandStep[]; runner: { id: string; name?: string | null; root_name?: string | null; project_id?: string | null } }; // a list of steps Sonic proposed, run one click at a time (components/CommandStepsCard.tsx)
   // A message sent while Sonic was already working, meant to change what it does next.
@@ -407,6 +410,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                 </div>
               )}
               {msg.choiceCard && <ChoiceCard key={msg.choiceCard.choice_id} card={msg.choiceCard} />}
+              {msg.changeCard && <ChangeCard key={msg.changeCard.proposal_id} card={msg.changeCard} />}
               {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
               {msg.commandSteps && <CommandStepsCard key={msg.commandSteps.steps.map(s => s.id).join('-') + msg.id} steps={msg.commandSteps.steps} runner={msg.commandSteps.runner} onTell={putInComposer} />}
               {msg.editProposals?.map(proposal => (
@@ -1996,6 +2000,20 @@ useEffect(() => {
                     const lastIndex = updated.length - 1;
                     if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
                       updated[lastIndex] = { ...updated[lastIndex], choiceCard: card };
+                    }
+                    return updated;
+                  });
+                }
+              }
+              if (payload.event === 'change_card') {
+                // A change to the person's Google Calendar: a card on the in-progress AI bubble. Sonic's turn is waiting for Apply or Decline, which the card sends straight back.
+                const card = parseChangeCard(payload);
+                if (card) {
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const lastIndex = updated.length - 1;
+                    if (updated[lastIndex] && updated[lastIndex].sender === 'ai') {
+                      updated[lastIndex] = { ...updated[lastIndex], changeCard: card };
                     }
                     return updated;
                   });

@@ -87,3 +87,21 @@ def read_file(access_token: str, file_id: str) -> str:
         return buffer.getvalue().decode("utf-8")
     except UnicodeDecodeError:
         return f"ERROR: '{metadata.get('name')}' is not valid UTF-8 text (likely a binary file)."
+
+
+# ---- what the document-change tools use (backend/utils/doc_changes.py, backend/services/doc_changes_service.py) ----------------------------------------------------------------
+
+def find_docs(access_token: str, query: str, max_results: int = 8) -> list[dict]:
+    """The person's Google Docs (`query` comes from backend/utils/doc_changes.py drive_query), most recently edited first: {id, name, modifiedTime}."""
+    service = _service(access_token)
+    results = service.files().list(
+        q=query, pageSize=max(1, min(int(max_results), 20)), orderBy="modifiedTime desc", fields="files(id,name,modifiedTime)",
+    ).execute()
+    return results.get("files", [])
+
+
+def get_file_info(access_token: str, file_id: str) -> dict:
+    """What a change needs to know about a file before touching it: its name and type, whether it is in the trash, whether it is shared with anyone, and a link."""
+    service = _service(access_token)
+    return service.files().get(fileId=file_id, fields="id,name,mimeType,trashed,shared,webViewLink,modifiedTime").execute()
+

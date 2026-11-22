@@ -80,6 +80,7 @@ class GraphState(TypedDict):
     folder_in_browser: Optional[bool]             # this browser holds the connected folder and may write to it; False on a phone or a second browser, where an edit could not be applied (app.py sets it every turn)
     demo_project: Optional[bool]                  # the shared guest's turn started from a demo card, so the folder tools work on the server's demo project (backend/utils/demo_project.py); set fresh each turn
     choice_cards: Optional[bool]                  # the page can show a choice card and report the answer (POST /api/chat/choice/{id}), so the ask_choice tool may be offered (backend/services/choice_cards.py)
+    change_cards: Optional[bool]                # the page can show a calendar-change card (Apply / Decline) and report the press (POST /api/chat/change/{id}/decision), so propose_calendar_change may be offered (backend/services/change_cards.py)
     runner_cards: Optional[bool]                # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
     tool_model: Optional[str]                     # "claude" | "sonnet" | "gpt" | "gemini": the person's choice for the tool agent's reasoning steps; None = the server's default
     reply_model: Optional[str]                    # "gemini" | "gpt" | "lite" | "haiku" | "auto": the person's base-model setting this turn; the reasoner runs on Haiku for "haiku" only (models.reasoner_llm_for)

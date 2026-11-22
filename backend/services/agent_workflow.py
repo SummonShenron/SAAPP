@@ -49,6 +49,9 @@ from backend.utils.safety_utils import (
     remember_support, is_acknowledgement, RISK_NONE, KIND_LADDER_ANSWER, _ORDER as _RISK_ORDER,
 )
 from backend.services import choice_cards
+from backend.services import change_cards, calendar_changes_service, doc_changes_service
+from backend.utils import calendar_changes, doc_changes
+from backend.utils.change_error import ChangeError
 from backend.services import local_edit_decisions
 from backend.services import sandbox_tests
 from backend.services import ci_status, commit_flow, git_commit, pr_read
@@ -69,10 +72,10 @@ from backend.utils.time_utils import build_agent_time_line, local_today
 from backend.utils.google_calendar_utils import CALENDAR_LOCKED_USERS, get_connection_status as get_calendar_connection_status, has_granted_scope
 from backend.services.google_calendar_oauth import GoogleCalendarOAuth, GoogleCalendarConnectionError, GoogleCalendarTemporaryError
 from backend.utils import meetings as meetings_utils
-from backend.services.google_calendar_service import list_events_for_day, create_event, update_event, find_event_by_summary_on_day
+from backend.services.google_calendar_service import list_events_for_day, list_events_detailed, create_event, update_event, find_event_by_summary_on_day
 from backend.services.google_gmail_service import search_messages, get_message_detail, get_attachment_text, send_message
 from backend.services.google_docs_service import append_text as append_doc_text
-from backend.services.google_drive_service import search_files as search_drive_files_fn, read_file as read_drive_file_fn
+from backend.services.google_drive_service import search_files as search_drive_files_fn, read_file as read_drive_file_fn, find_docs as find_docs_fn
 from backend.services import microsoft_tools
 from backend.utils import microsoft_utils
 from backend.services.python_sandbox import run_python_sandboxed, SAFE_IMPORT_ALLOWLIST
@@ -226,7 +229,7 @@ def _outside_repo(state: Dict[str, Any]) -> bool:
 # in that turn: an instruction hidden in that text must not be able to lead to a commit. The person can ask again in the next message.
 _UNTRUSTED_CONTENT_TOOLS = frozenset({
     "web_search", "read_url", "browser_navigate", "browser_click", "browser_type", "browser_read_text", "browser_screenshot",
-    "search_gmail", "read_gmail_message", "get_gmail_attachment", "search_drive_files", "read_drive_file", "search_outlook_mail", "read_outlook_message", "get_outlook_attachment",
+    "search_gmail", "read_gmail_message", "get_gmail_attachment", "search_drive_files", "find_google_docs", "read_drive_file", "search_outlook_mail", "read_outlook_message", "get_outlook_attachment",
     "search_onedrive_files", "read_onedrive_file", "search_library", "read_library_file", "search_my_knowledge", "list_app_incidents", "read_app_incident", "read_app_logs", "check_deploy_status", "ci_status", "read_ci_log", "read_pull_request", "read_pr_file_diff",
     "run_local_check",       # the output of a command on the person's machine: their own code, but anything it printed (a dependency, a test fixture) is text someone else wrote
     "run_local_command",     # the same, for a command line they approved (a file, a package or a git log can print anything)
@@ -795,12 +798,17 @@ def build_agent_plan(intent: str, state: dict) -> dict:
         state["write_action"] = "create_issue"
         return {"agents": ["propose_write", "formatter"], "skip": []}
 
-    if intent == "create_calendar_event" or flags.get("needs_create_calendar_event"):
+    # A Google Calendar write goes to the tool agent when the page can show the card: it looks the event up by id, then proposes ONE change as a card with Apply and Decline (backend/services/change_cards.py).
+    # Outlook, a page that cannot show the card, and a person with no Google Calendar connected keep the older draft-and-type-approve path below.
+    calendar_card_route = bool(intent in ("create_calendar_event", "update_calendar_event") or flags.get("needs_create_calendar_event") or flags.get("needs_update_calendar_event")) and _google_change_cards_wanted(state)
+    if calendar_card_route:
+        flags = {**flags, "needs_calendar_lookup": True}
+    elif intent == "create_calendar_event" or flags.get("needs_create_calendar_event"):
         state["last_intent"] = "propose_write"
         state["write_action"] = "create_calendar_event"
         return {"agents": ["propose_write", "formatter"], "skip": []}
 
-    if intent == "update_calendar_event" or flags.get("needs_update_calendar_event"):
+    if (intent == "update_calendar_event" or flags.get("needs_update_calendar_event")) and not calendar_card_route:
         state["last_intent"] = "propose_write"
         state["write_action"] = "update_calendar_event"
         return {"agents": ["propose_write", "formatter"], "skip": []}
@@ -933,6 +941,23 @@ def build_agent_plan(intent: str, state: dict) -> dict:
 
     state["last_intent"] = intent
     return {"agents": agents, "skip": []}
+
+def _google_change_cards_wanted(state: Dict[str, Any]) -> bool:
+    """Whether a calendar write this turn is the tool agent's card: the page can show the card, the person is signed in, Google Calendar is connected, and they did not ask for Outlook. Never raises."""
+    try:
+        if not (state.get("change_cards") and change_cards.enabled()):
+            return False
+        username = str(state.get("username") or "")
+        if not username or is_guest_username(username):
+            return False
+        messages = state.get("messages") or []
+        latest = str(getattr(messages[-1], "content", "") or "") if messages else ""
+        if microsoft_tools.mentions_microsoft(latest):
+            return False
+        return bool(get_calendar_connection_status(username).get("connected"))
+    except Exception:
+        return False
+
 
 def _place_tools_wanted(state: Dict[str, Any]) -> bool:
     """Whether this turn gets Sonic's place tools: the person is signed in, the maps service is set up, and the message (or the one before it, for "which is closest?") is about places or getting somewhere.
@@ -3064,8 +3089,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             "available, and only these stdlib modules can be imported: "
             f"{', '.join(sorted(SAFE_IMPORT_ALLOWLIST))}. Use this for calculations, data "
             "shaping, or checking your own logic — not for anything requiring I/O.)",
-            "- list_google_calendar_events — args: date (YYYY-MM-DD); lists events on the "
-            "CURRENT USER's own connected Google Calendar for that day. Returns an error "
+            "- list_google_calendar_events — args: date (YYYY-MM-DD), end_date (optional, up to 31 days after date), query (optional words); lists events on the "
+            "CURRENT USER's own connected Google Calendar for that day or range, each with its id (needed to change or delete it). Returns an error "
             "telling the user to connect their calendar under Integrations if they haven't yet.",
             "- search_gmail — args: query (real Gmail search syntax, e.g. "
             "'has:attachment subject:report', 'from:someone@example.com'), max_results "
@@ -3111,6 +3136,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             "- read_onedrive_file — args: file_id (from a search_onedrive_files result); returns "
             "the file's text (PDF, Word, spreadsheets and plain text are readable); an error for "
             "folders, pictures and very large files.",
+            "- find_google_docs — args: query (optional: part of the document's name), max_results (optional, default 8); lists the CURRENT USER's own Google Docs, most recently edited first, each with its "
+            "id (needed to change it); read_drive_file with that id reads one. Use it to find the document the person means by name before changing it, or to see their recent documents.",
             "- propose_append_target_doc — args: content (the text you want appended — you must "
             "have already gathered/composed this yourself via other actions first, e.g. after "
             "reading and summarizing a Gmail attachment or Drive file); use the standard "
@@ -3294,6 +3321,19 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "- ask_choice — args: question, options (two to four of {\"label\", \"description\"}), recommended (the number of the option you recommend). Shows the person ONE question as a card with a button per option and "
                 "WAITS for their answer; use it only when you cannot tell which of a few concrete things they mean and reading would not settle it, and never for something you can look up."
             )
+        if state.get("change_cards") and change_cards.enabled() and not is_guest_username(username):
+            # The page can show a calendar-change card (Apply / Decline) and report the press (backend/services/change_cards.py), so a Google Calendar write is a card inside this turn, not a paragraph to type "approve" to.
+            menu_lines.append(
+                "- propose_calendar_change — args: action (create, update or delete), event_id (from list_google_calendar_events; for update and delete), scope (this or series), summary, start, end, duration_minutes, all_day, "
+                "location, description, attendees, reminders, reminders_default, repeat_frequency, repeat_interval, repeat_count, repeat_until, repeat_weekdays. Shows the person ONE card for a change to their own Google "
+                "Calendar and WAITS for Apply or Decline; look the event up first for an update or a delete, and never guess an id."
+            )
+            menu_lines.append(
+                "- propose_doc_change — args: action (create, append, replace or insert_after_heading), doc_id (from find_google_docs; for every action but create; left out means the person's default document), title (create), "
+                "text (what to add or start with), find and replace_with (replace: an exact phrase and what replaces it), heading (insert_after_heading: the exact heading to add the text under). Shows the person ONE card for a "
+                "change to one of their own Google Docs and WAITS for Apply or Decline. Find the document first and never guess an id; read it first (read_drive_file) before a replace or an insert so the phrase or heading is exact."
+            )
+            pass       # the card tool covers it, for any document and without the text approval
         if outside_repo:
             menu_lines = repo_scope.without_repo_lines(menu_lines, _REPO_ONLY_TOOLS)      # nothing to read, search or change in a project that is not connected
         if not can_apply_here:
@@ -3438,6 +3478,47 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 choice_cards.forget(card["choice_id"])
             await asyncio.to_thread(record_turn_counts, {"choice_picked" if given and given["kind"] == "picked" else "choice_other" if given else "choice_timeout": 1})
             return choice_cards.result_text(card, given)
+
+        change_proposals = {"n": 0}
+
+        async def _propose_change(args: dict, prepare, prefix: str) -> str:
+            """Prepares one change to the person's own calendar or a document against the real thing as Google has it, shows it as a card with Apply and Decline, and WAITS for the press, returning what really happened to
+            the loop (backend/services/change_cards.py). `prepare()` is the service's blocking step and changes nothing; `prefix` names the counters. Nothing is changed before Apply. Counts only: no title, time, text, address
+            or answer is logged."""
+            from backend.utils.self_counters import record_turn_counts
+
+            if not (state.get("change_cards") and change_cards.enabled()) or is_guest_username(username):
+                return "ERROR: this page cannot show a change card, so tell the person you cannot make that change from here."
+            if change_proposals["n"] >= change_cards.MAX_PROPOSALS_PER_TURN:
+                await asyncio.to_thread(record_turn_counts, {f"{prefix}_refused": 1})
+                return f"ERROR: you have already proposed {change_cards.MAX_PROPOSALS_PER_TURN} changes this turn. Finish with what was done and ask whether they want more."
+            try:
+                proposal = await asyncio.to_thread(prepare)
+            except ChangeError as problem:
+                await asyncio.to_thread(record_turn_counts, {f"{prefix}_refused": 1})
+                return f"ERROR: nothing was shown, because {problem}"
+            change_proposals["n"] += 1
+            change_cards.register(proposal)                   # before the card is streamed, so a very quick press cannot arrive first
+            await safe_emit_event("change_card", change_cards.card_payload(proposal))
+            await asyncio.to_thread(record_turn_counts, {f"{prefix}_shown": 1})
+
+            async def _still_waiting(seconds: int) -> None:
+                await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Waiting for you to apply or decline...", "detail": f"{seconds // 60}m {seconds % 60:02d}s so far. Nothing changes until you press Apply."})
+
+            try:
+                outcome = await change_cards.wait_for(proposal["proposal_id"], on_tick=_still_waiting)
+            finally:
+                change_cards.forget(proposal["proposal_id"])
+            key = {"applied": f"{prefix}_applied", "declined": f"{prefix}_declined", "failed": f"{prefix}_failed"}.get(outcome["kind"] if outcome else "", f"{prefix}_timeout")
+            await asyncio.to_thread(record_turn_counts, {key: 1})
+            return change_cards.result_text(proposal, outcome)
+
+        async def _propose_calendar_change(args: dict) -> str:
+            tz = await asyncio.to_thread(get_user_timezone, username)
+            return await _propose_change(args, lambda: calendar_changes_service.prepare(username, args, tz), "calendar_change")
+
+        async def _propose_doc_change(args: dict) -> str:
+            return await _propose_change(args, lambda: doc_changes_service.prepare(username, args), "doc_change")
 
         async def _run_local_check(args: dict) -> str:
             """Asks the person to run one of their own checks on their machine, waits for their answer and the run, and returns the real result (backend/utils/runner_jobs.py). The card is streamed to
@@ -3905,6 +3986,17 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 )
             if tool_action == "ask_choice":
                 return await _ask_choice(args)
+            if tool_action == "propose_calendar_change":
+                if args.get("attendees") and (untrusted_used & _THIRD_PARTY_TEXT_TOOLS):
+                    # Like a pull request or a merge: text written by someone else (a web page, an email, a shared document) must not be able to lead to an outward action, here an invitation emailed to other people, in the same message.
+                    from backend.utils.self_counters import record_turn_counts
+
+                    await asyncio.to_thread(record_turn_counts, {"calendar_change_refused": 1})
+                    return ("ERROR: this message already read content written by someone else (a web page, an email, a shared document or logs), and people are not invited to an event in the same message as that. "
+                            "Tell the person to ask for the invitation in a new message. The event without the invitation is still possible.")
+                return await _propose_calendar_change(args)
+            if tool_action == "propose_doc_change":
+                return await _propose_doc_change(args)
             if tool_action == "submit_plan":
                 if plan_phase != code_plan.PLAN_PHASE:
                     return "ERROR: submit_plan is only available when the person asked for a plan first."
@@ -4012,13 +4104,17 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     return "ERROR: No Google Calendar connected for this user. Connect it under Integrations first."
                 tz = get_user_timezone(username)
                 # "Today" is the user's today, not the server's (usually UTC, so an evening user got tomorrow).
-                date_arg = args.get("date") or local_today(tz)
-                events = await asyncio.to_thread(list_events_for_day, token, date_arg, tz)
+                try:
+                    first_day, last_day = calendar_changes.clean_range(args.get("date"), args.get("end_date"), local_today(tz))
+                except calendar_changes.CalendarChangeError as problem:
+                    return f"ERROR: {problem}"
+                query = str(args.get("query") or "").strip() or None
+                events = await asyncio.to_thread(list_events_detailed, token, first_day, last_day, tz, query)
                 if not events:
-                    return f"No events found on the connected Google Calendar for {date_arg}."
+                    return f"No events found on the connected Google Calendar for {first_day}" + (f" to {last_day}" if last_day != first_day else "") + (f" matching '{query}'" if query else "") + "."
                 # An event that is one of the person's meetings with Sonic says so, so the answer says "our check-in" (backend/utils/meetings.py).
                 with_sonic = await asyncio.to_thread(meetings_utils.calendar_note_for, username, events)
-                return "\n".join(f"- {e['start']}: {e['summary']}" + (f" ({with_sonic[e['id']]})" if e.get("id") in with_sonic else "") for e in events)
+                return "\n".join(calendar_changes.event_line(e, with_sonic.get(e.get("id"), "")) for e in events)
             if tool_action in {"search_gmail", "read_gmail_message", "get_gmail_attachment"}:
                 # Same tier as the calendar branch above — needs username for per-user token
                 # resolution, plus a scope check distinct from "no connection at all" (see
@@ -4067,6 +4163,26 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                         return "No matching files found."
                     return "\n".join(f"- [{f['id']}] {f['name']} ({f['mimeType']}, modified {f.get('modifiedTime', '?')})" for f in results)
                 return await asyncio.to_thread(read_drive_file_fn, token, args.get("file_id"))
+            if tool_action == "find_google_docs":
+                if username in CALENDAR_LOCKED_USERS:
+                    return "ERROR: Google Drive is not available for this account"
+                try:
+                    token = await asyncio.to_thread(GoogleCalendarOAuth().get_valid_access_token, username)
+                except GoogleCalendarTemporaryError as error:
+                    return f"ERROR: {error}"
+                except GoogleCalendarConnectionError:
+                    return "ERROR: No Google account connected for this user. Connect it under Integrations first."
+                if not has_granted_scope(username, "https://www.googleapis.com/auth/drive"):
+                    return "ERROR: Google Drive access not granted. Reconnect Google under Integrations to enable it."
+                words = str(args.get("query") or "").strip()
+                try:
+                    max_docs = int(args.get("max_results") or 8)
+                except (TypeError, ValueError):
+                    max_docs = 8
+                found = await asyncio.to_thread(find_docs_fn, token, doc_changes.drive_query(words), max_docs)
+                if not found:
+                    return "No Google Docs found" + (f" with '{' '.join(words.split())[:100]}' in the name" if words else "") + "."
+                return "\n".join(doc_changes.doc_line(f) for f in found)
             if tool_action in microsoft_tools.TOOLS:
                 return await microsoft_tools.run_tool(tool_action, username, args)
             if tool_action == "search_memory":

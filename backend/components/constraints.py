@@ -486,10 +486,10 @@ AVAILABLE PATHWAYS & FLAGS:
    - Set to TRUE whenever the user requests to open, create, or file a GitHub issue or bug report (e.g., "open an issue for this", "file a bug about the login flow", "create a GitHub issue").
    - Do NOT set this for a Pull Request request (that's needs_create_pr) or a general question about the repo (that's needs_github_search).
 8c. "needs_create_calendar_event":
-   - Set to TRUE whenever the user asks to schedule, add, create, or book a meeting/event/call/appointment on their Google Calendar or Outlook calendar (e.g., "schedule a call with Sam tomorrow at 2pm", "add lunch with Sarah to my calendar", "book a 30 minute meeting Friday morning").
+   - Set to TRUE whenever the user asks to schedule, add, create, or book a meeting/event/call/appointment on their Google Calendar or Outlook calendar (e.g., "schedule a call with Sam tomorrow at 2pm", "add lunch with Sarah to my calendar", "book a 30 minute meeting Friday morning", "make that a weekly standup", "add my dentist appointment and remind me an hour before").
    - This is a real Google Calendar write, distinct from needs_retrieval's booking/help-center disambiguation below.
 8d. "needs_update_calendar_event":
-   - Set to TRUE whenever the user asks to move, reschedule, rename, or otherwise change an existing Google Calendar or Outlook calendar event (e.g., "move my 2pm meeting to 3pm", "reschedule the call with Sam to Friday", "rename my 10am event").
+   - Set to TRUE whenever the user asks to move, reschedule, rename, or otherwise change an existing Google Calendar or Outlook calendar event (e.g., "move my 2pm meeting to 3pm", "reschedule the call with Sam to Friday", "rename my 10am event"), or to delete, cancel or remove one, change its location or notes, add or change its reminders, or invite someone to it (e.g., "cancel my Thursday dentist appointment", "delete the standup series", "remind me 30 minutes before my 3pm", "add Sam to the planning meeting").
 8e. "needs_calendar_lookup":
    - Set to TRUE whenever the user asks to check, view, or list what's on their real Google Calendar or Outlook calendar, or asks about their availability (e.g., "what's on my calendar tomorrow", "am I free Friday afternoon", "do I have any meetings today", "what's on my Outlook calendar").
    - Do NOT set this for needs_create_calendar_event/needs_update_calendar_event (those are writes, this is read-only).
@@ -500,6 +500,7 @@ AVAILABLE PATHWAYS & FLAGS:
    - Do NOT set this for needs_send_email below (composing/sending is a write, this is read-only).
 8g. "needs_drive_lookup":
    - Set to TRUE whenever the user asks to find, search, read, or summarize the contents of a file in their real Google Drive or OneDrive (e.g., "find my budget spreadsheet", "what's in the Q3 planning doc", "search my OneDrive for the resume").
+   - Also set this TRUE whenever the user asks to create a new Google Doc, or to add to, fix, or replace text in one of their Google Docs by name, or to add text under a heading in it (e.g., "create a doc called Trip Plan with these bullets", "in my meeting notes doc change Q3 to Q4", "add this under the Action Items heading in the team doc"). Changing a document is a proposal only the tool agent can make (the user then approves it), so it is never answered from chat.
 8h. "needs_send_email":
    - Set to TRUE whenever the user explicitly asks to send, compose, or reply to an email (e.g., "send an email to sam@example.com about the meeting", "email the team that I'll be late").
    - Do NOT set this for reading/searching email — that's needs_gmail_lookup above.

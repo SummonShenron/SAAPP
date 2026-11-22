@@ -265,7 +265,7 @@ export const EVERYDAY: Record<string, Content> = {
         <li><strong>Email:</strong> search your inbox, summarize messages, read attachments that are text-based (like a CSV or a text file), and draft or send a reply.</li>
         <li><strong>Calendar:</strong> tell you what's on, check when you're free, and create or move events.</li>
         <li><strong>Drive:</strong> find and read your Google Docs and Sheets.</li>
-        <li><strong>A document of yours:</strong> add text to a Google Doc you've chosen as your target document on the Integrations page, like a running notes file or weekly report.</li>
+        <li><strong>Your documents:</strong> create a Google Doc, add to the end of one, replace a phrase, or add text under a heading. Name the document and Sonic finds it, then shows a card to approve first.</li>
         <li><strong>Put it together:</strong> for example, read a report attached to an email, summarize it, and add the summary to your notes document.</li>
       </ul>
       <h4>What it won't do</h4>

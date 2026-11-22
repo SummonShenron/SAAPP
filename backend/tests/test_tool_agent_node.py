@@ -280,19 +280,28 @@ async def test_list_google_calendar_events_returns_formatted_agenda(monkeypatch)
 
     monkeypatch.setattr(aw, "GoogleCalendarOAuth", _FakeOAuth)
     monkeypatch.setattr(
-        aw, "list_events_for_day",
-        lambda token, date, tz: [{"id": "e1", "summary": "Standup", "start": "2026-06-21T09:00:00", "end": "2026-06-21T09:15:00"}],
+        aw, "list_events_detailed",
+        lambda token, first, last, tz, query=None, max_results=25: [{"id": "e1", "summary": "Standup", "start": "2026-06-21T09:00:00", "end": "2026-06-21T09:15:00", "all_day": False,
+                                                                     "location": "", "recurring_event_id": None, "reminders": "default", "other_attendees": 0}],
     )
 
     responses = [
         _llm_response(action="query", purpose="Check calendar", tool_action="list_google_calendar_events", args={"date": "2026-06-21"}),
         _llm_response(action="final", answer="You have a Standup at 9am.", show_work=True),
     ]
-    monkeypatch.setattr(aw.lite_llm, "ainvoke", AsyncMock(side_effect=responses))
+    captured_prompts = []
+
+    async def fake_ainvoke(prompt):
+        captured_prompts.append(prompt)
+        return responses.pop(0) if responses else _llm_response(action="final", answer="You have a Standup at 9am.", show_work=True)
+
+    monkeypatch.setattr(aw.lite_llm, "ainvoke", fake_ainvoke)
 
     result = await aw.tool_agent_node(_state("what's on my google calendar tomorrow?"))
 
     assert "Standup" in result["content_to_format"]
+    # The model must be SHOWN the event with the id a later change needs: the answer above is canned, so this is what proves the tool's own output.
+    assert any("- 2026-06-21T09:00:00: Standup (until 2026-06-21T09:15:00; default reminders) [id: e1]" in p for p in captured_prompts)
 
 
 @run_async
