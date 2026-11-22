@@ -1,0 +1,20 @@
+[
+  {
+    "file": "backend/utils/rate_limit.py",
+    "old": "len(mine) >= one",
+    "new": "len(mine) > one",
+    "label": "an address may send one request more than its limit"
+  },
+  {
+    "file": "backend/utils/rate_limit.py",
+    "old": "    if method.upper() == \"OPTIONS\":\n        return None\n",
+    "new": "",
+    "label": "a browser's preflight request is counted against the limit"
+  },
+  {
+    "file": "backend/utils/rate_limit.py",
+    "old": "WINDOW_SECONDS = 60.0",
+    "new": "WINDOW_SECONDS = 60.0  # a comment only: this one is meant to SURVIVE, to show what a survivor looks like",
+    "label": "(harmless on purpose) a comment changed"
+  }
+]
