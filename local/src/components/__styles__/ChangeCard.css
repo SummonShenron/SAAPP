@@ -1,0 +1,57 @@
+/* The card for a change to the person's Google Calendar (ChangeCard.tsx). Same look as the choice, check and edit cards beside it. */
+.chg-card {
+  margin: 0.5rem 0;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+  background: color-mix(in srgb, var(--card-bg) 96%, transparent);
+  color: var(--text-main);
+  font-size: 0.88rem;
+}
+
+.chg-card[data-destructive="true"] { border-left-color: var(--accent-danger, #c0392b); }
+.chg-card[data-state="applied"] { border-left-color: var(--accent-success); }
+.chg-card[data-state="declined"],
+.chg-card[data-state="expired"],
+.chg-card[data-state="failed"] { border-left-color: color-mix(in srgb, var(--text-muted) 45%, transparent); }
+
+.chg-heading { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.15rem; }
+.chg-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.45rem; overflow-wrap: anywhere; }
+
+.chg-rows { margin: 0 0 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.chg-row { display: grid; grid-template-columns: 6.5rem 1fr; gap: 0.5rem; }
+.chg-row dt { color: var(--text-muted); }
+.chg-row dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.chg-notice {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid color-mix(in srgb, var(--text-muted) 20%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.chg-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+.chg-btn {
+  padding: 0.4rem 0.95rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 40%, transparent);
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  cursor: pointer;
+}
+.chg-btn:hover:not(:disabled) { border-color: var(--accent-primary); }
+.chg-btn:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.chg-btn:disabled { cursor: default; opacity: 0.6; }
+.chg-primary { background: var(--accent-primary); border-color: var(--accent-primary); color: var(--on-accent, #fff); font-weight: 600; }
+.chg-primary[data-destructive="true"] { background: var(--accent-danger, #c0392b); border-color: var(--accent-danger, #c0392b); }
+.chg-primary:hover:not(:disabled) { filter: brightness(1.08); }
+
+.chg-status { margin-top: 0.55rem; font-size: 0.82rem; overflow-wrap: anywhere; }
+.chg-status[data-status="applied"] { color: var(--accent-success); }
+.chg-status[data-status="failed"],
+.chg-status[data-status="expired"],
+.chg-status[data-status="declined"] { color: var(--text-muted); }
+.chg-error { color: var(--accent-danger, #c0392b); }

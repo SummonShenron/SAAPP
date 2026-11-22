@@ -142,7 +142,7 @@ export const HELP_TIPS: Record<string, HelpTip> = {
   'integrations.tabs': { title: 'Sections', what: 'Switches between Google, Outlook, GitHub and settings.' },
   'integrations.google': { title: 'Google', what: 'Connects your Google account (Calendar, Gmail, Drive and Docs) so Sonic can look at them when you ask. It sends an email or changes an event or document only after you approve that exact action. You can disconnect any time.', wont: 'Do anything with your Google account until you ask.' },
   'integrations.microsoft': { title: 'Microsoft', what: 'Connects a personal Microsoft account (Outlook.com, Hotmail, Live) so Sonic can search and read your mail, check your calendar and find files in OneDrive. It only sends an email or changes your calendar after you approve that exact action.' },
-  'integrations.targetDoc': { title: 'Target document', what: 'A Google Doc Sonic can add to when you ask, for example after summarising an email or a file. Paste its address or ID.' },
+  'integrations.targetDoc': { title: 'Default document (optional)', what: 'Not needed: Sonic finds your Google Docs by name. Set one only if you want "add this to my doc" to mean a particular document. Paste its address or ID.' },
   'integrations.github': { title: 'GitHub token', what: 'Your own personal access token, so Sonic can read, review and open pull requests and issues on your repositories as you. It is checked with GitHub, stored encrypted and never shown again after you save it. Without one Sonic uses a shared token.' },
 
   // ---- Activities ----

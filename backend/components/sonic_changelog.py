@@ -1093,6 +1093,36 @@ CHANGELOG = [
         "volunteer": ["my calendar", "my schedule", "my inbox", "send an email", "my email"],
     },
     {
+        "id": "docs-changes",
+        "requires": [
+            "backend/services/doc_changes_service.py::def prepare",
+            "backend/services/change_cards.py::def decide",
+            "local/src/components/ChangeCard.tsx",
+        ],
+        "month": "2026-11",
+        "title": "Work on any Google Doc",
+        "line": (
+            "With Google connected, I can find your docs by name, create new ones, add to the end, replace a phrase, or add text under a heading. Each change is a card showing the document, and nothing changes until you press Apply."
+        ),
+        "keywords": ["edit my doc", "create a doc", "create a google doc", "find my doc", "replace text in a doc", "add to my doc", "work on google docs"],
+        "volunteer": [],
+    },
+    {
+        "id": "calendar-changes",
+        "requires": [
+            "backend/services/change_cards.py::def decide",
+            "backend/services/calendar_changes_service.py::def prepare",
+            "local/src/components/ChangeCard.tsx",
+        ],
+        "month": "2026-11",
+        "title": "Change your calendar",
+        "line": (
+            "With Google connected, I can add, move, rename and delete events, set reminders, make events repeat, and invite people. Each change is a card showing the event as it is now, and nothing changes until you press Apply."
+        ),
+        "keywords": ["calendar changes", "change my calendar", "edit events", "delete event", "reschedule", "event reminder", "event reminders", "recurring event", "repeating event", "invite someone", "cancel a meeting"],
+        "volunteer": [],
+    },
+    {
         "id": "deep_thinking",
         "requires": [
             "backend/utils/user_settings_utils.py::def get_user_deep_thinking_mode",

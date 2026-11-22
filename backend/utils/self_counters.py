@@ -182,7 +182,13 @@ REPO_SCOPE_KEYS = ("repo_scope_outside_turns",)
 COMMIT_PR_KEYS = ("commit_pr_one_card_shown", "commit_pr_one_card_opened", "commit_pr_one_card_failed", "commit_merge_merged", "commit_merge_not_merged")
 # Command lines Sonic put on a runner card, by program family (git, a text search, a look at files, the project's tools, other), by class (read, run, change) and `git grep` (backend/utils/cli_use.py). Counts only.
 CLI_KEYS = ("cli_prog_git", "cli_prog_search", "cli_prog_look", "cli_prog_tool", "cli_prog_other", "cli_git_grep", "cli_class_read", "cli_class_run", "cli_class_change")
-_PLAIN_KEYS = _PLAIN_KEYS + REPO_SCOPE_KEYS + COMMIT_PR_KEYS + CLI_KEYS
+# Requests refused by the per-address rate limit (backend/utils/rate_limit.py), by rule (auth, webhook, guest): one address over its limit, and `_all` for everyone together over the rule's total. Flushed at most once a minute. Counts only.
+RATE_LIMIT_KEYS = ("rate_limited_auth", "rate_limited_auth_all", "rate_limited_webhook", "rate_limited_webhook_all", "rate_limited_guest", "rate_limited_guest_all")
+# Calendar-change cards (backend/services/change_cards.py): shown, then how each ended (applied, declined, failed, or no press before the wait ran out), and proposals refused before a card was shown. Counts only.
+CALENDAR_CHANGE_KEYS = ("calendar_change_shown", "calendar_change_applied", "calendar_change_declined", "calendar_change_failed", "calendar_change_timeout", "calendar_change_refused")
+# The same for Google Doc changes (backend/services/doc_changes_service.py). Counts only.
+DOC_CHANGE_KEYS = ("doc_change_shown", "doc_change_applied", "doc_change_declined", "doc_change_failed", "doc_change_timeout", "doc_change_refused")
+_PLAIN_KEYS = _PLAIN_KEYS + REPO_SCOPE_KEYS + COMMIT_PR_KEYS + CLI_KEYS + RATE_LIMIT_KEYS + CALENDAR_CHANGE_KEYS + DOC_CHANGE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

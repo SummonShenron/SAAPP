@@ -208,12 +208,12 @@ export const IntegrationsPage: React.FC = () => {
       if (result.warning) {
         setDocSaveMessage({ success: false, message: result.warning });
       } else if (result.target_doc_id) {
-        setDocSaveMessage({ success: true, message: 'Target document saved.' });
+        setDocSaveMessage({ success: true, message: 'Default document saved.' });
       } else {
-        setDocSaveMessage({ success: true, message: 'Target document cleared.' });
+        setDocSaveMessage({ success: true, message: 'Default document cleared.' });
       }
     } catch (err: any) {
-      setDocSaveMessage({ success: false, message: err.message || 'Failed to save target document.' });
+      setDocSaveMessage({ success: false, message: err.message || 'Failed to save default document.' });
     } finally {
       setSavingDoc(false);
     }
@@ -377,13 +377,12 @@ export const IntegrationsPage: React.FC = () => {
       <div className="integrations-grid">
         {!isGuest && activeTab === 'google' && (
           <section className="service-card integration-card" data-help="integrations.targetDoc">
-            <div className="card-badge">TARGET DOCUMENT</div>
-            <h2>Target Document</h2>
+            <div className="card-badge">DEFAULT DOCUMENT (OPTIONAL)</div>
+            <h2>Default Document</h2>
             <p className="card-description">
-              A Google Doc the assistant can append to when you ask it to — for example, after
-              summarizing an email or file. Paste the document's URL or ID below. This isn't
-              tied to any specific use case; you can point it at whatever document you'd like
-              updated.
+              You don't need this. Sonic can find any of your Google Docs by name, create new ones, and
+              change them, and you approve each change on a card first. If you'd like "add this to my
+              doc" to mean one particular document without naming it, paste its URL or ID below.
             </p>
 
             <div className="form-group">

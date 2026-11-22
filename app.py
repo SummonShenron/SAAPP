@@ -176,7 +176,7 @@ from backend.utils import duration_utils
 from backend.utils import curiosity as curiosity_utils
 from backend.utils import paperwork_utils
 from backend.utils import profile_utils
-from backend.services import choice_cards
+from backend.services import choice_cards, change_cards
 from backend.services import local_edit_decisions
 from backend.utils import reading_shelf as shelf_utils
 from backend.utils import knowledge_base as knowledge_base_utils
@@ -229,6 +229,7 @@ from backend.services.reward_evaluator import evaluate_response, build_correctio
 from backend.logging.sass_logger import setup_logging
 from backend.services.orchestrator import startup_services
 from backend.utils.body_limit import BodySizeLimitMiddleware
+from backend.utils.rate_limit import RateLimitMiddleware
 from backend.utils import provider_health
 from backend.state import graph_db
 from backend.utils.isolation_kb_utils import get_accessible_affiliates, load_user_directory_groups, verify_user_ingest_access, load_directory, make_personal_kb_id, new_personal_kb, personal_kb_groups, personal_kb_update, resolve_kb_display_names
@@ -361,6 +362,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Secure RAG Engine API", lifespan=lifespan)
 # Inside the CORS layer (added first, so a 413 still carries the CORS headers the browser needs to read it): no request may be bigger than backend/utils/body_limit.py allows.
 app.add_middleware(BodySizeLimitMiddleware)
+# Also inside the CORS layer, and outside the size limit (a refused caller's body is never looked at): how many requests one address may send to login, pairing, the webhooks and the guest identity (backend/utils/rate_limit.py).
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://(saapp|saapp-[\w-]+)\.vercel\.app",
@@ -428,6 +431,7 @@ class ChatRequest(BaseModel):
     git_branch: str | None = None   # the git branch the connected folder is on, read by the browser from .git/HEAD (None when unknown or detached)
     edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
     choice_cards: bool = False      # the page can show a choice card (one question, a few options) and report the answer (POST /api/chat/choice/{id}), so the tool loop may ask and wait (backend/services/choice_cards.py)
+    change_cards: bool = False    # the page can show a calendar-change card (Apply / Decline) and report the press (POST /api/chat/change/{id}/decision), so the tool loop may propose a change and wait (backend/services/change_cards.py)
     runner_cards: bool = False      # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
     reply_model: Optional[str] = None        # the shared guest's base-model choice ("gemini", "lite" or "auto"), kept in their browser because the guests share one settings record; honoured for the guest only (backend/utils/user_settings_utils.py reply_choice_for_turn)
     demo_project: Optional[bool] = None      # the shared guest chose a demo card, so this turn works on the server's demo project (backend/utils/demo_project.py); ignored for anyone else
@@ -942,6 +946,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         "code_followup": code_followup,
         "runner_cards": bool(request.runner_cards),
         "choice_cards": bool(request.choice_cards),
+        "change_cards": bool(request.change_cards),
         "demo_project": demo_turn,
         "folder_in_browser": request.folder_expected is not False,       # False: this browser (a phone, a second browser) holds no folder, so no edit can be applied from here
         "git_branch": (request.git_branch or "").strip()[:100] or None,
@@ -1161,6 +1166,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     # One question with a few options (backend/services/choice_cards.py): the page shows a card, and the answer goes back to the loop that is waiting for it.
                     if kind == "on_custom_event" and event.get("name") == "choice_card":
                         yield f"data: {json.dumps({'event': 'choice_card', **event.get('data', {})})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                    # A change to the person's Google Calendar (backend/services/change_cards.py): the page shows a card with what will change and Apply / Decline; the turn waits for the press.
+                    if kind == "on_custom_event" and event.get("name") == "change_card":
+                        yield f"data: {json.dumps({'event': 'change_card', **event.get('data', {})})}\n\n"
                         await asyncio.sleep(0.01)
 
                     # A check Sonic asks to run on the person's own machine (backend/utils/runner_jobs.py): the page shows a card with the exact command and Run / Cancel buttons.
@@ -2615,6 +2625,17 @@ async def answer_choice(choice_id: str, payload: ChoiceAnswer, current_user = De
     """The person's answer to a choice card, reported to the tool loop that is waiting on it (backend/services/choice_cards.py). "no_waiter" means nobody is waiting (the turn ended or timed out)."""
     status = choice_cards.answer(current_user.get("sub"), choice_id.strip(), payload.index, payload.other)
     return {"status": status}
+
+
+class ChangeDecision(BaseModel):
+    decision: str      # "apply" or "decline"
+
+
+@app.post("/api/chat/change/{proposal_id}/decision")
+async def decide_change(proposal_id: str, payload: ChangeDecision, current_user = Depends(get_member_user)):
+    """Apply or Decline on a calendar-change card, reported to the tool loop that is waiting on it (backend/services/change_cards.py). Apply makes the Google call, with the person's own connection, here. "expired" means
+    nobody is waiting (the turn ended or timed out, or it was already decided); a member only, since a guest has no calendar."""
+    return await change_cards.decide(current_user.get("sub"), proposal_id.strip(), payload.decision)
 
 
 @app.post("/api/chat/feedback")

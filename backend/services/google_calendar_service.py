@@ -156,3 +156,64 @@ def list_events_in_range(access_token: str, start: datetime.datetime, end: datet
             "creator_self": bool((event.get("creator") or {}).get("self")),
         })
     return items
+
+
+# ---- what the calendar-change tools use (backend/utils/calendar_changes.py, backend/services/calendar_changes_service.py) ----------------------------------------------------------
+
+def _day_bounds(first_date: str, last_date: str, tz: str) -> tuple:
+    """(timeMin, timeMax) as UTC RFC3339 for the start of `first_date` to the end of `last_date` in the person's own timezone. Uses zoneinfo for the real offset ON THOSE DAYS (a range across a daylight-saving change is right)."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(tz)
+    first = datetime.datetime.combine(datetime.date.fromisoformat(first_date), datetime.time.min, tzinfo=zone)
+    after = datetime.datetime.combine(datetime.date.fromisoformat(last_date) + datetime.timedelta(days=1), datetime.time.min, tzinfo=zone)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    return first.astimezone(datetime.timezone.utc).strftime(fmt), after.astimezone(datetime.timezone.utc).strftime(fmt)
+
+
+def list_events_detailed(access_token: str, first_date: str, last_date: str, tz: str, query: str | None = None, max_results: int = 25) -> list[dict]:
+    """Events from `first_date` to `last_date` (inclusive, the person's timezone) on the primary calendar, repeats expanded, with what a change needs: the event id, end, location, whether it repeats, the
+    reminders and how many OTHER people are on it. Never returns the description. An empty list means nothing is scheduled."""
+    service = _service(access_token)
+    time_min, time_max = _day_bounds(first_date, last_date, tz)
+    request = {"calendarId": "primary", "timeMin": time_min, "timeMax": time_max, "singleEvents": True, "orderBy": "startTime", "maxResults": max(1, min(int(max_results), 50))}
+    if query:
+        request["q"] = query
+    items = []
+    for event in service.events().list(**request).execute().get("items", []):
+        if event.get("status") == "cancelled":
+            continue
+        start, end = event.get("start") or {}, event.get("end") or {}
+        reminders = event.get("reminders") or {}
+        items.append({
+            "id": event.get("id"),
+            "summary": event.get("summary", "Untitled event"),
+            "start": start.get("dateTime", start.get("date")),
+            "end": end.get("dateTime", end.get("date")),
+            "all_day": "date" in start and "dateTime" not in start,
+            "location": event.get("location", ""),
+            "recurring_event_id": event.get("recurringEventId"),
+            "reminders": "default" if reminders.get("useDefault") else [{"method": o.get("method"), "minutes": o.get("minutes")} for o in (reminders.get("overrides") or [])],
+            "other_attendees": len([a for a in (event.get("attendees") or []) if not a.get("self") and not a.get("resource")]),
+            "html_link": event.get("htmlLink"),
+        })
+    return items
+
+
+def get_event(access_token: str, event_id: str) -> dict:
+    """The raw event as Google has it (with its etag), for a change to be checked against and built from."""
+    return _service(access_token).events().get(calendarId="primary", eventId=event_id).execute()
+
+
+def insert_event(access_token: str, body: dict, send_updates: str) -> dict:
+    return _service(access_token).events().insert(calendarId="primary", body=body, sendUpdates=send_updates).execute()
+
+
+def patch_event(access_token: str, event_id: str, body: dict, send_updates: str) -> dict:
+    """Changes only the fields in `body` (patch, not update, so nothing else on the event is overwritten)."""
+    return _service(access_token).events().patch(calendarId="primary", eventId=event_id, body=body, sendUpdates=send_updates).execute()
+
+
+def delete_event(access_token: str, event_id: str, send_updates: str) -> None:
+    _service(access_token).events().delete(calendarId="primary", eventId=event_id, sendUpdates=send_updates).execute()
+

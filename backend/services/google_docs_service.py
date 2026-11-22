@@ -101,3 +101,19 @@ def get_document(access_token: str, document_id: str) -> dict:
     the append path above never needs to read the document first."""
     service = _service(access_token)
     return service.documents().get(documentId=document_id).execute()
+
+
+# ---- what the document-change tools use (backend/utils/doc_changes.py, backend/services/doc_changes_service.py) ----------------------------------------------------------------
+
+def create_document(access_token: str, title: str) -> dict:
+    """A new empty document in the person's My Drive: {documentId, title}."""
+    return _service(access_token).documents().create(body={"title": title}).execute()
+
+
+def batch_update(access_token: str, document_id: str, requests: list, required_revision: str | None = None) -> dict:
+    """Applies `requests` in one step. With `required_revision`, Google refuses the whole update (HTTP 400) if the document was edited since that revision, so an index-based change can never land in the wrong place."""
+    body: dict = {"requests": requests}
+    if required_revision:
+        body["writeControl"] = {"requiredRevisionId": required_revision}
+    return _service(access_token).documents().batchUpdate(documentId=document_id, body=body).execute()
+

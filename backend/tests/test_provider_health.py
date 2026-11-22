@@ -266,10 +266,11 @@ def test_an_admin_is_told_in_the_budget_view_whatever_the_budget_says_and_nobody
     assert bg.public_view(None, True)["provider_alerts"] == []
 
 
-def test_the_health_check_says_degraded_while_a_key_is_refused_without_saying_which():
+def test_the_health_check_says_degraded_while_a_key_is_refused_without_saying_which(monkeypatch):
     from backend.tests.import_app import import_app
 
     app_module = import_app()
+    monkeypatch.setattr(app_module, "test_connection", lambda: False)     # the health check pings the database; tests never touch the real one
     ok = app_module.saapp_health_check()
     assert ok["llm"] == "ok"
     ph.note_failure("claude", Rejected("x"))

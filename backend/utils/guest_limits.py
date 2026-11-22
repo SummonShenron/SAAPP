@@ -20,7 +20,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
-from backend.utils import billing_time
+from backend.utils import billing_time, rate_limit
 
 logger = logging.getLogger("SASS Logger")
 
@@ -73,9 +73,9 @@ def clean_visitor_id(raw: Optional[str]) -> Optional[str]:
 
 
 def client_address(forwarded_for: Optional[str], direct: Optional[str]) -> str:
-    """The visitor's network address: the first of a proxy's forwarded list when there is one (the server sits behind one), else the direct peer. Pure."""
-    first = (forwarded_for or "").split(",")[0].strip()
-    return first or (direct or "").strip() or "unknown"
+    """The visitor's network address, read the same way as the request rate limit reads it (backend/utils/rate_limit.py address_from: the first forwarded entry by default, or the one a trusted proxy wrote when
+    TRUSTED_PROXY_HOPS is set), else the direct peer. Pure."""
+    return rate_limit.address_from(forwarded_for, direct)
 
 
 def hashed(kind: str, value: str, day: str) -> str:
