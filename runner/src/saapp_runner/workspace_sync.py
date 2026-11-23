@@ -37,6 +37,7 @@ def scan(root: Path) -> Scan:
     stack: List[tuple] = [(Path(root), "")]
     while stack:
         folder, prefix = stack.pop()
+        parent = prefix.rstrip("/").rsplit("/", 1)[-1] if prefix else ""       # the name of the folder being scanned: `.claude` keeps only its skills
         try:
             with os.scandir(folder) as entries:
                 children = sorted(entries, key=lambda e: e.name.lower())
@@ -48,10 +49,10 @@ def scan(root: Path) -> Scan:
                 if _is_link(entry):
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    if entry.name not in filerules.SKIP_DIRS:
+                    if not filerules.skips_directory(parent, entry.name):
                         subfolders.append((Path(entry.path), f"{prefix}{entry.name}/"))
                     continue
-                if not entry.is_file(follow_symlinks=False) or not filerules.is_syncable_file_name(entry.name):
+                if not entry.is_file(follow_symlinks=False) or filerules.skips_files_in(parent) or not filerules.is_syncable_file_name(entry.name):
                     continue
                 size = entry.stat(follow_symlinks=False).st_size
             except OSError:

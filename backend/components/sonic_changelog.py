@@ -1093,6 +1093,20 @@ CHANGELOG = [
         "volunteer": ["my calendar", "my schedule", "my inbox", "send an email", "my email"],
     },
     {
+        "id": "project-skills",
+        "requires": [
+            "backend/utils/skills.py::def discover",
+            "local/src/localWorkspaceCore.ts",
+        ],
+        "month": "2026-11",
+        "title": "Your project's skills",
+        "line": (
+            "If your connected project keeps skills (.sonic/skills or .claude/skills), I see them and load one when the job fits, as guidance from your project. A skill never changes my rules, and your files win if they disagree."
+        ),
+        "keywords": ["project skills", "skills folder", "use a skill", "skill.md", "my skills"],
+        "volunteer": [],
+    },
+    {
         "id": "docs-changes",
         "requires": [
             "backend/services/doc_changes_service.py::def prepare",
@@ -1728,6 +1742,20 @@ CHANGELOG = [
             "After I propose a code change I can now add one short joke at the end: \"just like the simulations\" for a small change, \"not like the simulations\" for a big one. Never when you're low or frustrated, and at most once a conversation."
         ),
         "keywords": ["joke", "funny", "humor", "simulations", "just like the simulations", "code change", "multi file", "propose"],
+        "volunteer": [],
+    },
+    {
+        "id": "own_record_when_frustrated",
+        "requires": [
+            "backend/utils/emotion_utils.py::def own_material_tier",
+            "app.py::own_material_tier",
+        ],
+        "month": "2026-11",
+        "title": "My own record, even when my work frustrated you",
+        "line": (
+            "When you're frustrated with my code, I can now still bring up a real case from my own record that fits, and note the pushback for my record (a person approves each note). When you're going through something hard, I still keep it to you."
+        ),
+        "keywords": ["frustrated", "my record", "your record", "experience", "pushback", "learn from mistakes"],
         "volunteer": [],
     },
     {

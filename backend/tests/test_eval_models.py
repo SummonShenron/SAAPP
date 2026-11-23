@@ -408,3 +408,9 @@ def test_the_character_evals_run_scenario_checks_the_tracker_before_each_run():
     with pytest.raises(em.CostCeilingExceeded):
         ce.run_scenario(scenario, fake, runs=3, tracker=tracker)
     assert fake.calls == 0                                                 # nothing was called once the ceiling was passed
+
+
+def test_an_eval_run_prices_one_hour_cache_writes_at_twice_the_input():
+    tracker = em.SpendTracker(ceiling_usd=10, price_table={"claude-x": {"input": 1.0, "output": 0.0, "cached_input": 0.1}})
+    tracker.record("claude-x", "eval:x", {"input": 1_000_000, "output": 0, "cached": 0, "cache_write": 500_000, "cache_write_1h": 500_000})
+    assert tracker.total == pytest.approx(0.5 * 1.0 + 0.5 * 2.0)

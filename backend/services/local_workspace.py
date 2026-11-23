@@ -54,11 +54,12 @@ _GUEST_USERNAMES = {"guest-recruiter@example.com", "guest_bty@bty.local", "guest
 _SKIPPED_DIR_NAMES = {
     "node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", ".next", "coverage",
     "chroma_db", "index-db",
-    # Claude Code keeps full duplicate checkouts of the repo under .claude/worktrees. Snapshotting
-    # them doubles the file count (crowding real files out of search_literal's scan cap) and puts a
-    # second, differently-numbered copy of every file in front of the model.
-    ".claude",
 }
+# Claude Code keeps full duplicate checkouts of the repo under .claude/worktrees. Snapshotting them doubles the file count (crowding real files out of search_literal's scan cap) and puts a second,
+# differently-numbered copy of every file in front of the model. But `.claude/skills` is the project's shared skills, which Sonic reads (backend/utils/skills.py): so inside a `.claude` folder only
+# these children are kept, and the files sitting directly in it (settings) are not. The same rule is in the browser (localWorkspaceCore.ts) and the runner (filerules.py), pinned equal by a test.
+CLAUDE_DIR = ".claude"
+CLAUDE_KEEP = frozenset({"skills"})
 _BLOCKED_FILE_PATTERNS = (
     ".env", ".env.*", "*.env", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa", "id_dsa", "id_ecdsa",
     "id_ed25519", ".npmrc", ".pypirc", ".netrc", "credentials.json", "secrets.json", "secrets.yaml",
@@ -106,6 +107,9 @@ def _rejection_reason(path: str) -> Optional[str]:
     parts = path.split("/")
     if any(part in _SKIPPED_DIR_NAMES for part in parts[:-1]):
         return "in a skipped directory"
+    for index, part in enumerate(parts[:-1]):
+        if part == CLAUDE_DIR and (index + 1 >= len(parts) - 1 or parts[index + 1] not in CLAUDE_KEEP):
+            return "in a skipped directory"                               # inside .claude only the skills folder is kept, and a file directly in it is not
     name = parts[-1].lower()
     if name.endswith(_ALLOWED_ENV_TEMPLATE_SUFFIXES):
         return None

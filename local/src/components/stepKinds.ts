@@ -20,7 +20,7 @@ const TOOL_KIND: Readonly<Record<string, StepKind>> = {
   // a database: the person's memory, knowledge base and documents, and the app's own records
   run_mongo_query: 'database', search_memory: 'database', search_my_knowledge: 'database', search_library: 'database', propose_kb_entry: 'database',
   // reading one thing
-  read_repo_file: 'read', read_library_file: 'read', read_drive_file: 'read', read_onedrive_file: 'read', read_app_incident: 'read', read_app_logs: 'read',
+  read_repo_file: 'read', use_skill: 'read', read_library_file: 'read', read_drive_file: 'read', read_onedrive_file: 'read', read_app_incident: 'read', read_app_logs: 'read',
   // looking for something
   search_code: 'search', search_literal: 'search', find_file: 'search', list_repo_tree: 'search', trace_symbol: 'search', list_library_files: 'search',
   search_drive_files: 'search', search_onedrive_files: 'search', list_app_incidents: 'search',

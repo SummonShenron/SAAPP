@@ -69,6 +69,23 @@ EDIT_CHECKPOINT_NOTICE = (
     "continue_working with one line on what. Prefer proposing: more reading is only worth it for something you can name."
 )
 MAX_CHECKPOINT_REASON = 200
+# ONE TOOL LIST FOR THE WHOLE TURN, for a model that caches the conversation (ClaudeLLM.caches_prompt). The tool list is the first thing in the cached prefix, so a call that offered a different list
+# (the checkpoint's [continue_working], the forced ending's [propose_local_edits] or none) read NOTHING from the cache and wrote it all again (measured 2026-11-22: Sonnet checkpoints 0% cached,
+# about 9% of Sonnet's loop spend). Such a model is offered the turn's list on every call, with continue_working always in it (described as for checkpoints only), and a forced ending that comes
+# back with a call it may not make there is asked again the old way, with the narrow list (counted: native_narrow_fallback). A reply is never edited: a filtered reply keeps its tool_use blocks
+# in the content (langchain-anthropic), and an edited reply can break the thinking-block check.
+STABLE_CONTINUE_TOOL = {
+    "name": "continue_working",
+    "description": "Only when a CHECKPOINT message asks you to decide: keep working instead of answering now, with one line on what you still have to read, check or do. At any other time, "
+                   "make your next tool call or answer instead.",
+    "parameters": CONTINUE_TOOL["parameters"],
+}
+CONTINUE_OUTSIDE_CHECKPOINT = "Noted. continue_working only means something at a CHECKPOINT; make your next tool call, or answer."
+
+
+def cache_counts(stable_tools: bool, narrow_fallbacks: int) -> Dict[str, int]:
+    """The turn's counters for the one-list rule (self_counters CACHE_KEYS): a run that used it, and its forced endings asked again with the narrow list. Pure."""
+    return {"native_stable_tools": 1, "native_narrow_fallback": max(int(narrow_fallbacks), 0)} if stable_tools else {}
 
 
 def checkpoints_enabled() -> bool:
@@ -274,6 +291,12 @@ async def run(
         tools = list(tools) + [SAVE_DRAFT_TOOL]
         offered = offered | {"save_draft"}
     latest_draft: Optional[str] = None
+    # One tool list for every call of this turn (STABLE_CONTINUE_TOOL above). The caller says "this model caches the conversation" with shorten_old=False (agent_workflow: a ClaudeLLM whose
+    # caches_prompt is on); the model object is not asked here, since asking a lazy model for an attribute builds its client.
+    stable_tools = not shorten_old
+    turn_tools: List[Dict[str, Any]] = list(tools) + ([STABLE_CONTINUE_TOOL] if stable_tools and "continue_working" not in offered else [])
+    narrow_fallbacks = 0
+    checkpoint_reply: Any = None          # a checkpoint's reply that is this step's tool call (one tool list for the turn): the loop runs it instead of asking again
     # The environment note (where reads come from, the folder's notes, what this conversation already read, its summary and working notes) goes to every turn that has the repo tools, not only an edit turn: on a plain
     # question it was left out, so the "already read" list never reached the turns that re-read (2026-11-20: 52% of reads were repeats).
     environment_for_turn = environment_note if (can_edit or offered & _REPO_TOOLS) else ""
@@ -281,7 +304,7 @@ async def run(
     # Sizes of the prompt's parts and of everything every call sends (backend/utils/prompt_meter.py): counts only, recorded once at the end.
     meter = PromptMeter()
     meter.part("instructions", system_prompt)
-    meter.tools(tools)
+    meter.tools(turn_tools)
     for name, text in (("preferences", coding_preferences), ("architecture", architecture_map), ("memory", user_memory), ("history", history), ("leanings", leanings), ("environment", environment_for_turn),
                        ("request", question)):
         meter.part(name, text)
@@ -373,6 +396,8 @@ async def run(
             latest_draft = saved
             logger.info("[native_loop] step %s: a draft was saved (%d characters).", step, len(saved))
             return f"Draft saved ({len(saved)} characters). Check it against the files you read, and save a corrected whole draft if anything is wrong."
+        if name == "continue_working" and stable_tools:
+            return CONTINUE_OUTSIDE_CHECKPOINT
         if name not in offered:
             return f"ERROR: '{name}' is not an available tool. Available tools: {', '.join(sorted(offered))}."
         key = f"{name}|{json.dumps(args, sort_keys=True, default=str)}"
@@ -468,7 +493,7 @@ async def run(
             results[i] = await run_call(step_number, calls[i])
         for index, (call, result) in enumerate(zip(calls, results)):
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
-            if call.get("name") != "save_draft":      # keeping a draft is not a step worth listing in the receipt
+            if call.get("name") not in ("save_draft", "continue_working"):      # keeping a draft, or saying it keeps going, is not a step worth listing in the receipt
                 progress.note(step_number, str(call.get("name") or ""), args, result)
                 attempts.append({"purpose": f"Run {call.get('name')}", "action_desc": _describe(str(call.get("name")), args), "observation": result})
             clipped = _clip(result)
@@ -481,13 +506,13 @@ async def run(
         """Stops the loop after `used` tool steps and asks for a decision. Returns "answered" (final_text is set), "acted" (on a change to a folder it made the proposal, which took
         this step), "continue" or "steered" (the person redirected the work meanwhile; the decision is dropped). On "continue" the checkpoint messages are removed from the
         conversation and replaced by one short note, with the best answer so far shown back."""
-        nonlocal final_text, latest_draft
+        nonlocal final_text, latest_draft, checkpoint_reply
         from backend.utils import llm_turns
 
         can_propose = bool(required_action)                  # a folder is connected and a change was asked for: the proposal tool is part of the choice, before and after the first one
         edit_turn = can_propose and not required_done()      # ... and until a proposal succeeds it is the way to finish
         tool_name = (required_action or {}).get("tool_action") or ""
-        offered_here = [CONTINUE_TOOL] + ([t for t in tools if t.get("name") == tool_name] if can_propose else [])
+        offered_here = turn_tools if stable_tools else [CONTINUE_TOOL] + ([t for t in tools if t.get("name") == tool_name] if can_propose else [])
         mark = len(messages)
         edit_notice = (required_action or {}).get("checkpoint_notice") or EDIT_CHECKPOINT_NOTICE      # a plan turn finishes with submit_plan, not a proposal
         notice = (edit_notice if edit_turn else CHECKPOINT_NOTICE).format(used=used, total=budget)
@@ -502,6 +527,21 @@ async def run(
         if await absorb_steering(used + 1):
             del messages[mark:]
             return "steered"
+        if stable_tools and any(call.get("name") != "continue_working" for call in calls):
+            # The whole list was offered (one list for the turn) and it made a real call: that call is this step. The question and the reply both stay, untouched, and the loop runs the reply like any
+            # other step (a continue_working beside it gets the short "only at a checkpoint" result). Nothing is cut out: an appended conversation keeps its cache.
+            checkpoint_reply = reply
+            interim = draft_checkpoint.take_draft(text) if len(text) >= 40 else None
+            if interim:
+                latest_draft = interim
+            llm_turns.note_checkpoint(False, acted=any(call.get("name") == tool_name for call in calls) if tool_name else False)
+            logger.info("[native_loop] checkpoint after %d step(s): went on with a tool call.", used)
+            if emit is not None:
+                try:
+                    await emit("Checkpoint: keeping going", "to check the work")
+                except Exception:
+                    logger.debug("[native_loop] could not emit a checkpoint step.", exc_info=True)
+            return "took_step"
         proposals = [call for call in calls if can_propose and call.get("name") == tool_name]
         if proposals:
             # It made the proposal: that is this step. Only the proposal stays in the reply (every call in a kept reply needs a result), then it runs like any step.
@@ -552,6 +592,7 @@ async def run(
 
     step = 0
     told_at: set = set()
+    held_streak_notice: Optional[str] = None          # a reading-streak notice that fell due on a step the checkpoint's reply had already taken
     while step < budget:
         step += 1
         await absorb_steering(step)  # before the model decides, so a steer that is already here can widen the budget
@@ -571,6 +612,7 @@ async def run(
             told_at.add(f"nudge{step}")
             messages.append(HumanMessage(content=required_action["nudge"]))
         # A checkpoint (after a third and two thirds of a long budget): answer, or say what is still to do. Once each; it replaces the halfway nudge below.
+        pre_reply: Any = None
         if checkpoints and (step - 1) in checkpoints and (step - 1) not in checkpoints_done and attempts:
             checkpoints_done.add(step - 1)
             outcome = await run_checkpoint(step - 1)
@@ -580,13 +622,21 @@ async def run(
                 break
             if outcome in ("steered", "acted"):
                 continue       # steered: decide again with the new instructions; acted: the proposal was this step
+            if outcome == "took_step":
+                pre_reply, checkpoint_reply = checkpoint_reply, None      # the checkpoint's reply is this step's decision (one tool list for the turn)
         # Half-way through the steps with reading done and no draft: ask for one (once; a steer that discards a decision must not repeat it).
         nudge = draft_checkpoint.halfway_notice(step - 1, budget + 1, len(attempts), bool(latest_draft), False, how="by calling save_draft in this step") if "save_draft" in offered and not checkpoints else None
         if nudge and "halfway" not in told_at:
             told_at.add("halfway")
             nudged = True
             messages.append(HumanMessage(content=nudge.strip()))
-        streak_notice = rhythm.notice() if rhythm is not None else None
+        if pre_reply is not None:
+            # A reply already made at the checkpoint: a notice now would sit before a reply that never saw it, so one that is due waits for the next step (it is due only once, so it is never skipped).
+            held_streak_notice = held_streak_notice or (rhythm.notice() if rhythm is not None else None)
+            streak_notice = None
+        else:
+            streak_notice = held_streak_notice or (rhythm.notice() if rhythm is not None else None)
+            held_streak_notice = None
         if streak_notice:
             messages.append(HumanMessage(content=streak_notice))
             logger.info("[native_loop] step %s: a reading-streak notice was added.", step)
@@ -595,13 +645,16 @@ async def run(
                 advice = await consult_advisor("reading_streak", advisor_module.build_brief("reading_streak", question, None, attempts), "it keeps reading after being told to act")
                 if advice:
                     messages.append(HumanMessage(content=advisor_module.ADVICE_MESSAGE.format(advice=advice)))
-        meter.note_call(messages, tools)
-        reply = await llm.ainvoke_tools(messages, tools)
-        if await absorb_steering(step):
-            # The user redirected the work while this was being decided. Drop it rather than act on, or conclude from, a plan they
-            # just changed; the next step decides again with the steering in view.
-            logger.info("[native_loop] step %s: decision discarded because steering arrived while it was being made.", step)
-            continue
+        if pre_reply is not None:
+            reply = pre_reply          # made at the checkpoint, which already checked for steering
+        else:
+            meter.note_call(messages, turn_tools)
+            reply = await llm.ainvoke_tools(messages, turn_tools)
+            if await absorb_steering(step):
+                # The user redirected the work while this was being decided. Drop it rather than act on, or conclude from, a plan they
+                # just changed; the next step decides again with the steering in view.
+                logger.info("[native_loop] step %s: decision discarded because steering arrived while it was being made.", step)
+                continue
         messages.append(reply)
         calls = [call for call in (getattr(reply, "tool_calls", None) or []) if call.get("name")]
         if not calls:
@@ -772,6 +825,21 @@ async def run(
             stop_reason = "repeats"
             break
 
+    async def ask_limited(narrow: List[Dict[str, Any]]) -> Any:
+        """A forced ending: a call that may only answer or use the `narrow` tools. A model that caches is offered the turn's whole list (so the call reads the conversation from the cache)
+        and is asked again with `narrow` only if it used anything else; that reply is dropped, never edited."""
+        nonlocal narrow_fallbacks
+        if stable_tools:
+            meter.note_call(messages, turn_tools)
+            reply = await llm.ainvoke_tools(messages, turn_tools)
+            allowed = {tool.get("name") for tool in narrow}
+            if all(call.get("name") in allowed for call in (getattr(reply, "tool_calls", None) or [])):
+                return reply
+            narrow_fallbacks += 1
+            logger.info("[native_loop] a forced ending made a call it may not make there; asking again with the narrow list.")
+        meter.note_call(messages, narrow)
+        return await llm.ainvoke_tools(messages, narrow)
+
     if final_text is None and can_edit and (required_action is not None or plan_budget is not None) and stop_reason in ("", "step_limit") and not edited_this_turn():
         # The reading budget ran out before the change was made. The old ending asked for the code "in a fenced code block", which is how a turn ended in pseudocode. Now the last call can ONLY be the edit.
         edit_tool = next((tool for tool in tools if tool.get("name") == "propose_local_edits"), None)
@@ -781,16 +849,14 @@ async def run(
             await absorb_steering(step)
             shorten_old_results(step + 1)
             messages.append(HumanMessage(content=act_not_suggest.ACT_NOW_NOTICE))
-            meter.note_call(messages, [edit_tool])
-            acting = await llm.ainvoke_tools(messages, [edit_tool])
+            acting = await ask_limited([edit_tool])
             messages.append(acting)
             act_calls = [call for call in (getattr(acting, "tool_calls", None) or []) if call.get("name") == "propose_local_edits"]
             if act_calls:
                 step += 1
                 await execute_calls(step, act_calls)
                 messages.append(HumanMessage(content="Say in one or two sentences what happened and what is left. Do not write code in your answer."))
-                meter.note_call(messages, [])
-                final_text = _text(getattr(await llm.ainvoke_tools(messages, []), "content", "")) or "I made the edit above."
+                final_text = _text(getattr(await ask_limited([]), "content", "")) or "I made the edit above."
             else:
                 final_text = _text(getattr(acting, "content", "")) or None          # no edit and no words: the ending below answers
     if final_text is None:
@@ -800,8 +866,7 @@ async def run(
         shorten_old_results(step + 1)
         ending = EDIT_TURN_LIMIT_NOTICE if can_edit and (required_action is not None or plan_budget is not None) else STEP_LIMIT_NOTICE
         messages.append(HumanMessage(content=ending + draft_checkpoint.draft_block(latest_draft, how="fix it in your answer") + draft_checkpoint.forced_final_addition(latest_draft)))
-        meter.note_call(messages, [])
-        final_text = _text(getattr(await llm.ainvoke_tools(messages, []), "content", "")) or draft_checkpoint.fallback_answer(latest_draft)
+        final_text = _text(getattr(await ask_limited([]), "content", "")) or draft_checkpoint.fallback_answer(latest_draft)
 
     # How the turn ended, in words the trace shows (only through the step announcer, which can carry the marker the page styles): it chose to answer, or the limit stopped it and either the last steps were still finding things or they were going in circles.
     ended = loop_progress.verdict(progress, stop_reason, forced)
@@ -843,7 +908,7 @@ async def run(
             if name in PAGE_TOOLS:
                 key = "browser_read_native" if name == "browser_read_text" else f"{name}_native"
                 page_counts[key] = page_counts.get(key, 0) + 1
-        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}, **({"keep_going_sent_back": keep_going_sent} if keep_going_sent else {}), **(advisor.counts if advisor is not None else {}), **loop_progress.counts(ended, last_step_status)})
+        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}, **({"keep_going_sent_back": keep_going_sent} if keep_going_sent else {}), **(advisor.counts if advisor is not None else {}), **loop_progress.counts(ended, last_step_status), **cache_counts(stable_tools, narrow_fallbacks)})
     except Exception:
         logger.debug("[native_loop] could not record the prompt sizes.", exc_info=True)
     return {

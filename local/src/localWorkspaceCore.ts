@@ -1,6 +1,30 @@
 // The parts of the local-folder sync that need no browser, so they can be tested on their own (see localWorkspaceCore.test.mjs).
 
 /** An error from the folder sync that knows the HTTP status it came back with (undefined when the request never got an answer). */
+/**
+ * `.claude` holds Claude Code's duplicate checkouts of the repo (.claude/worktrees) and personal settings, none of which Sonic should see; but its `skills` folder is the project's shared skills, which Sonic
+ * reads (backend/utils/skills.py). So the folder is entered and only these children of it are sent. The same rule is in the server (local_workspace.py) and the runner (filerules.py), pinned equal by a test.
+ */
+export const CLAUDE_DIR = '.claude';
+export const CLAUDE_KEEP = new Set(['skills']);
+
+/** Whether a folder called `name`, inside a folder called `parent` (the one it sits in, '' at the top), is left out of the upload. */
+export function skipsDirectory(parent: string, name: string, skipDirs: ReadonlySet<string>): boolean {
+  if (parent === CLAUDE_DIR) return !CLAUDE_KEEP.has(name);
+  return skipDirs.has(name);
+}
+
+/** Whether the files sitting directly in a folder called `parent` are left out (the settings files in `.claude`). */
+export function skipsFilesIn(parent: string): boolean {
+  return parent === CLAUDE_DIR;
+}
+
+/** The name of the folder a scan prefix ("a/b/.claude/") sits in: the last segment, '' at the top. */
+export function parentName(prefix: string): string {
+  const parts = prefix.split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+}
+
 export class SyncRequestError extends Error {
   status?: number;
   constructor(message: string, status?: number) {

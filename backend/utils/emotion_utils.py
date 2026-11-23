@@ -380,6 +380,26 @@ def energy_tier(state: Optional[Dict[str, Any]], now: datetime) -> str:
     return "open"
 
 
+def own_material_tier(state: Optional[Dict[str, Any]], now: datetime, *, work_context: bool) -> str:
+    """The energy tier as it applies to SONIC'S OWN MATERIAL (a habit of its own, a case from its record, its leanings, and capturing what just happened to it), never to the person-facing extras
+    (callbacks, curiosity, calendar, getting-to-know-you questions), which keep energy_tier as it is.
+
+    Any tier but "open" used to silence all of it: 967 of 1,408 quiet turns in 30 days (2026-11-22), most of them a coding gripe read as "frustrated". But frustration at Sonic's work is exactly
+    when an honest line from its own record fits ("I've done this before: said it was checked when it wasn't"), and a pushback that went uncaptured is a story the record never gets. So "open" also when:
+    - the feeling is frustration and the moment is about the work (`work_context`: this message answers a coding reply, or this turn used the repo tools);
+    - a low (not distressed) feeling has eased: the person has shown some lift (light venting, which Jack brought into scope on 2026-11-13).
+    Still held down: distress, and a low or a frustration about life with no lift. A safety context is decided by each caller's own risk check, as before. Pure."""
+    tier = energy_tier(state, now)
+    if tier == "open":
+        return tier
+    valence = str((state or {}).get("valence", "neutral"))
+    if valence == "frustrated" and work_context:
+        return "open"
+    if tier == "easing" and valence == "low":
+        return "open"
+    return tier
+
+
 def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, safety: bool = False) -> str:
     """Soft-prior block for the voice prompt, or "" when the carried feeling has decayed below the
     injection threshold. Never tells the model to mention that it's tracking anything. When this

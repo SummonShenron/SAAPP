@@ -11,7 +11,7 @@ import {
   syncLocalWorkspaceBatch,
   type LocalWorkspaceSyncResult,
 } from './api';
-import { SyncRequestError, parseGitHead, withRetry, type SavedSyncState } from './localWorkspaceCore';
+import { SyncRequestError, parentName, parseGitHead, skipsDirectory, skipsFilesIn, withRetry, type SavedSyncState } from './localWorkspaceCore';
 
 interface FsEntryBase {
   name: string;
@@ -50,10 +50,8 @@ const BATCH_MAX_FILES = 300;
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', '__pycache__', '.venv', 'venv', '.next', 'coverage',
   'chroma_db', 'index-db',
-  // Claude Code's duplicate repo checkouts (.claude/worktrees) — keep in step with
-  // backend/services/local_workspace.py's _SKIPPED_DIR_NAMES.
-  '.claude',
 ]);
+// (`.claude` is entered, but only its `skills` folder is sent: skipsDirectory in localWorkspaceCore.ts, kept in step with backend/services/local_workspace.py and runner filerules.py.)
 const TEXT_EXTENSIONS = new Set([
   'py', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'md', 'mdx', 'css', 'scss', 'html', 'htm',
   'toml', 'yaml', 'yml', 'txt', 'sh', 'ps1', 'bat', 'sql', 'ini', 'cfg', 'conf', 'xml', 'graphql',
@@ -212,12 +210,13 @@ export async function scanFolder(root: FsDirectoryHandle, prev: Map<string, stri
 
   while (stack.length > 0) {
     const { dir, prefix } = stack.pop()!;
+    const parent = parentName(prefix);
     for await (const entry of dir.values()) {
       if (entry.kind === 'directory') {
-        if (!SKIP_DIRS.has(entry.name)) stack.push({ dir: entry, prefix: `${prefix}${entry.name}/` });
+        if (!skipsDirectory(parent, entry.name, SKIP_DIRS)) stack.push({ dir: entry, prefix: `${prefix}${entry.name}/` });
         continue;
       }
-      if (!isSyncableFileName(entry.name)) continue;
+      if (skipsFilesIn(parent) || !isSyncableFileName(entry.name)) continue;
       if (stamps.size >= MAX_FILES) {
         truncated = true;
         continue;

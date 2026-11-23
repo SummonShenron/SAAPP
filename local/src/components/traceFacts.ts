@@ -178,6 +178,7 @@ const TOOL_LABELS: Record<string, string> = {
   search_library: 'Searched your documents',
   list_library_files: 'Listed your documents',
   read_library_file: 'Read one of your documents',
+  use_skill: 'Loaded a project skill',
   run_python: 'Ran a calculation',
   search_gmail: 'Checked your email',
   read_gmail_message: 'Checked your email',

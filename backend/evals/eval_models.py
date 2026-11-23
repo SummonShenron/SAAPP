@@ -164,9 +164,9 @@ class SpendTracker:
     def record(self, model: str, label: str, counts: Optional[Dict[str, int]], day: Any = None) -> None:
         """Same signature as llm_usage.record, so it can sit in front of it. Never raises."""
         try:
-            slot = self.by_model.setdefault(str(model), {"calls": 0, "input": 0, "output": 0, "cached": 0, "cache_write": 0})
+            slot = self.by_model.setdefault(str(model), {"calls": 0, "input": 0, "output": 0, "cached": 0, "cache_write": 0, "cache_write_1h": 0})
             slot["calls"] += 1
-            for key in ("input", "output", "cached", "cache_write"):
+            for key in ("input", "output", "cached", "cache_write", "cache_write_1h"):
                 slot[key] += int((counts or {}).get(key, 0) or 0)
         except Exception:
             self.unpriced_calls += 1

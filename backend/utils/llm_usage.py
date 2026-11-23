@@ -46,10 +46,13 @@ EVAL_PREFIX = "eval:"
 # A call made during a PAID turn (backend/utils/credits.py: the person pays for it out of their own credit) is counted under this label prefix, which the shared budget leaves out the way it leaves out an eval:
 # Jack is not paying for it. The usage page still shows it, and the person's own counts (backend/utils/user_usage.py) still include it, which is what their paid daily ceiling is judged on.
 PAID_PREFIX = "paid:"
-FIELDS = ("calls", "input", "output", "reasoning", "cached", "cache_write")
+FIELDS = ("calls", "input", "output", "reasoning", "cached", "cache_write", "cache_write_1h")
 # What a cache WRITE costs, as a multiple of the model's normal input price, when LLM_PRICES gives no "cache_write_input" for it: Anthropic bills a write at 1.25x (5-minute lifetime); the other providers charge
 # nothing extra for what they cache, so a write there costs the normal input price.
 CLAUDE_WRITE_MULTIPLE = 1.25
+# A write kept for ONE HOUR (the tool loop's marked system prompt, backend/models/claude_llm.py PREFIX_TTL) is billed at 2x the input price (Anthropic's pricing page, checked 2026-11-22: Sonnet 5.5 $4 vs
+# $2 input). It is counted on its own (`cache_write_1h`, a part of `cache_write`) and priced at this multiple unless LLM_PRICES gives "cache_write_1h_input".
+CLAUDE_WRITE_1H_MULTIPLE = 2.0
 FLUSH_AFTER_CALLS = 40
 FLUSH_AFTER_SECONDS = 120
 MAX_STACK_DEPTH = 14
@@ -83,11 +86,11 @@ def _count(value: Any) -> int:
 
 
 def usage_of(message: Any) -> Dict[str, int]:
-    """The token counts one response (or one streamed chunk) reports, as `{input, output, reasoning, cached, cache_write}`. Zeros for anything
-    that reports nothing. `reasoning` is a part of `output`; `cached` (read from the cache) and `cache_write` (written to it) are parts of `input`, not additions to it."""
+    """The token counts one response (or one streamed chunk) reports, as `{input, output, reasoning, cached, cache_write, cache_write_1h}`. Zeros for anything
+    that reports nothing. `reasoning` is a part of `output`; `cached` (read from the cache) and `cache_write` (written to it) are parts of `input`, not additions to it, and `cache_write_1h` is the part of `cache_write` written for an hour."""
     meta = getattr(message, "usage_metadata", None)
     if not isinstance(meta, dict):
-        return {"input": 0, "output": 0, "reasoning": 0, "cached": 0, "cache_write": 0}
+        return {"input": 0, "output": 0, "reasoning": 0, "cached": 0, "cache_write": 0, "cache_write_1h": 0}
     input_details = meta.get("input_token_details") if isinstance(meta.get("input_token_details"), dict) else {}
     output_details = meta.get("output_token_details") if isinstance(meta.get("output_token_details"), dict) else {}
     return {
@@ -96,6 +99,7 @@ def usage_of(message: Any) -> Dict[str, int]:
         "reasoning": _count(output_details.get("reasoning")),
         "cached": _count(input_details.get("cache_read")),
         "cache_write": cache_write_of(input_details),
+        "cache_write_1h": _count(input_details.get("ephemeral_1h_input_tokens")),          # the part of cache_write kept for an hour, billed at 2x
     }
 
 
@@ -113,7 +117,7 @@ def served_by(message: Any, default: str) -> str:
 
 
 def add_into(total: Dict[str, int], part: Dict[str, int]) -> None:
-    for field in ("input", "output", "reasoning", "cached", "cache_write"):
+    for field in ("input", "output", "reasoning", "cached", "cache_write", "cache_write_1h"):
         total[field] = total.get(field, 0) + _count(part.get(field))
 
 
@@ -452,7 +456,7 @@ def load_prices(raw: Optional[str] = None) -> Dict[str, Dict[str, float]]:
         if not isinstance(entry, dict):
             continue
         try:
-            parsed = {key: float(entry[key]) for key in ("input", "output", "cached_input", "cache_write_input") if key in entry}
+            parsed = {key: float(entry[key]) for key in ("input", "output", "cached_input", "cache_write_input", "cache_write_1h_input") if key in entry}
         except (TypeError, ValueError):
             continue
         if "input" in parsed and "output" in parsed:
@@ -479,8 +483,12 @@ def estimate_cost(model: str, counts: Dict[str, int], prices: Dict[str, Dict[str
     cached = min(counts.get("cached", 0), counts.get("input", 0))
     written = min(counts.get("cache_write", 0) or 0, counts.get("input", 0) - cached)
     uncached = counts.get("input", 0) - cached - written
-    write_price = price.get("cache_write_input", price["input"] * (CLAUDE_WRITE_MULTIPLE if "claude" in model else 1.0))
-    return (uncached * price["input"] + cached * price["cached_input"] + written * write_price + counts.get("output", 0) * price["output"]) / 1_000_000
+    written_1h = min(counts.get("cache_write_1h", 0) or 0, written)          # the hour-long part of the writes, dearer than the five-minute rest
+    claude = "claude" in model
+    write_price = price.get("cache_write_input", price["input"] * (CLAUDE_WRITE_MULTIPLE if claude else 1.0))
+    write_1h_price = price.get("cache_write_1h_input", price["input"] * (CLAUDE_WRITE_1H_MULTIPLE if claude else 1.0))
+    return (uncached * price["input"] + cached * price["cached_input"] + (written - written_1h) * write_price + written_1h * write_1h_price
+            + counts.get("output", 0) * price["output"]) / 1_000_000
 
 
 def _share(part: float, whole: float) -> Optional[float]:
