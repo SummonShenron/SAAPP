@@ -237,7 +237,7 @@ interface ChatMessageListProps {
   chatWindowRef: React.RefObject<HTMLDivElement | null>;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   attachmentsRef: React.MutableRefObject<{ filename: string; content: string }[]>;
-  handleSendMessageRef: React.MutableRefObject<(text: string, attachments: { filename: string; content: string }[], replaceIds?: string[]) => void>;
+  handleSendMessageRef: React.MutableRefObject<(text: string, attachments: { filename: string; content: string }[], replaceIds?: string[], supportChoice?: string) => void>;
   handleFeedbackRef: React.MutableRefObject<(messageId: string, choice: 'like' | 'dislike') => void>;
   getTokenRef: React.MutableRefObject<(() => Promise<string | null>) | undefined>;
   canEditLocal: boolean;
@@ -409,7 +409,7 @@ const ChatMessageList = React.memo(function ChatMessageList({
                   />
                 </div>
               )}
-              {msg.choiceCard && <ChoiceCard key={msg.choiceCard.choice_id} card={msg.choiceCard} />}
+              {msg.choiceCard && <ChoiceCard key={msg.choiceCard.choice_id} card={msg.choiceCard} onSendMessage={(text, key) => handleSendMessageRef.current(text, attachmentsRef.current, [], key)} />}
               {msg.changeCard && <ChangeCard key={msg.changeCard.proposal_id} card={msg.changeCard} />}
               {msg.runnerCheck && <RunnerCheckCard key={msg.runnerCheck.job.id} job={msg.runnerCheck.job} runner={msg.runnerCheck.runner} />}
               {msg.commandSteps && <CommandStepsCard key={msg.commandSteps.steps.map(s => s.id).join('-') + msg.id} steps={msg.commandSteps.steps} runner={msg.commandSteps.runner} onTell={putInComposer} />}
@@ -1831,7 +1831,9 @@ useEffect(() => {
     textToSend: string,
     currentAttachments: { filename: string; content: string }[],
     // A retry replaces the failed message and its failure notice rather than repeating them in the thread.
-    replaceIds: string[] = []
+    replaceIds: string[] = [],
+    // A tap on the support card: which option it was (backend/utils/support_choice.py).
+    supportChoice?: string
   ) => {
     if (!textToSend.trim() || loading) return;
     attachTurnSteps(true);        // the last turn's steps are kept on its reply before the list starts again
@@ -2161,7 +2163,8 @@ useEffect(() => {
         gitBranch,
         true,
         demoProjectRef.current,
-        replyBrowserOnly ? replyModel : null
+        replyBrowserOnly ? replyModel : null,
+        supportChoice ?? null
       );
 
       // Attachments are scoped to the turn that sent them (already durably stored server-side

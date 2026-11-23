@@ -7,12 +7,19 @@ export interface ChoiceOption {
   description: string;
   /** Sonic's recommendation. The server puts it first. */
   recommended: boolean;
+  /** What the option means to the server, when it has one (the support card: "listen", "advice", "fix"). Sent with the message in message mode. */
+  key?: string;
 }
 
 export interface ChoiceCardData {
   choice_id: string;
   question: string;
   options: ChoiceOption[];
+  /**
+   * "answer" (the default): a tool turn is waiting, and the card answers it (POST /api/chat/choice/{id}).
+   * "message": nothing is waiting (the support card after a conversational reply, backend/utils/support_choice.py), so a tap is sent as the person's next message, carrying the option's key.
+   */
+  mode: 'answer' | 'message';
 }
 
 /** An option by its position (0 is the first button), or the person's own words. */
@@ -34,9 +41,10 @@ export function parseChoiceCard(payload: unknown): ChoiceCardData | null {
     const o = item as Record<string, unknown>;
     const label = typeof o.label === 'string' ? o.label.trim() : '';
     if (!label) return null;
-    options.push({ label, description: typeof o.description === 'string' ? o.description.trim() : '', recommended: o.recommended === true });
+    const key = typeof o.key === 'string' && /^[a-z_]{1,20}$/.test(o.key) ? o.key : undefined;
+    options.push({ label, description: typeof o.description === 'string' ? o.description.trim() : '', recommended: o.recommended === true, ...(key ? { key } : {}) });
   }
-  return { choice_id: id, question, options };
+  return { choice_id: id, question, options, mode: raw.mode === 'message' ? 'message' : 'answer' };
 }
 
 /** The person's own words as they are sent: trimmed, spaces collapsed, cut to what the server accepts. Empty means there is nothing to send. */
@@ -51,4 +59,13 @@ export function answerText(card: ChoiceCardData, answer: ChoiceAnswer): string {
     return option ? `You chose: ${option.label}` : 'You answered.';
   }
   return `You answered: ${answer.other}`;
+}
+
+/** What a tap in message mode sends: the option's label as the message, and its key (or nothing for the person's own words). */
+export function messageFor(card: ChoiceCardData, answer: ChoiceAnswer): { text: string; key?: string } {
+  if ('index' in answer) {
+    const option = card.options[answer.index];
+    return option ? { text: option.label, ...(option.key ? { key: option.key } : {}) } : { text: '' };
+  }
+  return { text: answer.other };
 }

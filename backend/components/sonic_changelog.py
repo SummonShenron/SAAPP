@@ -1788,6 +1788,90 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "what_helps_card",
+        "requires": [
+            "backend/utils/support_choice.py::def should_offer",
+            "app.py::support_choice_utils.card",
+        ],
+        "month": "2026-11",
+        "title": "Asking what would help",
+        "line": (
+            "When you're having a hard time, I can now ask with a quick card whether you want me to just listen, give advice, or help fix it, and stick with your answer for the next few hours."
+        ),
+        "keywords": ["just listen", "advice", "fix it", "vent", "what would help", "support"],
+        "volunteer": [],
+    },
+    {
+        "id": "timelines_from_memory",
+        "requires": [
+            "backend/utils/timeline.py::def build",
+            "app.py::timeline_utils.build_block",
+        ],
+        "month": "2026-11",
+        "title": "Timelines of what you've told me",
+        "line": (
+            "Ask where things stand or what's happened so far with something ongoing, like a job's interview rounds, and I now pull together everything you've told me about it, in order."
+        ),
+        "keywords": ["timeline", "so far", "where things stand", "interview steps", "recap", "history"],
+        "volunteer": [],
+    },
+    {
+        "id": "your_answer_counts",
+        "requires": [
+            "backend/utils/safety_utils.py::def merge_safety_state",
+            "backend/utils/safety_utils.py::_DENIAL_RE",
+        ],
+        "month": "2026-11",
+        "title": "Taking your word for it",
+        "line": (
+            "If I ask whether you're safe and you tell me you're okay, or that it was a lyric or an analogy, I now take your answer instead of asking again, unless you say something new."
+        ),
+        "keywords": ["stop asking", "im fine", "lyrics", "analogy", "safety question", "asked again"],
+        "volunteer": [],
+    },
+    {
+        "id": "your_goals_in_view",
+        "requires": [
+            "backend/utils/goal_guard.py::def related_goals",
+            "app.py::goal_guard.goals_block",
+        ],
+        "month": "2026-11",
+        "title": "Keeping your goals in view",
+        "line": (
+            "When something touches a goal you've told me about, like cutting back or getting back to therapy, I now keep it in view: I won't cheer on the opposite, and I'll check once before cancelling care."
+        ),
+        "keywords": ["goals", "quit", "cut back", "therapy", "sober", "cancel therapy"],
+        "volunteer": [],
+    },
+    {
+        "id": "people_notes_from_research",
+        "requires": [
+            "backend/components/sonic_people_notes.py::APPROVED_IDS",
+            "backend/utils/people_notes.py::def check_registry",
+        ],
+        "month": "2026-11",
+        "title": "More understanding, from real research",
+        "line": (
+            "I now understand more of what people go through, like falling fast, doing all the reaching, or wanting to stop caring, from notes grounded in research and approved by a person."
+        ),
+        "keywords": ["understanding", "falling fast", "one sided", "self talk", "relapse", "lonely", "research"],
+        "volunteer": [],
+    },
+    {
+        "id": "corrections_stick",
+        "requires": [
+            "backend/utils/corrections.py::def recent_corrections",
+            "app.py::corrections_utils.recent_corrections",
+        ],
+        "month": "2026-11",
+        "title": "Your corrections stick",
+        "line": (
+            "When you correct something I said, I now keep your correction in front of me for the rest of the conversation, so I don't slip back to the wrong version a few replies later."
+        ),
+        "keywords": ["correction", "you got that wrong", "that's not right", "i was the one", "remember what i said"],
+        "volunteer": [],
+    },
+    {
         "id": "takes_from_my_reading",
         "requires": [
             "backend/components/sonic_takes.py::APPROVED_IDS",

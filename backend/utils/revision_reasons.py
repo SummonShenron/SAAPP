@@ -7,7 +7,8 @@ descriptions; they are grouped here by what they are about. Counts only: no repl
 from typing import Optional
 
 # The emotional check's own tags (backend/utils/emotion_checks.py), kept as they are.
-EMOTIONAL_TAGS = ("probing_question", "two_questions", "template_phrase", "thin_comfort", "hedged", "generalizing", "restating", "venting_advice", "celebration_no_question")
+EMOTIONAL_TAGS = ("probing_question", "two_questions", "template_phrase", "thin_comfort", "hedged", "generalizing", "restating", "venting_advice", "celebration_no_question",
+                  "repeated_presence", "repeated_opening", "repeated_permission", "recycled_point", "against_their_goal")
 # What an identity rewrite was about.
 IDENTITY_REASONS = (
     "feeling",            # claims a feeling, love, joy, loneliness, a reaction, a human state

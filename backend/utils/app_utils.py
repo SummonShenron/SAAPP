@@ -81,6 +81,9 @@ def _serialize_messages(messages: list) -> list:
             stamp = reply_stamp.clean(additional_kwargs.get(reply_stamp.KEY))
             if stamp:
                 entry[reply_stamp.KEY] = stamp      # which voice wrote this reply and which examples and notes it was shown (ids and labels only: backend/utils/reply_stamp.py)
+            for mark in ("support_mode", "support_card"):
+                if additional_kwargs.get(mark):
+                    entry[mark] = additional_kwargs[mark]      # the support card and the option picked on it (backend/utils/support_choice.py MODE_MARK / CARD_MARK)
             if additional_kwargs.get("initiated"):
                 # Sonic wrote this on its own when the conversation was opened (backend/utils/initiation.py).
                 entry["initiated"] = True
@@ -217,6 +220,9 @@ def _deserialize_messages(raw_messages: list) -> list:
         m_type = msg.get("type")
         content = msg.get("content", "")
         extra = {SENT_AT_KEY: msg[SENT_AT_KEY]} if msg.get(SENT_AT_KEY) else {}
+        for mark in ("support_mode", "support_card"):
+            if msg.get(mark):
+                extra[mark] = msg[mark]
         if msg.get("initiated"):
             extra["initiated"] = True
             if msg.get("initiated_kind"):

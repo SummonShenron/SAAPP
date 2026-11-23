@@ -350,6 +350,18 @@ _LOCAL_EDIT_REQUIRED_ACTION = {
 }
 # A plan turn (plan mode, backend/utils/code_plan.py) offers these and nothing else: it reads, then submits the plan. No edit, test run, commit or web tool is among them.
 _PLAN_TURN_TOOLS = frozenset({"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan", "ask_choice", "use_skill"})
+
+
+def _care_pause_note(message: str, state: Dict[str, Any]) -> str:
+    """The care check for the tool agent (backend/utils/goal_guard.py): a request to cancel therapy or other care while the person is low (a held-down mood or any safety level) gets one
+    gentle question before anything is cancelled. "" otherwise. Pure apart from the clock."""
+    from backend.utils import goal_guard
+
+    if not goal_guard.care_cancel_request(message):
+        return ""
+    now = datetime.now(timezone.utc)
+    low = effective_risk(state.get("safety_state"), now) != RISK_NONE or energy_tier(state.get("emotional_state"), now) != "open"
+    return "\n" + goal_guard.CARE_PAUSE_NOTE if low else ""
 _PLAN_REQUIRED_ACTION = {
     "tool_action": "submit_plan",
     "nudge_after_step": 2,
@@ -1116,7 +1128,7 @@ async def reasoner_node(state: GraphState) -> GraphState:
         _prior_safety = state.get("safety_state")
         # A reading that came only from the model, at the level already in force, does not restart the watch; and "I'm fine" / "stop asking" at the lowest level ends the ladder
         # (backend/utils/safety_utils.py merge_safety_state), unless their words held explicit risk language.
-        _declined = detect_denial(msg) and _before == "elevated" and _regex_level == "none"
+        _declined = detect_denial(msg) and _before in ("elevated", "acute") and _regex_level == "none"      # at acute it counts only when acute came from the model (merge_safety_state)
         state["safety_state"] = merge_safety_state(
             _prior_safety, _level, _now, _support_updates, _contact, from_model=_level != _regex_level, declined=_declined,
             quiet=is_acknowledgement(msg),      # a bare thank-you neither answers the ladder nor skips it (the messages that skip it end the questions)
@@ -4478,7 +4490,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
         try:
             try:
                 loop_result = await _native_engine(
-                    question=msg + (f"\n\n{code_plan.PLAN_RULES}" if plan_phase == code_plan.PLAN_PHASE else "") + (await _plan_files_block() if plan_phase == code_plan.EXECUTE_PHASE else ""),
+                    question=msg + (f"\n\n{code_plan.PLAN_RULES}" if plan_phase == code_plan.PLAN_PHASE else "") + (await _plan_files_block() if plan_phase == code_plan.EXECUTE_PHASE else "")
+                    + _care_pause_note(msg, state),          # cancelling therapy or other care while low: one gentle question first (backend/utils/goal_guard.py)
                     schema=schema,
                     act=_counted_act,
                     is_unsafe=_is_unsafe,

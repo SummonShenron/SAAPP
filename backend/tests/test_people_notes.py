@@ -58,7 +58,9 @@ def prepared(*note_ids, drafts=()):
 
 def test_the_shipped_notes_are_sound_and_twenty_drafts_nobody_has_approved_by_accident():
     assert pn.check_registry() == []
-    assert len(registry.NOTES) == 20
+    assert len(registry.NOTES) == 31                                                            # the first twenty, and eleven sourced drafts from the 2026-11-23 chat review
+    review_drafts = [n for n in registry.NOTES if n["evidence"][0]["on"] == "2026-11-23"]
+    assert len(review_drafts) == 11 and all("(" in n["evidence"][0]["what"] for n in review_drafts)   # each names the research it rests on
     assert all(isinstance(n["approved"], bool) for n in registry.NOTES)
     assert set(registry.APPROVED_IDS) <= {n["id"] for n in registry.NOTES}                      # an id that is not a note approves nothing
     assert all(n["approved"] is (n["id"] in registry.APPROVED_IDS) for n in registry.NOTES)      # APPROVED_IDS is the one place a note is approved
