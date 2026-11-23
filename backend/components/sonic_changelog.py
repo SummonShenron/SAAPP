@@ -1788,6 +1788,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "more_than_reflecting",
+        "requires": [
+            "backend/utils/low_moves.py::def choose",
+            "app.py::low_moves.build_block",
+        ],
+        "month": "2026-11",
+        "title": "More than reflecting you back",
+        "line": (
+            "When you're down, I can now do more than repeat back what you said: push back with something true you've told me when you're hard on yourself, share a pattern I've noticed, or offer to do something you like together."
+        ),
+        "keywords": ["mirroring", "repeat back", "hard on yourself", "pattern", "noticed", "company", "low"],
+        "volunteer": [],
+    },
+    {
         "id": "what_helps_card",
         "requires": [
             "backend/utils/support_choice.py::def should_offer",

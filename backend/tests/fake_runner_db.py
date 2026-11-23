@@ -21,6 +21,8 @@ def _matches(doc: Dict[str, Any], flt: Optional[Dict[str, Any]]) -> bool:
                     return False
                 if op == "$ne" and have == arg:
                     return False
+                if op == "$exists" and (key in doc) != bool(arg):
+                    return False
         elif have != want:
             return False
     return True
@@ -59,6 +61,7 @@ class FakeCollection:
 
     def insert_one(self, doc: Dict[str, Any]) -> None:
         doc = copy.deepcopy(doc)
+        doc.setdefault("_id", f"inserted-{len(self.docs) + 1}")       # as Mongo does when none is given
         self.docs[doc["_id"]] = doc
 
     def find(self, flt: Optional[Dict[str, Any]] = None, projection: Any = None) -> List[Dict[str, Any]]:
@@ -93,6 +96,16 @@ class FakeCollection:
                 doc[key] = copy.deepcopy(value)
         _apply(doc, update)
         return type("R", (), {"matched_count": 1, "modified_count": 1})()
+
+    def update_many(self, flt: Dict[str, Any], update: Dict[str, Any]) -> Any:
+        found = [d for d in self.docs.values() if _matches(d, flt)]
+        for doc in found:
+            _apply(doc, update)
+        return type("R", (), {"matched_count": len(found), "modified_count": len(found)})()
+
+    def insert_many(self, docs: List[Dict[str, Any]]) -> None:
+        for doc in docs:
+            self.insert_one(doc)
 
     def find_one_and_update(self, flt: Dict[str, Any], update: Dict[str, Any], sort: Any = None, return_document: Any = False) -> Optional[Dict[str, Any]]:
         doc = self._first(flt, sort)

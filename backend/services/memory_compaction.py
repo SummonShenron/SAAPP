@@ -10,6 +10,7 @@ from backend.models.models import lite_llm
 from backend.components.constraints import MEMORY_COMPACTION_PROMPT, PATTERN_EXTRACTION_PROMPT
 from backend.services.memory_search import CHUNK_ARCHIVE_COLLECTION, USER_MEMORY_COLLECTION, embed_and_store_memory_chunk
 from backend.utils.memory_utils import save_user_fact, load_user_facts
+from backend.utils import fact_gate, self_counters
 from backend.utils.embedding_utils import cosine_similarity
 
 logger = logging.getLogger("SASS Logger")
@@ -267,6 +268,7 @@ async def _run_compaction(
     chunks_before = await asyncio.to_thread(_count_all_chunks, db, username)
     clusters_formed = 0
     facts_promoted = 0
+    facts_skipped_vague = 0
 
     try:
         candidates = await asyncio.to_thread(_fetch_chunks, db, username, input_filter)
@@ -318,6 +320,9 @@ async def _run_compaction(
 
             for fact in summarized["facts"]:
                 fact_text = fact.get("fact") if isinstance(fact, dict) else None
+                if fact_text and fact_gate.is_passing_status(fact_text, fact.get("category"), fact.get("domain")):
+                    facts_skipped_vague += 1          # passing work status naming nothing: the summary above keeps it, with its date (backend/utils/fact_gate.py)
+                    continue
                 if fact_text:
                     await asyncio.to_thread(lambda fact_text=fact_text, fact=fact: save_user_fact(
                         username, fact_text, category=fact.get("category") or "preference", source="inferred",
@@ -350,12 +355,15 @@ async def _run_compaction(
             "clusters_formed": clusters_formed,
             "singletons_promoted": singletons_promoted,
             "facts_promoted": facts_promoted,
+            "facts_skipped_vague": facts_skipped_vague,
             "tier": tier,
             "run_id": run_id,
             "clusters_archived": clusters_archived,
             "clusters_skipped": clusters_skipped,
         }
         await asyncio.to_thread(log_compaction_event, db, username, result)
+        if facts_skipped_vague:
+            await asyncio.to_thread(self_counters.record_turn_counts, {"vague_fact_skipped": facts_skipped_vague})
         return result
     except Exception:
         logger.exception("[MemoryCompaction] Compaction run failed for %s", username)

@@ -32,6 +32,8 @@ EMOTION_TOUCH_MAX_TURNS = int(os.getenv("EMOTION_TOUCH_MAX_TURNS", "1"))
 # below it, the user has shown nothing and the ceiling is their low level. A reading at or above the
 # override bar ends the carried feeling entirely, which lifts the ceiling — the user's own recovery.
 EMOTION_LIFT_FLOOR = float(os.getenv("EMOTION_LIFT_FLOOR", "0.1"))
+# Below this intensity a "low" (never "distressed") reading leaves Sonic's own material on (own_material_tier).
+OWN_MATERIAL_LOW_CEILING = float(os.getenv("OWN_MATERIAL_LOW_CEILING", "0.5"))
 _GIST_MAX_CHARS = 120
 
 NEGATIVE_VALENCES = {"distressed", "low", "frustrated"}
@@ -179,12 +181,10 @@ _CONTEXT_HEADER = "\n\nEMOTIONAL CONTEXT (a soft prior, never mention you're tra
 _LOW_BASE = (
     "the user seems {valence} right now. Meet them where they are in how you write, not only in "
     "what you say:\n"
-    "- Take the room you need. A fuller, unhurried reply that sounds like you're really listening "
-    "is better here than a short one; don't rush to wrap up. This takes priority over mirroring "
-    "their message length or playfulness: even a terse, low message deserves a full, warm reply.\n"
-    "- Open by responding to what they actually told you: reflect their specific situation and "
-    "words back in your own, rather than stock sympathy lines like \"that sounds really hard\" or "
-    "\"I'm sorry you're going through this\".\n"
+    "- Take the room you need. A fuller, unhurried reply is better here than a short one; don't rush to wrap up. This takes priority over mirroring "
+    "their message length or playfulness: even a terse, low message deserves a full, warm reply. But fill it with things worth saying, not with their own situation told back to them.\n"
+    "- Answer what they told you; don't summarise it. They know what they said: at most one short clause names the thing, then say something they did not. No stock sympathy lines "
+    "(\"that sounds really hard\", \"it makes complete sense\", \"it's completely understandable\", \"I'm sorry you're going through this\"), and never two of them together.\n"
     "- Write in warm, natural prose: no headers or bullet lists, no exclamation points or emoji, "
     "nothing breezy.\n"
     "{referral}"
@@ -224,6 +224,12 @@ PRESENCE_NEEDS = ("venting", "reassurance", "none")
 # 43%, "when they are hurting or ashamed" 14%; this wording 23%, falling on the quiet raw statements ("I just feel numb lately") where it fits and not on a plain bad day.
 HEAR_YOU_RULE = (
     "- \"I hear you.\" is your own line. When they have just told you something raw, open with it as the first words, then go on to what they said. Never open two replies in a row with it.\n"
+)
+# It became a stamp (2026-11-23, Jack's real replies): "I hear you" opened 8% of replies to a low message in October and 28% in November, after the rule above. So the rule is now only
+# given when none of the last HEAR_YOU_GAP replies opened with it, and in between the reply is told not to (backend/utils/emotion_checks.opened_with_hear_you decides, app.py passes it).
+HEAR_YOU_GAP = 6
+HEAR_YOU_HELD_RULE = (
+    "- Don't open with \"I hear you\" this time (you used it recently); open with something about what they just said.\n"
 )
 # One job per reply (2026-11-13, Jack read his own real hour with Sonic against a reply by Claude Code and picked three differences: Claude Code thanked him for telling it something hard, built on each new fact, and gave every reply a
 # different job; Sonic named the feeling each time, restarted from the same few facts and closed every reply the same way). A code check for the repetition was tried and does not work: it repeats ideas, not words (calibrated offline on that
@@ -388,7 +394,8 @@ def own_material_tier(state: Optional[Dict[str, Any]], now: datetime, *, work_co
     when an honest line from its own record fits ("I've done this before: said it was checked when it wasn't"), and a pushback that went uncaptured is a story the record never gets. So "open" also when:
     - the feeling is frustration and the moment is about the work (`work_context`: this message answers a coding reply, or this turn used the repo tools);
     - a low (not distressed) feeling has eased: the person has shown some lift (light venting, which Jack brought into scope on 2026-11-13).
-    Still held down: distress, and a low or a frustration about life with no lift. A safety context is decided by each caller's own risk check, as before. Pure."""
+    - a low (not distressed) reading below OWN_MATERIAL_LOW_CEILING, lift or not.
+    Still held down: distress, a strong low, and a frustration about life with no lift. A safety context is decided by each caller's own risk check, as before. Pure."""
     tier = energy_tier(state, now)
     if tier == "open":
         return tier
@@ -397,16 +404,20 @@ def own_material_tier(state: Optional[Dict[str, Any]], now: datetime, *, work_co
         return "open"
     if tier == "easing" and valence == "low":
         return "open"
+    # A moderate low (2026-11-23, the mirroring diagnosis): with its own material off as well as advice, a long reply to someone a bit down had little to fill it but their own words.
+    # Distress, and a strong low, stay held.
+    if valence == "low" and effective_intensity(state, now) < OWN_MATERIAL_LOW_CEILING:
+        return "open"
     return tier
 
 
-def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, safety: bool = False) -> str:
+def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, safety: bool = False, hear_you_ok: bool = True) -> str:
     """Soft-prior block for the voice prompt, or "" when the carried feeling has decayed below the
     injection threshold. Never tells the model to mention that it's tracking anything. When this
     very message showed emotion, the block spells out how to write the reply (and, via the
     reading's need, what the person wants from it); otherwise it's the gentler carried-over prior
     for a later turn on a different topic. `safety`: a safety plan is active this turn, so the block
-    must not tell the reply to keep from pointing them to other people (the ladder does that)."""
+    must not tell the reply to keep from pointing them to other people (the ladder does that). `hear_you_ok`: False when a recent reply already opened with "I hear you" (HEAR_YOU_GAP)."""
     if effective_intensity(state, now) < EMOTION_INJECTION_THRESHOLD:
         return ""
     state = state or {}
@@ -423,7 +434,7 @@ def build_emotional_context(state: Optional[Dict[str, Any]], now: datetime, *, s
         if fresh and not state.get("lift_this_turn"):
             presence = PRESENCE_RULE if need in PRESENCE_NEEDS else ""
             turn_job = (TURN_JOB_RULE + SUBSTANCE_RULE) if need in PRESENCE_NEEDS else ""        # company, not concrete help (a "solving" reply has its own job)
-            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE + QUESTION_RULE + presence + HEAR_YOU_RULE + turn_job) + _LOW_NEED[need]
+            return _CONTEXT_HEADER + _LOW_BASE.format(valence=valence, referral="" if safety else NO_REFERRAL_RULE + PLAIN_TALK_RULE + QUESTION_RULE + presence + (HEAR_YOU_RULE if hear_you_ok else HEAR_YOU_HELD_RULE) + turn_job) + _LOW_NEED[need]
         gist = str(state.get("gist") or "").strip()
         about = f" ({gist})" if gist else ""
         turns = int(state.get("turns_since", 0) or 0)
