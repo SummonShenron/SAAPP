@@ -110,7 +110,7 @@ from backend.utils import applied_changes
 from backend.utils import process_info
 from backend.utils import credits
 from backend.services import payments
-from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier
+from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier, own_material_tier
 from backend.utils.encouragement_utils import (
     ENCOURAGEMENT_MARK, build_encouragement_block, build_encouragement_revision_prompt, encouragement_reply_issue,
     select_encouragement,
@@ -1196,6 +1196,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             pushback = code_outcomes.pushback_counts(code_followup, final_state.get("emotional_state"))
             if pushback:
                 await asyncio.to_thread(record_turn_counts, pushback)
+            # The mood gate for Sonic's OWN material (its habits, record cases, captures): frustration at the work, or a low that has eased, no longer silences it (backend/utils/emotion_utils.py
+            # own_material_tier). The work is this message answering a coding reply, or this turn using the repo tools. Counted when it opened what the plain tier would have held.
+            _mood_now = datetime.now(timezone.utc)
+            own_tier = own_material_tier(final_state.get("emotional_state"), _mood_now,
+                                         work_context=code_followup is not None or bool(set(llm_turn.tools) & code_outcomes.REPO_TOOLS))
+            if own_tier != energy_tier(final_state.get("emotional_state"), _mood_now):
+                tally(turn_counts, "own_material_opened")
             if code_followup is not None and not is_guest_username(username):
                 # A signal about the PREVIOUS coding reply (backend/utils/experience_capture.py): the message after it read as pushback, or praised it. One small background call writes an abstract note, kept
                 # pending until a person approves it on Sonic Health. Nothing from the turn is stored.
@@ -1205,7 +1212,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     spawn_background_task(experience_capture.run_capture(
                         capture_signal, experience_capture.context_from_history(chat_sessions[history_key], question=question),
                         guest=False, risk_active=effective_risk(final_state.get("safety_state"), datetime.now(timezone.utc)) != RISK_NONE,
-                        energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                        energy_tier=own_tier,
                         untrusted=bool((getattr(previous_ai, "additional_kwargs", None) or {}).get(experience_capture.UNTRUSTED_MARK)),
                     ))
             if leanings_before:
@@ -1345,7 +1352,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             relatable_entry = None if (open_loop_entry or headsup_entry) else select_relatable(
                 final_state.get("original_question", question), chat_sessions[history_key],
                 source_type=source_type, risk_active=risk_level != RISK_NONE,
-                energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                energy_tier=own_tier,
                 closing=is_closing_message(question),
                 vector=question_embedding, vectors=await asyncio.to_thread(entry_vectors, embed_text),
             )
@@ -1707,9 +1714,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     shelf_offer = finding_offer      # already in the prompt (above); from here it is handled like any shelf offer: checked, counted, and spent only if the reply used it
                 # Sonic's own working leanings, and a real case from its own record when one genuinely fits (backend/utils/character.py): found by meaning from the embedding this turn already made, and
                 # only when the person is not holding a heavy mood. A case from the record takes the turn's one proactive slot, so it never stacks with another item.
-                if slot["energy_tier"] == "open" and question:
+                if own_tier == "open" and question:          # its own material: frustration at the work or an eased low no longer holds it (own_material_tier above)
                     may_cite = (not slot["proactive_taken"]) and experiences_utils.allowed(
-                        chat_sessions[history_key], risk_active=False, energy_tier=slot["energy_tier"], closing=is_closing_message(question),
+                        chat_sessions[history_key], risk_active=False, energy_tier=own_tier, closing=is_closing_message(question),
                     )
                     chat_character = await asyncio.to_thread(character_utils.for_turn, question, get_db(), embed_text, vector=question_embedding, allow_experience=may_cite)
                     if chat_character["text"]:
@@ -1935,7 +1942,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     if not is_guest_username(username):
                         spawn_background_task(experience_capture.run_capture(
                             "answer_check", {"request": question, "reply": full_response, "tools": list(llm_turn.tools), "followup": "", "reason": str(verdict.get("reason") or "")},
-                            guest=False, risk_active=risk_level != RISK_NONE, energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                            guest=False, risk_active=risk_level != RISK_NONE, energy_tier=own_tier,
                             tools_used=list(llm_turn.tools),
                         ))
                     logger.info(f"Reward evaluator flagged response ({verdict['tag']}).")
@@ -2052,13 +2059,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if llm_turn.cap_hit and not is_guest_username(username):
                     spawn_background_task(experience_capture.run_capture(
                         "step_limit", {"request": question, "reply": str(ai_message.content), "tools": list(llm_turn.tools), "followup": "", "reason": ""},
-                        guest=False, risk_active=risk_level != RISK_NONE, energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                        guest=False, risk_active=risk_level != RISK_NONE, energy_tier=own_tier,
                         tools_used=list(llm_turn.tools),
                     ))
                 if llm_turn.plan_deviated and not is_guest_username(username):
                     spawn_background_task(experience_capture.run_capture(
                         "plan_deviation", {"request": question, "reply": str(ai_message.content), "tools": list(llm_turn.tools), "followup": "", "reason": ""},
-                        guest=False, risk_active=risk_level != RISK_NONE, energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)),
+                        guest=False, risk_active=risk_level != RISK_NONE, energy_tier=own_tier,
                         tools_used=list(llm_turn.tools),
                     ))
             if set(llm_turn.tools) & experience_capture.UNTRUSTED_TOOLS:

@@ -202,7 +202,7 @@ def build_tool_excerpt(tool_name: str, args: dict | None, observation) -> dict |
         return _read_excerpt(args, observation)
     if tool_name in ("search_literal", "search_code"):
         return _search_excerpt(tool_name, args, observation)
-    if tool_name in ("read_url", "read_library_file"):
+    if tool_name in ("read_url", "read_library_file", "use_skill"):
         return _text_excerpt(args, observation)
     if tool_name == "web_search":
         return _web_search_excerpt(observation)
@@ -264,6 +264,7 @@ _TRACE_SUBJECT_ARGS = {
     "mcp__maps__travel_times": ("origin",),
     "trace_symbol": ("symbol",),
     "read_library_file": ("name",),
+    "use_skill": ("name",),
 }
 
 

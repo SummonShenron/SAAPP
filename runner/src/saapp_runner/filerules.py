@@ -13,8 +13,11 @@ BATCH_MAX_FILES = 300
 
 SKIP_DIRS: FrozenSet[str] = frozenset({
     "node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", ".next", "coverage", "chroma_db", "index-db",
-    ".claude",
 })
+# `.claude` holds Claude Code's duplicate checkouts of the repo (.claude/worktrees) and personal settings, none of which Sonic should see; but its `skills` folder is the project's shared skills, which Sonic reads
+# (backend/utils/skills.py). So the folder is entered and only these children of it are sent. The same rule is in the browser (localWorkspaceCore.ts) and the server (local_workspace.py), pinned equal by a test.
+CLAUDE_DIR = ".claude"
+CLAUDE_KEEP: FrozenSet[str] = frozenset({"skills"})
 TEXT_EXTENSIONS: FrozenSet[str] = frozenset({
     "py", "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "md", "mdx", "css", "scss", "html", "htm",
     "toml", "yaml", "yml", "txt", "sh", "ps1", "bat", "sql", "ini", "cfg", "conf", "xml", "graphql",
@@ -29,6 +32,18 @@ SECRET_FILENAMES: FrozenSet[str] = frozenset({
 SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore", ".env")
 ENV_TEMPLATE_SUFFIXES = (".example", ".sample", ".template")
 OFFICE_SUFFIXES = (".docx", ".xlsx", ".xlsm")
+
+
+def skips_directory(parent: str, name: str) -> bool:
+    """Whether a folder called `name`, inside a folder called `parent` (the name of the one it is in, "" at the top), is left out: inside `.claude` only the skills folder is kept; anywhere else the usual skipped names."""
+    if parent == CLAUDE_DIR:
+        return name not in CLAUDE_KEEP
+    return name in SKIP_DIRS
+
+
+def skips_files_in(parent: str) -> bool:
+    """Whether the files sitting directly in a folder called `parent` are left out (the settings files in `.claude`)."""
+    return parent == CLAUDE_DIR
 
 
 def is_secret_name(lower_name: str) -> bool:

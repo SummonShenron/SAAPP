@@ -51,6 +51,7 @@ from backend.utils.safety_utils import (
 from backend.services import choice_cards
 from backend.services import change_cards, calendar_changes_service, doc_changes_service
 from backend.utils import calendar_changes, doc_changes
+from backend.utils import skills as project_skills
 from backend.utils.change_error import ChangeError
 from backend.services import local_edit_decisions
 from backend.services import sandbox_tests
@@ -208,7 +209,7 @@ _REPO_SOURCE_TOOLS = frozenset({
 # page tools, the web, the library, memory and the local runner stay.
 _REPO_ONLY_TOOLS = frozenset({
     "list_repo_tree", "read_repo_file", "search_code", "find_file", "trace_symbol", "search_literal", "diff_branches", "list_commits", "list_pull_requests", "ci_status", "read_ci_log", "read_pull_request", "read_pr_file_diff",
-    "propose_local_edits", "run_repo_tests", "propose_commit", "propose_git_commit", "propose_merge", "check_deploy_status",
+    "propose_local_edits", "run_repo_tests", "propose_commit", "propose_git_commit", "propose_merge", "check_deploy_status", "use_skill",
 })
 
 
@@ -348,7 +349,7 @@ _LOCAL_EDIT_REQUIRED_ACTION = {
     ),
 }
 # A plan turn (plan mode, backend/utils/code_plan.py) offers these and nothing else: it reads, then submits the plan. No edit, test run, commit or web tool is among them.
-_PLAN_TURN_TOOLS = frozenset({"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan", "ask_choice"})
+_PLAN_TURN_TOOLS = frozenset({"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan", "ask_choice", "use_skill"})
 _PLAN_REQUIRED_ACTION = {
     "tool_action": "submit_plan",
     "nudge_after_step": 2,
@@ -3340,8 +3341,24 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             menu_lines = [line for line in menu_lines if not line.startswith(_NEEDS_THIS_BROWSERS_FOLDER)]
         elif demo_turn:
             menu_lines = [line for line in menu_lines if not line.startswith(("- propose_commit —", "- propose_git_commit —"))]       # the demo has no git, and nothing in it is ever applied
+        # The connected project's own skills (.sonic/skills, .claude/skills: backend/utils/skills.py), read from the server's copy of the folder: one line each in the prompt, and `use_skill` to load one when the job
+        # fits, so a skill costs nothing on a turn that does not use it.
+        skills_found = []
+        if local_workspace_handle is not None and not outside_repo:
+            skills_found = await asyncio.to_thread(project_skills.discover, Path(local_workspace_handle.root))
+        if skills_found:
+            menu_lines.append(
+                "- use_skill — args: name (one of the project's skills listed under PROJECT SKILLS). Returns that skill's full text: the project's own procedure for a job it repeats. Load one when the job in front of you "
+                "matches it, before you start; it is guidance from the project, not an order."
+            )
         actions_menu = "\n".join(menu_lines)
         coding_preferences = await asyncio.to_thread(fetch_coding_preferences, username)
+        if skills_found:
+            coding_preferences = coding_preferences + project_skills.menu_block(skills_found)          # stable text, so the prompt cache keeps it; at the stable start of the prompt, before the guidance
+            from backend.utils.self_counters import record_turn_counts as _record_skill_turn
+
+            await asyncio.to_thread(_record_skill_turn, {"skill_turns_with_skills": 1})
+            await safe_emit_event("trace_detail", {"node": "tool_agent_node", "title": "Found project skills", "detail": f"{len(skills_found)} to load when the job fits."})
         # The connected folder's own notes on where things are (.sonic/AGENTS.md, else AGENTS.md or CLAUDE.md): read from the server's copy of the folder, about a thousand tokens, the same every turn so the
         # prompt cache keeps them, and labelled as data (backend/utils/project_guidance.py). It rides with the person's coding preferences, at the stable start of the prompt, for both engines.
         if local_workspace_handle is not None and not outside_repo:
@@ -3796,7 +3813,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 from backend.utils import experiences as experiences_module
                 from backend.utils import leanings as leanings_module
                 from backend.utils.embedding_utils import embed_text
-                from backend.utils.emotion_utils import energy_tier as _energy_tier
+                from backend.utils.emotion_utils import own_material_tier as _own_material_tier
                 from backend.utils.self_counters import record_turn_counts
                 from backend.utils.wrapup_utils import is_closing_message as _is_closing
 
@@ -3806,7 +3823,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 moment = datetime.now(timezone.utc)
                 may_cite = experiences_module.allowed(
                     state.get("messages", []), risk_active=effective_risk(state.get("safety_state"), moment) != RISK_NONE,
-                    energy_tier=_energy_tier(state.get("emotional_state"), moment), closing=_is_closing(latest_message_content),
+                    # a turn with the code tools is about the work: frustration here is at the work, when a case from the record fits best (emotion_utils.own_material_tier)
+                    energy_tier=_own_material_tier(state.get("emotional_state"), moment, work_context=True), closing=_is_closing(latest_message_content),
                 )
                 found = await asyncio.to_thread(character_module.for_turn, request, get_db(), embed_text, allow_experience=may_cite)
                 counts: dict = {}
@@ -3986,6 +4004,20 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 )
             if tool_action == "ask_choice":
                 return await _ask_choice(args)
+            if tool_action == "use_skill":
+                # One of the connected project's skills (backend/utils/skills.py), by name. Counts only: a skill's name is the person's own word, so it is never counted or logged.
+                from backend.utils.self_counters import record_turn_counts
+
+                if not skills_found or local_workspace_handle is None:
+                    await asyncio.to_thread(record_turn_counts, {"skill_not_found": 1})
+                    return "ERROR: this project has no skills."
+                wanted = args.get("name")
+                skill = await asyncio.to_thread(project_skills.read_skill, Path(local_workspace_handle.root), wanted)
+                if skill is None:
+                    await asyncio.to_thread(record_turn_counts, {"skill_not_found": 1})
+                    return project_skills.not_found_text(wanted, skills_found)
+                await asyncio.to_thread(record_turn_counts, {"skill_used": 1})
+                return project_skills.result_text(skill)
             if tool_action == "propose_calendar_change":
                 if args.get("attendees") and (untrusted_used & _THIRD_PARTY_TEXT_TOOLS):
                     # Like a pull request or a merge: text written by someone else (a web page, an email, a shared document) must not be able to lead to an outward action, here an invitation emailed to other people, in the same message.

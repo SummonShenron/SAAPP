@@ -76,6 +76,9 @@ settings.toml
 !.sonic/README.md
 !.sonic/notes.example.md
 !.sonic/AGENTS.md
+# Skills are procedures for the whole project (see .sonic/README.md), so they are shared too.
+!.sonic/skills/
+!.sonic/skills/**
 
 # Local MCP client config (holds this machine's Python path; see runner/README.md)
 .mcp.json

@@ -171,7 +171,10 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   "voice_examples_offered",
                   # Later check-ins on a feeling still being carried (backend/utils/emotion_checkin.py): turns that were told to end with one, replies that really did, and on the next message whether the person's
                   # ceiling had eased or they were still low. Counts only.
-                  "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low")
+                  "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low",
+                  # Turns where Sonic's own material (its habits, record cases, captures) was allowed although the plain energy tier would have held it: frustration at the work, or a low that eased
+                  # (backend/utils/emotion_utils.py own_material_tier). Read against relatable_offered / experience_offered / experience_captured. Counts only.
+                  "own_material_opened")
 _PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + VERIFY_KEYS + ADVISOR_KEYS + REASONER_KEYS + SUBSTANCE_KEYS + RUNNER_FILES_KEYS + PATTERN_KEYS + STEPS_KEYS + PROACTIVE_KEYS
 # A model provider refusing Sonic's API key, and accepting it again (backend/utils/provider_health.py). Counted at most once a minute while it lasts: minutes with a refusal, not calls.
 PROVIDER_KEYS = ("llm_key_rejected_claude", "llm_key_rejected_openai", "llm_key_recovered_claude", "llm_key_recovered_openai")
@@ -188,7 +191,12 @@ RATE_LIMIT_KEYS = ("rate_limited_auth", "rate_limited_auth_all", "rate_limited_w
 CALENDAR_CHANGE_KEYS = ("calendar_change_shown", "calendar_change_applied", "calendar_change_declined", "calendar_change_failed", "calendar_change_timeout", "calendar_change_refused")
 # The same for Google Doc changes (backend/services/doc_changes_service.py). Counts only.
 DOC_CHANGE_KEYS = ("doc_change_shown", "doc_change_applied", "doc_change_declined", "doc_change_failed", "doc_change_timeout", "doc_change_refused")
-_PLAIN_KEYS = _PLAIN_KEYS + REPO_SCOPE_KEYS + COMMIT_PR_KEYS + CLI_KEYS + RATE_LIMIT_KEYS + CALENDAR_CHANGE_KEYS + DOC_CHANGE_KEYS
+# The connected project's own skills (backend/utils/skills.py): coding turns where some were listed, skills loaded with use_skill, and loads that named none the project has. Counts only: a name is never counted.
+SKILL_KEYS = ("skill_turns_with_skills", "skill_used", "skill_not_found")
+# Tool loops run with one tool list for every call so the prompt cache is read (backend/services/native_loop.py STABLE_CONTINUE_TOOL), and forced endings that used a tool they may not use there and were
+# asked again with the narrow list (each such retry is an uncached call: if this grows, the one-list idea is not paying). Counts only.
+CACHE_KEYS = ("native_stable_tools", "native_narrow_fallback")
+_PLAIN_KEYS = _PLAIN_KEYS + REPO_SCOPE_KEYS + COMMIT_PR_KEYS + CLI_KEYS + RATE_LIMIT_KEYS + CALENDAR_CHANGE_KEYS + DOC_CHANGE_KEYS + SKILL_KEYS + CACHE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

@@ -41,6 +41,15 @@ THINKING_OFF = os.getenv("CLAUDE_THINKING", "").strip().lower() in ("0", "off", 
 DROP_BLOCK = os.getenv("CLAUDE_DROP_BLOCK", "").strip().lower() in ("1", "on", "true", "yes")
 THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
 CACHE_DEFAULT = os.getenv("CLAUDE_CACHE", "on").strip().lower() not in ("0", "off", "false", "no")      # automatic prompt caching (see the class)
+# A tool loop's opening (tool list + instructions, about 10K tokens) is the same on every turn, but the automatic breakpoint sits at the END of the conversation, so a new turn (whose first message
+# differs) never read it back: each turn's first call paid for it in full (measured 2026-11-22: 24% of Sonnet's loop input uncached, 57% of its loop cost). A tool call's system message is now also marked
+# on its own, so a later turn reads that much from the cache. One hour by default: coding turns are often more than five minutes apart. "5m" (or anything else) keeps the default five minutes.
+def prefix_ttl_from(value: Optional[str]) -> str:
+    """The cache lifetime for the marked system prompt from its setting: "1h" (also when unset), or "" (the API's default five minutes) for anything else. Pure."""
+    return "1h" if (value if value is not None else "1h").strip().lower() == "1h" else ""
+
+
+PREFIX_TTL = prefix_ttl_from(os.getenv("CLAUDE_PREFIX_TTL"))
 MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "8192"))
 TIMEOUT_SECONDS = float(os.getenv("CLAUDE_TIMEOUT", "60"))
 
@@ -222,13 +231,25 @@ class ClaudeLLM:
         async for chunk in self.fallback.astream(prompt, *args, **kwargs):
             yield chunk
 
+    def _with_marked_system(self, messages: Any) -> Any:
+        """A tool conversation whose first message is the system prompt, with that prompt sent as one block marked for the cache (PREFIX_TTL), so the tool list and instructions are read back
+        on the next turn too. Same words, new message objects: the caller's list is never changed, and the fallback model is given the original. As it was when caching is off or the
+        conversation does not start with a plain-text system prompt."""
+        if not self.cache or self.voice_shape or self.stable_prefix or not isinstance(messages, list) or not messages:
+            return messages
+        first = messages[0]
+        if not isinstance(first, SystemMessage) or not isinstance(first.content, str) or not first.content.strip():
+            return messages
+        mark: Dict[str, Any] = {"type": "ephemeral", **({"ttl": PREFIX_TTL} if PREFIX_TTL else {})}
+        return [SystemMessage(content=[{"type": "text", "text": first.content, "cache_control": mark}])] + list(messages[1:])
+
     async def ainvoke_tools(self, messages: Any, tools: list) -> Any:
         """One step of a tool-calling conversation, the same contract as LazyLLM.ainvoke_tools: `tools` are function declarations (name, description,
         parameters), and the returned message's `.tool_calls` are what the model wants run (none means it is answering)."""
         label = llm_usage.caller_label()
         if self.available():
             try:
-                return self._metered(await self._runnable(tools).ainvoke(messages), label)
+                return self._metered(await self._runnable(tools).ainvoke(self._with_marked_system(messages)), label)
             except Exception as error:
                 self._gave_up(error)
         if self.fallback is None:

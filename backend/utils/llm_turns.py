@@ -181,7 +181,7 @@ def note_call(usage: Dict[str, int], model: Optional[str] = None) -> None:
         if model:
             from backend.utils import llm_usage
 
-            dollars = llm_usage.estimate_cost(str(model), {k: _count(usage.get(k)) for k in ("input", "output", "cached", "cache_write")}, llm_usage.cached_prices())
+            dollars = llm_usage.estimate_cost(str(model), {k: _count(usage.get(k)) for k in ("input", "output", "cached", "cache_write", "cache_write_1h")}, llm_usage.cached_prices())
             cost_micro = int(round((dollars or 0.0) * 1_000_000))
         with turn._lock:
             turn.cost_micro += cost_micro
