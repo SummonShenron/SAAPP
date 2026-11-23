@@ -230,6 +230,28 @@ def retrieve_relevant_memory_context(*args, **kwargs) -> str:
     return format_recall_block(items) if items else ""
 
 
+# THE STAND-OUT GATE (2026-11-23, measured on the busiest real store: 2,174 notes, nearly all about the same person). With that many notes about one life, ANY personal message
+# lands close to something: all 40 sampled real messages cleared the 0.80 cutoff with three notes each (the weakest top score was 0.823), and so did questions about things
+# never stored ("do you remember my dog's name", "how's my sister doing": 0.817 to 0.829), each of which would have been handed three unrelated notes. A fixed cutoff cannot
+# separate them on such a store. What does is whether a note STANDS OUT from the person's own background: the mean score of the notes ranked STANDOUT_FROM to STANDOUT_POOL
+# for the same question. A note must clear that background by STANDOUT_MARGIN. At 0.025 the gate kept a note on 28 of the 40 real messages and passed 0 of 10 never-stored
+# questions; only 4 of 40 kept a third note. A store too small to have a background (fewer than STANDOUT_POOL notes found) is judged by the cutoff alone, as before.
+# Notes that clear the cutoff but not the gate become near misses: on a message about the person, the second look (the small model) decides, as it already does for notes
+# just under the cutoff.
+STANDOUT_MARGIN = float(os.getenv("MEMORY_RECALL_STANDOUT", "0.025"))
+STANDOUT_POOL = 30
+STANDOUT_FROM = 10
+
+
+def standout_floor(scores: List[float]) -> Optional[float]:
+    """The score a note must reach to stand out from this question's background, or None when there are too few notes to have one. Pure."""
+    ranked = sorted(scores, reverse=True)
+    if STANDOUT_MARGIN <= 0 or len(ranked) < STANDOUT_POOL:
+        return None
+    background = ranked[STANDOUT_FROM:STANDOUT_POOL]
+    return sum(background) / len(background) + STANDOUT_MARGIN
+
+
 def retrieve_relevant_memory_items(
     vector_store: Optional[MongoDBAtlasVectorSearch],
     username: str,
@@ -239,6 +261,8 @@ def retrieve_relevant_memory_items(
     precomputed_embedding: Optional[List[float]] = None,
     context_query: str = "",
     near_misses: Optional[list] = None,
+    standout: bool = True,
+    stats: Optional[dict] = None,
 ) -> List[str]:
     """The recalled notes, each as one line with its age in front ("(about 3 weeks ago) ..."), best first; [] when none qualifies.
     Passive, always-on counterpart to memory_recall_node's explicit-intent search. Runs on
@@ -258,37 +282,47 @@ def retrieve_relevant_memory_items(
 
     context_query (see context_query_for) is a second search for a short follow-up; the notes it finds are merged with those of the
     question's own search, each keeping its best score, and the same cutoff applies. The question's own search still runs alone first, so
-    a question that stands on its own recalls exactly what it did before."""
+    a question that stands on its own recalls exactly what it did before.
+
+    `standout` applies the stand-out gate above (off for a search the agent asked for itself). `stats`, when given, is filled with "recalled" (how many came back) and
+    "standout_held" (how many cleared the cutoff but not the gate)."""
     if vector_store is None or not query or not query.strip():
         return []
+    pool = max(top_k, STANDOUT_POOL) if standout else top_k
     try:
         if precomputed_embedding is not None:
             hits = vector_store._similarity_search_with_score(
-                precomputed_embedding, k=top_k, pre_filter={"username": username, "stale": {"$ne": True}}
+                precomputed_embedding, k=pool, pre_filter={"username": username, "stale": {"$ne": True}}
             )
         else:
             hits = vector_store.similarity_search_with_score(
-                query, k=top_k, pre_filter={"username": username, "stale": {"$ne": True}}
+                query, k=pool, pre_filter={"username": username, "stale": {"$ne": True}}
             )
     except Exception:
         logger.exception("[MemorySearch] Passive semantic recall failed for %s", username)
         return []
+    floor = standout_floor([score for _doc, score in hits]) if standout else None   # the background comes from the question's own search
 
     if context_query and context_query.strip():
         try:
             extra = vector_store.similarity_search_with_score(
-                context_query, k=top_k, pre_filter={"username": username, "stale": {"$ne": True}}
+                context_query, k=pool, pre_filter={"username": username, "stale": {"$ne": True}}
             )
-            hits = merge_hits(hits, discount_context_hits(extra), top_k=top_k)
+            hits = merge_hits(hits, discount_context_hits(extra), top_k=pool)
         except Exception:
             logger.exception("[MemorySearch] Follow-up semantic recall failed for %s", username)
 
-    relevant = [doc for doc, score in hits if score >= score_threshold]
+    ranked = sorted(hits, key=lambda pair: pair[1], reverse=True)[:top_k]
+    cleared = [(doc, score) for doc, score in ranked if score >= score_threshold]
+    relevant = [doc for doc, score in cleared if floor is None or score >= floor]
+    if stats is not None:
+        stats["recalled"] = len(relevant)
+        stats["standout_held"] = len(cleared) - len(relevant)
     if not relevant:
-        if near_misses is not None:  # nothing cleared the cutoff: hand back the notes that fell just short, for the second look
-            near_misses.extend(
-                doc for doc, score in hits if score_threshold - NEAR_MISS_BAND <= score < score_threshold
-            )
+        if near_misses is not None:
+            # Nothing qualified: hand back, for the second look, what cleared the cutoff but did not stand out, then what fell just short of the cutoff.
+            near_misses.extend(doc for doc, _score in cleared)
+            near_misses.extend(doc for doc, score in ranked if score_threshold - NEAR_MISS_BAND <= score < score_threshold)
             del near_misses[NEAR_MISS_MAX_CANDIDATES:]
         return []
 
@@ -443,20 +477,23 @@ def recall_explicit(vector_store, username: str, message: str, invoke=None, top_
 
 
 async def recall_items_with_second_look(
-    vector_store, username: str, question: str, *, precomputed_embedding=None, context_query: str = "", llm=None,
+    vector_store, username: str, question: str, *, precomputed_embedding=None, context_query: str = "", llm=None, stats: Optional[dict] = None,
 ) -> List[str]:
     """retrieve_relevant_memory_items, and when it finds nothing but some notes fell just short of the cutoff and the message is about the
     user, the small model picks which of those near misses (at most three) really are what the user means."""
     near: list = []
+    stats = stats if stats is not None else {}
     # a synchronous network search: in a worker thread, so a slow one cannot freeze the server
     items = await asyncio.to_thread(
         lambda: retrieve_relevant_memory_items(
-            vector_store, username, question, precomputed_embedding=precomputed_embedding, context_query=context_query, near_misses=near,
+            vector_store, username, question, precomputed_embedding=precomputed_embedding, context_query=context_query, near_misses=near, stats=stats,
         )
     )
     if items or not near or not SECOND_LOOK_ENABLED or not refers_to_user(question):
         return items
     kept = await judge_near_misses(context_query or question, near, llm)
+    stats["second_look"] = True
+    stats["recalled"] = len(kept)
     return [f"{_age_prefix(doc)}{doc.page_content.strip()}" for doc in kept]
 
 
@@ -464,6 +501,22 @@ async def recall_with_second_look(*args, **kwargs) -> str:
     """The same, as the block the chat reply's prompt carries ("" when nothing qualifies)."""
     items = await recall_items_with_second_look(*args, **kwargs)
     return format_recall_block(items) if items else ""
+
+
+_RECALLED_WORDS = ("none", "one", "two", "three")
+
+
+def tally_recall(counts: dict, stats: Optional[dict], tally) -> None:
+    """Adds a turn's recall to its counters (self_counters: notes_recalled, notes_standout_held, notes_second_look, notes_second_look_kept). `tally` is self_counters.tally. Pure apart from it."""
+    stats = stats or {}
+    recalled = int(stats.get("recalled", 0) or 0)
+    tally(counts, "notes_recalled", _RECALLED_WORDS[min(max(recalled, 0), len(_RECALLED_WORDS) - 1)])
+    if stats.get("standout_held"):
+        tally(counts, "notes_standout_held")
+    if stats.get("second_look"):
+        tally(counts, "notes_second_look")
+        if recalled:
+            tally(counts, "notes_second_look_kept")
 
 
 def format_recall_block(items: List[str]) -> str:

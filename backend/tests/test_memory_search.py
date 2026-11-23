@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import Mock
 
 from langchain_core.documents import Document
@@ -91,7 +92,7 @@ def test_precomputed_embedding_uses_vector_search_and_skips_reembedding():
 
     assert "Jack felt discouraged after his Principal presentation." in context
     store._similarity_search_with_score.assert_called_once_with(
-        [0.1, 0.2, 0.3], k=3, pre_filter={"username": "jack", "stale": {"$ne": True}}
+        [0.1, 0.2, 0.3], k=ms.STANDOUT_POOL, pre_filter={"username": "jack", "stale": {"$ne": True}}      # 30 candidates: the stand-out gate needs the background
     )
     store.similarity_search_with_score.assert_not_called()
 
@@ -579,3 +580,95 @@ def test_retrieve_user_memory_with_a_cutoff_returns_only_notes_at_or_above_it_an
 
     assert retrieve_user_memory(Store(), "u", "q", score_threshold=0.80) == [near]
     assert retrieve_user_memory(Store(), "u", "q") == [near, far]
+
+
+# ---- the stand-out gate (2026-11-23): on a store dense with one person's notes, every personal message cleared the cutoff with three notes ----
+
+class DenseStore:
+    """Answers every search with the same scored notes (best first), and records the k it was asked for."""
+
+    def __init__(self, scores, texts=None):
+        self.pairs = [(Document(page_content=(texts or {}).get(i, f"note {i}")), s) for i, s in enumerate(scores)]
+        self.asked = []
+
+    def similarity_search_with_score(self, query, k=4, **kwargs):
+        self.asked.append(k)
+        return self.pairs[:k]
+
+
+def _dense(top, background=0.82):
+    """A store whose notes ranked 10-30 sit at `background`: the shape measured on the real store."""
+    return list(top) + [background] * (ms.STANDOUT_POOL - len(top))
+
+
+def test_a_note_that_clears_the_cutoff_but_not_the_background_is_not_recalled_and_is_counted_as_held():
+    stats = {}
+    items = ms.retrieve_relevant_memory_items(DenseStore(_dense([0.83, 0.83, 0.83])), "u", "how's my sister doing", stats=stats)
+    assert items == [] and stats == {"recalled": 0, "standout_held": 3}
+
+
+def test_only_notes_that_stand_out_are_recalled_and_the_margin_is_measured_from_ranks_ten_to_thirty():
+    store = DenseStore(_dense([0.905, 0.85, 0.84], background=0.82), texts={0: "Bumble account", 1: "low day", 2: "bed"})
+    stats = {}
+    items = ms.retrieve_relevant_memory_items(store, "u", "thinking about bumble", stats=stats)
+    assert [i.split(") ")[-1] for i in items] == ["Bumble account", "low day"]          # 0.85 >= 0.82 + 0.025, 0.84 is not
+    assert stats == {"recalled": 2, "standout_held": 1}
+    assert store.asked == [ms.STANDOUT_POOL]
+    assert ms.standout_floor(_dense([0.9], background=0.82)) == pytest.approx(0.82 + ms.STANDOUT_MARGIN)
+    assert ms.standout_floor([0.9] * 10 + [0.80] * 20) == pytest.approx(0.80 + ms.STANDOUT_MARGIN)   # ranks 0-9 are not the background
+
+
+def test_a_small_store_has_no_background_and_is_judged_by_the_cutoff_alone():
+    assert ms.standout_floor([0.83] * (ms.STANDOUT_POOL - 1)) is None
+    items = ms.retrieve_relevant_memory_items(DenseStore([0.83, 0.81, 0.70]), "u", "where is the wedding")
+    assert len(items) == 2
+
+
+def test_the_agents_own_search_asks_for_its_own_count_and_skips_the_gate():
+    store = DenseStore(_dense([0.83, 0.83, 0.83]))
+    assert len(ms.retrieve_relevant_memory_items(store, "u", "sister", top_k=3, standout=False)) == 3
+    assert store.asked == [3]
+
+
+def test_held_notes_go_to_the_second_look_first_and_the_judge_decides():
+    near = []
+    ms.retrieve_relevant_memory_items(DenseStore(_dense([0.83], background=0.82), texts={0: "held"}), "u", "my sister", near_misses=near)
+    assert [d.page_content for d in near] == ["held", "note 1", "note 2"]           # cleared the cutoff, did not stand out: the judge sees them, best first, at most three
+
+    async def judge_keeps_first(prompt):
+        return SimpleNamespace(content="1")
+
+    stats = {}
+    out = asyncio.run(ms.recall_items_with_second_look(DenseStore(_dense([0.83], background=0.82), texts={0: "held"}), "u", "how's my sister", llm=judge_keeps_first, stats=stats))
+    assert [o.split(") ")[-1] for o in out] == ["held"] and stats["second_look"] is True and stats["recalled"] == 1
+
+
+def test_recall_counts_how_many_came_back_and_whether_the_gate_or_the_judge_acted():
+    from backend.utils import self_counters
+
+    counts = {}
+    ms.tally_recall(counts, {"recalled": 0, "standout_held": 3, "second_look": True}, self_counters.tally)
+    ms.tally_recall(counts, {"recalled": 2, "standout_held": 0}, self_counters.tally)
+    ms.tally_recall(counts, {"recalled": 1, "second_look": True}, self_counters.tally)
+    ms.tally_recall(counts, None, self_counters.tally)
+    assert counts == {"notes_recalled_none": 2, "notes_recalled_two": 1, "notes_recalled_one": 1, "notes_standout_held": 1, "notes_second_look": 2, "notes_second_look_kept": 1}
+
+
+def test_the_chat_endpoint_passes_stats_and_counts_them():
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+    assert "stats=recall_stats,\n                )\n                tally_recall(turn_counts, recall_stats, tally)" in source
+
+
+def test_without_the_gate_a_large_request_is_not_held_to_the_background_either():
+    store = DenseStore(_dense([0.83, 0.83, 0.83]))
+    assert len(ms.retrieve_relevant_memory_items(store, "u", "sister", top_k=ms.STANDOUT_POOL, standout=False)) == ms.STANDOUT_POOL
+
+
+def test_the_agents_search_memory_tool_turns_the_gate_off():
+    import inspect
+
+    from backend.services import tool_agent_memory
+
+    assert "score_threshold=SEARCH_THRESHOLD, standout=False)" in inspect.getsource(tool_agent_memory)

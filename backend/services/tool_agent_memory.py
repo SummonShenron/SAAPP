@@ -136,7 +136,7 @@ async def search_for_agent(username: Optional[str], query: Any, vector_store: An
         notes: List[str] = []
         if vector_store is not None:
             notes = await asyncio.to_thread(
-                lambda: memory_search.retrieve_relevant_memory_items(vector_store, username, text, top_k=limit, score_threshold=SEARCH_THRESHOLD)
+                lambda: memory_search.retrieve_relevant_memory_items(vector_store, username, text, top_k=limit, score_threshold=SEARCH_THRESHOLD, standout=False)   # the agent asked: its own threshold only
             )
         fact_lines = [line for line in (one_line(f.fact) for f in facts) if line and not reads_as_an_order(line)]
         note_lines = [line for line in (one_line(n) for n in notes) if line and not reads_as_an_order(line)]

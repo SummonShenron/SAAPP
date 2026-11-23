@@ -94,7 +94,7 @@ from backend.utils.memory_utils import (
     FactEditError,
 )
 from backend.services.memory_compaction import compact_user_memory, compact_meta_memory
-from backend.services.memory_search import context_query_for, recall_with_second_look
+from backend.services.memory_search import context_query_for, recall_with_second_look, tally_recall
 from backend.services.local_workspace import (
     apply_sync as apply_local_workspace_sync,
     StaleUpload as LocalWorkspaceStaleUpload,
@@ -1651,11 +1651,14 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if finding_offer:
                     prompt = prompt + shelf_utils.build_shelf_block(finding_offer)
             if source_type == "conversational":
+                recall_stats: dict = {}
                 semantic_memory_context = await recall_with_second_look(
                     services.get("user_memory_vector_store"), username, question,
                     precomputed_embedding=question_embedding,
                     context_query=context_query_for(chat_sessions[history_key], question),
+                    stats=recall_stats,
                 )
+                tally_recall(turn_counts, recall_stats, tally)
                 if semantic_memory_context:
                     prompt = prompt + semantic_memory_context
                     # Invites one explicit connection to what was recalled (backend/utils/shared_history.py); quiet under
