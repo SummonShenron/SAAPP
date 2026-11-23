@@ -273,6 +273,10 @@ export const REVISION_WORDS: Readonly<Record<string, string>> = {
   generalizing: 'The draft talked about how things go in general, so it was written again',
   restating: 'The draft handed your own words back, so it was written again',
   repeated_presence: 'The draft said the same reassurance as a recent reply, so it was written again',
+  repeated_opening: 'The draft opened the same way as a recent reply, so it was written again',
+  repeated_permission: 'The draft told you what you did not have to do again, so it was written again',
+  recycled_point: 'The draft handed back a point already made twice, so it was written again',
+  against_their_goal: 'The draft went against a goal you told me about, so it was written again',
 };
 export const GENERIC_REVISION_WORDS = 'The draft was checked against what you need and written again';
 

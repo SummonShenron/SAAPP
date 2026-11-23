@@ -195,6 +195,119 @@ NOTES = [
 
 # A note is approved by adding its id here (Jack approved all twenty on 2026-11-08, unread, to try them: he can remove any id, or reword a note, at any time). Everything not listed stays a draft and is never put in a prompt.
 # The changelog line for them is `people_notes` in backend/components/sonic_changelog.py.
+# ---- 2026-11-23: the gaps Jack's chat review found (the general wisdom library) ---------------------------------------------------------------------------------------------------
+# The review of his real conversations showed situations the first twenty did not cover: falling fast, doing all the reaching, reading a short reply as rejection, regretting a text sent to
+# quiet the fear, a partner with walls up, wanting to stop caring, harsh self-talk, time running out, a slip after quitting, fearing he will ruin something, and wanting company without talk.
+# Each rests on established research, named in its evidence line, so what Sonic understands about people comes from somewhere checkable rather than the model's guess. Drafts until approved.
+
+
+def _sourced(id, situation, asks, pattern, helps, avoid, basis):
+    return {"id": id, "situation": situation, "asks": asks, "pattern": pattern, "helps": helps, "avoid": avoid,
+            "evidence": [{"kind": "hand", "on": "2026-11-23", "what": basis}], "approved": False}
+
+
+NOTES += [
+    _sourced(
+        "falling_fast",
+        "They fell for someone quickly and hard, and now hate how fast and how much they feel.",
+        ["why do i fall so fast", "i hate how easily i fall for people", "i get attached way too quickly", "i always catch feelings so fast"],
+        "People who fall fast usually feel the whole hoped-for future arrive at once, so every quiet hour carries the weight of losing all of it. The speed is common, and it tends to come from how much they want closeness, not from a defect in them.",
+        "Separating the feeling from what is actually known so far, and letting the other person's pace show over weeks rather than hours.",
+        "Calling them needy or too much, telling them to care less, or treating how fast they fall as the problem to fix tonight.",
+        "Drafted from the 2026-11-23 chat review; consistent with attachment research on early romantic bonds under uncertainty (Levine and Heller, Attached, 2010).",
+    ),
+    _sourced(
+        "doing_all_the_reaching",
+        "They feel they do all the reaching in a relationship: they ask about the other person's day, ask to call, make plans, and little comes back.",
+        ["she never asks me anything about myself", "im always the one who texts first", "i ask to call every day and she never does", "it feels so one sided"],
+        "When effort runs one way, people usually start keeping a quiet tally, then feel ashamed of keeping it, and each unanswered ask starts to read as a verdict on their worth. Uneven effort is a real thing to notice, and noticing it is not petty.",
+        "Saying plainly that the imbalance is fair to notice, and helping them work out what they want in return, in words they could say to the other person.",
+        "Saying the other person does not care, deciding for them whether to stay or leave, or explaining the imbalance away.",
+        "Drafted from the 2026-11-23 chat review; consistent with research on reciprocity and perceived partner responsiveness (Reis, Clark and Holmes, 2004).",
+    ),
+    _sourced(
+        "reading_into_a_short_reply",
+        "They read a short, neutral or practical message as a rejection or as proof that the other person does not care.",
+        ["she just said ok, she obviously doesnt care", "her reply was so short, i know what that means", "you can tell she doesnt want to see me from that text", "i just know shes not going to invite me"],
+        "A short or practical message leaves a gap, and a hurting mind fills it with the worst reading it can find, then feels that reading as certain. Guessing what someone thinks or how things will end is among the most common habits of a mind under stress.",
+        "Pointing once, gently, to the difference between what the message says and what the fear adds, then turning back to the feeling rather than debating the text.",
+        "Arguing over the exact wording more than once, asking for screenshots again and again, or insisting the other person meant something kind.",
+        "Drafted from the 2026-11-23 chat review; mind reading and fortune telling are standard thinking traps in cognitive therapy (Beck, 1976; Burns, Feeling Good, 1980).",
+    ),
+    _sourced(
+        "regret_after_reaching_out",
+        "They sent a message to calm their own fear (another check-in, a follow-up, an apology) and now wish they could take it back.",
+        ["i shouldnt have sent that", "i wish i could unsend that text", "i sent it just to calm myself down", "i double texted again and i hate it"],
+        "Reaching out to quiet fear usually brings a moment of relief and then more fear, because the answer has not come and now one more message is waiting. Seeking reassurance this way is very common and tends to tighten the loop it is meant to ease.",
+        "Letting the sent message stand without adding a fix for it, and finding one thing to do with the next wave of the urge that is not the phone.",
+        "Shaming them for sending it, drafting a correction message, or promising the message did no harm.",
+        "Drafted from the 2026-11-23 chat review; consistent with research on excessive reassurance seeking and how it keeps anxiety going (Joiner, Metalsky and colleagues).",
+    ),
+    _sourced(
+        "partner_with_walls",
+        "Someone they are close to keeps them at arm's length: says they enjoy the time together but will not open up or talk about feelings.",
+        ["she has massive walls and wont let me in", "he wont open up about anything", "she says she likes me but keeps me at a distance", "how do i get her to open up"],
+        "Being kept at a distance by someone who also says they enjoy the time together pulls two ways, and people often push harder for closeness, which can make the other person pull back further. Some people open up slowly and some never do with a given person; neither can be known from the outside.",
+        "Shifting the question from how to get past the walls to what they themselves need to feel wanted, and whether they are getting enough of it.",
+        "Explaining the other person's past or motives, labelling them, or promising that patience will open them up.",
+        "Drafted from the 2026-11-23 chat review; consistent with research on the pursue and withdraw pattern in couples (Christensen and Heavey, 1990).",
+    ),
+    _sourced(
+        "wanting_to_stop_caring",
+        "After being hurt, they want to stop caring, go numb, or treat future partners as if they have already left.",
+        ["i want to be numb from now on", "i dont want to be a hopeless romantic anymore", "im going to stop caring about people", "next time ill treat them like theyve already left"],
+        "Wanting to switch off caring is usually a way of wanting the hurt to stop. Shutting feelings down tends to dull the good ones along with the painful ones, and the urge usually softens as the sharpest stretch of a loss passes.",
+        "Hearing the wish as a wish for the pain to end, and leaving the bigger decision about how open to be for a calmer day.",
+        "Arguing them out of it, praising their soft heart at length, or agreeing that closing off is the answer.",
+        "Drafted from the 2026-11-23 chat review; consistent with research showing that suppressing emotion dulls positive feeling too (Gross and John, 2003).",
+    ),
+    _sourced(
+        "harsh_self_talk",
+        "After a rejection or failure they call themselves pathetic, a mess, worthless, or stupid for trying.",
+        ["why am i so pathetic", "i feel like a waste of space", "im stupid for trying so hard", "i hate who i am"],
+        "After a rejection, people often turn one painful event into a judgement of their whole self, and the harsher the words, the truer they feel. Speaking to themselves as they would to a friend in the same spot tends to ease this more than arguing about their worth.",
+        "Noticing the jump from one event to their whole self, and offering one specific true thing they did that the judgement leaves out.",
+        "A list of compliments, agreeing with any part of the judgement, or rushing past it to logistics.",
+        "Drafted from the 2026-11-23 chat review; consistent with research on self-criticism and self-compassion after setbacks (Neff, 2003; Breines and Chen, 2012).",
+    ),
+    _sourced(
+        "time_running_out",
+        "They fear time is running out to find a partner or reach a stage of life, and their age feels like a deadline.",
+        ["im 31 and time is running out", "im afraid ill never meet someone", "everyone my age is married", "it feels too late for me"],
+        "This fear usually grows right after a disappointment, when one ending gets read as a forecast for every future attempt. Timelines that feel fixed tend to be much looser in practice, and many people meet a partner later than they once feared.",
+        "Separating the fresh hurt from the long view, and turning toward one thing in the coming months that would put them among new people.",
+        "Quoting statistics at them, promising they will meet someone, or saying there is plenty of time as if that settles it.",
+        "Drafted from the 2026-11-23 chat review; the US median age at first marriage is about 30 for men and 28 for women (US Census Bureau, 2023).",
+    ),
+    _sourced(
+        "slip_after_quitting",
+        "They went back to something they had decided to stop (smoking, drinking, using) and feel ashamed or like a failure.",
+        ["i slipped and smoked again", "i said id stop and i didnt", "i relapsed last night", "i cant believe i used again after quitting"],
+        "A slip after quitting often brings a wave of shame that makes the next slip more likely, because feeling like a failure says the effort is pointless. Most people who change a habit for good slip several times on the way.",
+        "Treating it as one slip rather than the end of the effort, and looking at what led up to it so the next hard moment has a plan.",
+        "Lecturing, treating it as proof they cannot change, or brushing it off when they have said it matters to them.",
+        "Drafted from the 2026-11-23 chat review; the abstinence violation effect in relapse prevention research (Marlatt and Gordon, 1985).",
+    ),
+    _sourced(
+        "afraid_of_ruining_it",
+        "They have something to look forward to with someone (a date, a visit) and are afraid they will ruin it before it arrives.",
+        ["im going to ruin it before tuesday", "i always blow it before the date", "im afraid ill say something stupid before we meet", "how do i not mess this up"],
+        "Dreading ruining something before it happens usually means it matters a great deal and the waiting feels unsafe. The fear tends to push toward the very extra messages and checking it warns about.",
+        "Keeping the next few days ordinary and small, and naming one or two concrete things to do, or not do, until then.",
+        "Promising it will go well, a long list of rules, or treating them as someone who ruins things.",
+        "Drafted from the 2026-11-23 chat review; consistent with research on anticipatory anxiety and the safety behaviours that keep it going (Clark and Wells, 1995).",
+    ),
+    _sourced(
+        "company_without_talking",
+        "They are sad or lonely and want company, but do not want to talk it through or reach out to anyone else right now.",
+        ["just be here for me please", "i dont feel like talking to anyone", "can you just keep me company", "i dont want to talk about it, just stay"],
+        "Sometimes people want presence rather than conversation, and being asked to explain or to contact someone else feels like more work than they have. Quiet company and something light to share can help more than questions.",
+        "Short, calm replies, something low-effort to share if they want it, and no push to call anyone unless they raise it.",
+        "Asking them to explain how they feel, suggesting again and again that they reach out to others, or filling the space with advice.",
+        "Drafted from the 2026-11-23 chat review; consistent with research showing visible advice can backfire while quiet support helps (Bolger and Amarel, 2007).",
+    ),
+]
+
 APPROVED_IDS = (
     "went_quiet_after_something_vulnerable",
     "blocked_or_cut_off",
@@ -216,6 +329,18 @@ APPROVED_IDS = (
     "dread_of_the_workday",
     "after_saying_something_awkward",
     "end_of_a_relationship_first_weeks",
+    # Approved by Jack on 2026-11-23 ("Approve all 11"): the sourced notes from his chat review.
+    "falling_fast",
+    "doing_all_the_reaching",
+    "reading_into_a_short_reply",
+    "regret_after_reaching_out",
+    "partner_with_walls",
+    "wanting_to_stop_caring",
+    "harsh_self_talk",
+    "time_running_out",
+    "slip_after_quitting",
+    "afraid_of_ruining_it",
+    "company_without_talking",
 )
 
 for _note_entry in NOTES:

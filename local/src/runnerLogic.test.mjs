@@ -76,7 +76,7 @@ test('this page tells the server it can show a check card, and shows one on the 
   assert.match(chat, /payload\.event === 'runner_check'/);
   assert.match(chat, /runnerCheck: \{ job: payload\.job/);
   assert.match(chat, /<RunnerCheckCard/);
-  assert.match(chat, /gitBranch,\s*true,\s*demoProjectRef\.current,\s*replyBrowserOnly \? replyModel : null\s*\n\s*\)/);      // the check-card flag, whether the guest is on a demo card, then a guest's base-model choice
+  assert.match(chat, /gitBranch,\s*true,\s*demoProjectRef\.current,\s*replyBrowserOnly \? replyModel : null,\s*supportChoice \?\? null\s*\n\s*\)/);      // the check-card flag, whether the guest is on a demo card, a guest's base-model choice, then a support-card pick
 });
 
 test('the settings section is on the account page for signed-in people only', () => {

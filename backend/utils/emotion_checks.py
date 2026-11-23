@@ -227,6 +227,67 @@ def reply_repeats_presence(reply: str, earlier_replies) -> bool:
     return any(PRESENCE_LINE_RE.search(reply_body(earlier)) for earlier in list(earlier_replies or [])[-PRESENCE_WINDOW:])
 
 
+# THE SAME MOVES ON A LOOP (Jack's chat review, 2026-11-23). In the last 400 replies, a third of those to a hurting person opened "I hear you", a third said "I'm right here with you", a third told him
+# "you don't have to...", and one reassuring fact ("Tuesday is still on the calendar", "her 8:40 message") was handed back six to ten times in one evening, until it read as not listening.
+# These cross-reply checks regenerate a reply once when it repeats a move from the last few replies. A single callback is fine: a point is flagged only on its third use.
+OPENING_WINDOW = 3          # replies looked back at for the same first words
+PERMISSION_WINDOW = 2       # ... for another "you don't have to"
+RECYCLE_WINDOW = 3          # ... for a recycled point, which must already be in RECYCLE_MIN_EARLIER of them
+RECYCLE_MIN_EARLIER = 2
+_PERMISSION_RE = re.compile(r"\byou (?:do not|don(?:'|’)?t) (?:have|need) to\b", re.IGNORECASE)
+_CLOCK_RE = re.compile(r"\b\d{1,2}:\d{2}\b")
+_WEEKDAY_RE = re.compile(r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.IGNORECASE)
+_QUOTED_RE = re.compile(r"[\"“]([^\"”]{12,120})[\"”]")
+
+
+def _opening_words(text: str) -> str:
+    words = re.findall(r"[a-z']+", reply_body(text).lower().replace("’", "'"))
+    return " ".join(words[:3]) if len(words) >= 3 else ""
+
+
+def reply_repeats_opening(reply: str, earlier_replies) -> bool:
+    """True when the reply's first three words are the first three words of one of the last OPENING_WINDOW replies ("I hear you. ..." again). Pure."""
+    opening = _opening_words(reply)
+    return bool(opening) and any(_opening_words(earlier) == opening for earlier in list(earlier_replies or [])[-OPENING_WINDOW:])
+
+
+def reply_repeats_permission(reply: str, earlier_replies) -> bool:
+    """True when the reply tells them "you don't have to ..." and one of the last PERMISSION_WINDOW replies did too. Pure."""
+    if not _PERMISSION_RE.search(reply_body(reply)):
+        return False
+    return any(_PERMISSION_RE.search(reply_body(earlier)) for earlier in list(earlier_replies or [])[-PERMISSION_WINDOW:])
+
+
+def _evidence(text: str) -> set:
+    """The specific anchors a reply leans on: clock times, weekdays and quoted phrases, normalized. Pure."""
+    body = reply_body(text)
+    found = {m.group(0) for m in _CLOCK_RE.finditer(body)} | {m.group(0).lower() for m in _WEEKDAY_RE.finditer(body)}
+    found |= {" ".join(m.group(1).lower().split()) for m in _QUOTED_RE.finditer(body)}
+    return found
+
+
+def _idea_grams(text: str) -> set:
+    """Four-word runs that carry at least three content words: the shape of a point, whatever the sentence around it ("she fall asleep beside"). Three-word runs with two content words caught
+    filler on the real thread ("it fell through", "the lying down"), so the run is longer and fuller. Pure."""
+    stems = _stems(reply_body(text))
+    return {g for g in _grams(stems, 4) if len(_content(g)) >= 3}
+
+
+def reply_recycles_point(reply: str, earlier_replies, message: str = "") -> bool:
+    """True when the reply leans on an anchor (a time, a weekday, a quoted phrase) or a three-word point that at least RECYCLE_MIN_EARLIER of the last RECYCLE_WINDOW replies already used:
+    the same reassurance handed back a third time. Something THEIR message brings up is not recycled: answering "I can't make it to Tuesday" is not handing Tuesday back (replayed on the
+    real thread 2026-11-23, that one rule took the flag rate on replies to a hurting person from 28% to the cases that were really repeats). Pure."""
+    recent = list(earlier_replies or [])[-RECYCLE_WINDOW:]
+    if len(recent) < RECYCLE_MIN_EARLIER:
+        return False
+    theirs_now = _evidence(message or "") | _idea_grams(message or "") | {w.lower() for w in _WEEKDAY_RE.findall(message or "")}
+    for mine, theirs in ((_evidence(reply) - theirs_now, [_evidence(e) for e in recent]), (_idea_grams(reply) - theirs_now, [_idea_grams(e) for e in recent])):
+        for item in mine:
+            if sum(1 for earlier in theirs if item in earlier) >= RECYCLE_MIN_EARLIER:
+                return True
+    return False
+
+
 def earlier_ai_replies(history, count: int = PRESENCE_WINDOW):
     """The text of the last `count` assistant messages of a chat history (LangChain messages), oldest first; a message whose content is not plain text is skipped. Pure."""
     texts = [m.content for m in history or [] if getattr(m, "type", "") == "ai" and isinstance(getattr(m, "content", None), str)]
@@ -237,6 +298,22 @@ _REVISION_REASONS = {
     "repeated_presence": (
         "the draft closes on a line saying you are right here with them, and one of your last two replies already said one. Said again it reads as a stamp, not as being with them. Write it again without any "
         "presence line: say something specific to what they just told you instead, in different words from your earlier replies."
+    ),
+    "repeated_opening": (
+        "the draft opens with the same words as one of your last few replies. Opening the same way every time reads as a script. Write it again with an opening that answers what they just said, in words "
+        "you have not used to open a reply in this conversation."
+    ),
+    "repeated_permission": (
+        "the draft tells them \"you don't have to...\" again, and one of your last two replies already did. Said every time it stops meaning anything. Write it again without that line: give them something "
+        "specific to what they just said instead."
+    ),
+    "recycled_point": (
+        "the draft hands back a point you have already made at least twice in your last few replies (the same time, day, quote or reassurance). A third time it reads as not listening. Write it again "
+        "without that point: respond to what is new in their message, or say less. If nothing new is true, staying with how it feels is enough."
+    ),
+    "against_their_goal": (
+        "the draft encourages something they have told you they are trying to quit or cut back on (their goal is in THEIR OWN GOALS above). Write it again without encouraging it: stay with "
+        "what they said and how they feel, and if it fits, name their goal once, gently, as theirs. Do not lecture."
     ),
     "venting_advice": (
         "the person mainly wants to be heard right now, and the draft gave advice or suggestions. Write it "
@@ -278,10 +355,11 @@ _REVISION_REASONS = {
 }
 
 
-def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str, message: Optional[str] = None, earlier_replies=None) -> Optional[str]:
+def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str, message: Optional[str] = None, earlier_replies=None, latest_message: Optional[str] = None) -> Optional[str]:
     """The tag of the emotional need this reply failed to honor, or None when it is fine (or when
     nothing here applies). Only a need read from THIS message is checked: a feeling carried over from
-    earlier turns doesn't oblige the reply to anything in particular."""
+    earlier turns doesn't oblige the reply to anything in particular. `latest_message` is their message, used only so a point THEY brought up is not counted as recycled (`message` is the one the
+    restating check reads, which the app leaves out on purpose)."""
     if not state or not reply or not state.get("read_this_turn") or state.get("lift_this_turn"):
         return None
     need = state.get("need")
@@ -292,7 +370,17 @@ def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str, message: 
         return "celebration_no_question"
     if valence in NEGATIVE_VALENCES:
         # a low person, whatever the need: hedged, scripted, thin or interviewing replies are regenerated once, and so is a presence line said again within the last two replies
-        return reply_attunement_issue(reply, message) or ("repeated_presence" if reply_repeats_presence(reply, earlier_replies) else None)
+        issue = reply_attunement_issue(reply, message)
+        if issue:
+            return issue
+        if reply_repeats_presence(reply, earlier_replies):
+            return "repeated_presence"
+        if reply_repeats_opening(reply, earlier_replies):
+            return "repeated_opening"
+        if reply_repeats_permission(reply, earlier_replies):
+            return "repeated_permission"
+        if reply_recycles_point(reply, earlier_replies, latest_message or ""):
+            return "recycled_point"
     return None
 
 

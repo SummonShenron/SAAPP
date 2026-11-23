@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { MAX_OTHER_CHARS, answerText, cleanOther, type ChoiceAnswer, type ChoiceCardData } from './choiceCardLogic';
+import { MAX_OTHER_CHARS, answerText, cleanOther, messageFor, type ChoiceAnswer, type ChoiceCardData } from './choiceCardLogic';
 import './__styles__/ChoiceCard.css';
 
 interface ChoiceCardProps {
   card: ChoiceCardData;
+  /** Message mode: sends the pick as the person's next message (the chat page's own send), with the option's key. */
+  onSendMessage?: (text: string, key?: string) => void;
 }
 
 type State =
@@ -18,7 +20,7 @@ type State =
  * Sonic's turn is waiting for the answer, so pressing a button sends it straight back and Sonic carries on, with everything it had read still in hand. If nobody is waiting any more
  * (the turn timed out or ended), the card says so, and the answer can simply be typed as a message.
  */
-export default function ChoiceCard({ card }: ChoiceCardProps) {
+export default function ChoiceCard({ card, onSendMessage }: ChoiceCardProps) {
   const [state, setState] = useState<State>({ kind: 'open' });
   const [other, setOther] = useState('');
   const [error, setError] = useState('');
@@ -30,6 +32,14 @@ export default function ChoiceCard({ card }: ChoiceCardProps) {
   const send = async (answer: ChoiceAnswer) => {
     if (state.kind !== 'open') return;
     setError('');
+    if (card.mode === 'message') {
+      // Nothing is waiting: the pick is the person's next message (the support card, backend/utils/support_choice.py).
+      const { text, key } = messageFor(card, answer);
+      if (!text || !onSendMessage) return;
+      onSendMessage(text, key);
+      setState({ kind: 'answered', answer });
+      return;
+    }
     setState({ kind: 'sending' });
     try {
       const reply = await api.answerChoice(card.choice_id, 'index' in answer ? { index: answer.index } : { other: answer.other });

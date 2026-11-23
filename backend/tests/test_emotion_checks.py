@@ -328,7 +328,7 @@ def test_the_restating_check_is_off_in_the_app_because_regenerating_did_not_beat
     call = source[source.index('emotional_issue = None if safety_plan.active else emotional_reply_issue('):]
     call = call.split(chr(10))[0]
     assert 'emotional_reply_issue(final_state.get("emotional_state"), checked_reply, earlier_replies=' in call and "plain_quotes(question)" not in call      # the earlier replies are the one thing added after (2026-11-13)
-    assert "earlier_ai_replies(chat_sessions[history_key])" in call
+    assert "earlier_ai_replies(chat_sessions[history_key], RECYCLE_WINDOW)" in call and ", message=" not in call           # their message reaches only the recycled-point check (latest_message), never the restating one
     assert ec.emotional_reply_issue(_state("low", "venting"), "Every time my phone buzzes you check it. Nothing from her yet is its own kind of ache.") is None
 
 
@@ -366,7 +366,9 @@ def test_earlier_ai_replies_reads_the_assistant_messages_of_a_real_history_oldes
 def test_a_hurting_person_gets_a_presence_line_regenerated_only_when_it_was_just_said_and_the_older_checks_come_first():
     earlier = [PLAIN, STAMPED]
     assert ec.emotional_reply_issue(_state("low", "venting"), STAMPED, earlier_replies=earlier) == "repeated_presence"
-    assert ec.emotional_reply_issue(_state("low", "venting"), STAMPED) is None and ec.emotional_reply_issue(_state("low", "venting"), STAMPED, earlier_replies=[PLAIN, PLAIN]) is None
+    assert ec.emotional_reply_issue(_state("low", "venting"), STAMPED) is None
+    # a presence line after replies without one is not a repeated presence; these two replies also open with the same words, which the opening check (2026-11-23) catches
+    assert ec.emotional_reply_issue(_state("low", "venting"), STAMPED, earlier_replies=[PLAIN, PLAIN]) == "repeated_opening"
     assert ec.emotional_reply_issue(_state("positive", "connection"), STAMPED, earlier_replies=earlier) is None                           # a good mood is not held to it
     assert ec.emotional_reply_issue(_state("low", "venting"), "It sounds like a lot. I'm right here with you.", earlier_replies=earlier) == "template_phrase"
     assert ec.build_emotional_revision_prompt("PROMPT", STAMPED, "repeated_presence")[1] == ec._REVISION_REASONS["repeated_presence"]
@@ -376,4 +378,4 @@ def test_the_app_hands_the_check_the_replies_already_in_the_history():
     import pathlib
 
     source = (pathlib.Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
-    assert "from backend.utils.emotion_checks import earlier_ai_replies, emotional_reply_issue" in source
+    assert "from backend.utils.emotion_checks import RECYCLE_WINDOW, earlier_ai_replies, emotional_reply_issue" in source

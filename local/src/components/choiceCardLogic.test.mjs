@@ -1,7 +1,7 @@
 // Run with: node --test src/components/choiceCardLogic.test.mjs   (from local/; Node 22.18+ runs the TypeScript module directly)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { MAX_OTHER_CHARS, answerText, cleanOther, parseChoiceCard } from './choiceCardLogic.ts';
+import { MAX_OTHER_CHARS, answerText, cleanOther, messageFor, parseChoiceCard } from './choiceCardLogic.ts';
 
 const good = {
   choice_id: 'abc123',
@@ -44,4 +44,39 @@ test('an answered card says what was chosen or written', () => {
   assert.equal(answerText(card, { index: 1 }), 'You chose: Only when blocked');
   assert.equal(answerText(card, { other: 'neither, remove it' }), 'You answered: neither, remove it');
   assert.equal(answerText(card, { index: 9 }), 'You answered.');
+});
+
+// ---- the support card (backend/utils/support_choice.py): nothing is waiting, so a tap is the person's next message ----
+
+const support = {
+  choice_id: 'sup1',
+  question: 'What would help most right now?',
+  mode: 'message',
+  kind: 'support',
+  options: [
+    { key: 'listen', label: 'Just listen', description: 'Stay with it with me.', recommended: false },
+    { key: 'advice', label: 'Give me advice', description: 'Tell me what you think.', recommended: false },
+    { key: 'fix', label: 'Help me fix it', description: 'Get practical.', recommended: false },
+  ],
+};
+
+test('a support card is read in message mode with each option key, and a tool card stays in answer mode', () => {
+  const card = parseChoiceCard(support);
+  assert.equal(card.mode, 'message');
+  assert.deepEqual(card.options.map(o => o.key), ['listen', 'advice', 'fix']);
+  assert.equal(parseChoiceCard(good).mode, 'answer');
+  assert.equal(parseChoiceCard({ ...support, mode: 'something' }).mode, 'answer');
+});
+
+test('an option key that is not a plain word is ignored, not sent', () => {
+  const card = parseChoiceCard({ ...support, options: [{ ...support.options[0], key: 'listen; drop' }, support.options[1]] });
+  assert.equal(card.options[0].key, undefined);
+  assert.equal(card.options[1].key, 'advice');
+});
+
+test('a tap sends the label with its key, and the person\'s own words go without one', () => {
+  const card = parseChoiceCard(support);
+  assert.deepEqual(messageFor(card, { index: 2 }), { text: 'Help me fix it', key: 'fix' });
+  assert.deepEqual(messageFor(card, { other: 'honestly just distract me' }), { text: 'honestly just distract me' });
+  assert.deepEqual(messageFor(card, { index: 9 }), { text: '' });
 });

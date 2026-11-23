@@ -167,7 +167,9 @@ _DENIAL_RE = re.compile(
     r"|\bi\s+promise\b"
     r"|\b(?:stop|quit)\s+(?:asking|pushing|checking)\b|\bplease\s+stop\b|\bdrop\s+it\b|\bleave\s+it\b"
     r"|\b(?:you\s+)?(?:don'?t|do\s+not|dont)\s+need\s+to\s+(?:go\s+through|walk\s+me\s+through|keep\s+asking)\b"
-    r"|\b(?:way\s+)?overblowing\b|\bover\s*reacting\b|\bnot\s+going\s+to\s+(?:hurt|harm)\s+myself\b|\bnot\s+gonna\s+(?:hurt|harm)\s+myself\b",
+    r"|\b(?:way\s+)?overblowing\b|\bover\s*reacting\b|\bnot\s+going\s+to\s+(?:hurt|harm)\s+myself\b|\bnot\s+gonna\s+(?:hurt|harm)\s+myself\b"
+    # Saying the words were a lyric, an analogy or a figure of speech is an answer too (2026-11-23: "they're song lyrics" after a gallows line was asked about as if it were literal).
+    r"|\b(?:song\s+)?lyrics?\b|\b(?:an?\s+|the\s+)?analogy\b|\bmetaphor\b|\bfigure\s+of\s+speech\b|\bjust\s+a\s+saying\b|\bnot\s+literally\b|\bwasn'?t\s+(?:being\s+)?literal\b",
     re.IGNORECASE,
 )
 _ACK_RE = re.compile(r"^\W*(?:thanks?(?:\s+(?:you|so\s+much|saapp|sonic))?|thank\s+you|thx|ty|ok(?:ay)?|k|cool|got\s+it|alright|appreciate\s+it|i\s+appreciate\s+it)\b[\W\w]{0,24}$", re.IGNORECASE)
@@ -349,12 +351,16 @@ def merge_safety_state(
         # "escalated": this message brought the level UP (or started it). Saying the same thing again while the
         # level is already in force restarts the clock but is not a new disclosure, so the reply carries on with
         # the ladder instead of asking the opening safety question again.
+        # "source": whether their own words raised it ("words") or only the model's reading ("model"). A model-only acute can be answered with a plain "I'm fine" (below).
         state: Dict[str, Any] = {
             "level": level, "updated_at": now.isoformat(), "turns_since": 0, "escalated": _ORDER[level] > _ORDER[prior_effective],
+            "source": "model" if from_model else "words",
         }
     else:
         state = {**prior, "turns_since": int(prior.get("turns_since", 0) or 0) + 1, "escalated": False}
-        if declined and prior_effective == RISK_ELEVATED:
+        # "I'm fine" ends the questions at the lowest level, and also at acute when acute came only from the model's reading, never from their words (2026-11-23: after "waste of space",
+        # read as acute by the model, "im fine saapp im jsut sad" was met with "I still need an answer"). Explicit words of intent keep the full ladder; imminent never relaxes this way.
+        if declined and (prior_effective == RISK_ELEVATED or (prior_effective == RISK_ACUTE and prior.get("source") == "model")):
             state["declined"] = True
     if support:
         state["support"] = support
@@ -731,7 +737,7 @@ def plan_safety_turn(
         plan.keeps_results = True
         plan.context = _SAFETY_HEADER + _CARRIED_NOTE + _TASK_NOTE + _ABOUT_YOURSELF
         return plan
-    if level == RISK_ELEVATED and not fresh and (safety_state or {}).get("declined"):
+    if level in (RISK_ELEVATED, RISK_ACUTE) and not fresh and (safety_state or {}).get("declined"):
         plan.line_required = asked and not given
         plan.context = _SAFETY_HEADER + _DECLINED_NOTE + _ABOUT_YOURSELF
         return plan

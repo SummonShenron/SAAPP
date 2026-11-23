@@ -111,6 +111,10 @@ from backend.utils import process_info
 from backend.utils import recurring_struggles
 from backend.utils import revision_reasons
 from backend.utils import material_use
+from backend.utils import corrections as corrections_utils
+from backend.utils import goal_guard
+from backend.utils import timeline as timeline_utils
+from backend.utils import support_choice as support_choice_utils
 from backend.utils import credits
 from backend.services import payments
 from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier, own_material_tier
@@ -126,7 +130,7 @@ from backend.utils.emotion_checks import reply_body as identity_checks_body
 from backend.utils import placement
 from backend.utils.self_observations import asks_about_itself, build_self_knowledge_block, observations_for_turn
 from backend.utils import situation_facts as situation_facts_utils, substance_note, voice_review
-from backend.utils.emotion_checks import earlier_ai_replies, emotional_reply_issue, build_emotional_revision_prompt
+from backend.utils.emotion_checks import RECYCLE_WINDOW, earlier_ai_replies, emotional_reply_issue, build_emotional_revision_prompt
 from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, closing_reply_issue, build_closing_revision_prompt
 from backend.utils.identity_checks import identity_reply_issue, build_identity_revision_prompt
 from backend.utils.self_counters import new_turn_counts, record_turn_counts, revision_kind, tally
@@ -438,6 +442,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     git_branch: str | None = None   # the git branch the connected folder is on, read by the browser from .git/HEAD (None when unknown or detached)
     edit_decisions: bool = False    # the page reports Apply / Decline back (POST /api/local-edits/{id}/decision), so the tool loop may wait for it and carry on
+    support_choice: Optional[str] = None     # the person tapped an option on the support card ("listen", "advice" or "fix"): this message is that pick (backend/utils/support_choice.py)
     choice_cards: bool = False      # the page can show a choice card (one question, a few options) and report the answer (POST /api/chat/choice/{id}), so the tool loop may ask and wait (backend/services/choice_cards.py)
     change_cards: bool = False    # the page can show a calendar-change card (Apply / Decline) and report the press (POST /api/chat/change/{id}/decision), so the tool loop may propose a change and wait (backend/services/change_cards.py)
     runner_cards: bool = False      # the page can show a local-runner check card (Run / Cancel), so the run_local_check tool may be offered (backend/utils/runner_jobs.py)
@@ -896,7 +901,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         await asyncio.to_thread(offer_response.record, get_db(), username, offer_outcome == "taken")
     clarify_reply_to = previous_marks.get(clarify_utils.CLARIFY_MARK)  # Sonic's last reply asked how a thing fits into their life: this message is the answer (or not)
     previous_reply = open_loops_utils.previous_reply(chat_sessions[history_key])  # so "Friday at 2" can be tied to what Sonic just asked about
-    chat_sessions[history_key].append(stamp(HumanMessage(content=question)))
+    support_pick = request.support_choice if request.support_choice in support_choice_utils.KEYS else None
+    chat_sessions[history_key].append(stamp(HumanMessage(content=question, additional_kwargs={support_choice_utils.MODE_MARK: support_pick} if support_pick else {})))
 
     # The messages this turn sends word for word, and the summary of the older ones (backend/utils/conversation_summary.py): every message the summary does not cover, or the old last 10 for a
     # guest or in low-power mode.
@@ -1776,6 +1782,47 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     self_report_person = await asyncio.to_thread(offer_response.person_view, get_db(), username)
                 prompt = prompt + self_report_utils.build_block(self_report_snap, self_report_kind, tz_name=user_tz, admin=is_admin_user, person=self_report_person)
                 tally(turn_counts, "status_offered")
+            # Corrections they made in this conversation (backend/utils/corrections.py), in their words, so a reply never says the old version again: a corrected fact came back three replies later
+            # in the real thread (2026-11-23). No model call; nothing stored.
+            carried_corrections = corrections_utils.recent_corrections(chat_sessions[history_key])
+            if carried_corrections:
+                prompt = prompt + corrections_utils.build_block(carried_corrections)
+                tally(turn_counts, "corrections_carried")
+            # What they want from Sonic right now (backend/utils/support_choice.py): a mode they picked on the support card holds for a few hours; otherwise, at the start of a hard stretch where
+            # Sonic would only be guessing, the reply is followed by a card that asks (just listen / advice / help fixing it). Never under a safety plan.
+            if support_pick:
+                for _key, _count in support_choice_utils.counts_for_pick(support_pick).items():
+                    turn_counts[_key] = turn_counts.get(_key, 0) + _count
+            support_mode = support_choice_utils.current_mode(chat_sessions[history_key])
+            if support_mode and risk_level == RISK_NONE:
+                prompt = prompt + support_choice_utils.mode_block(support_mode)
+                tally(turn_counts, "support_mode_applied")
+            support_offer = (support_mode is None and not is_guest_username(username) and support_choice_utils.should_offer(
+                final_state.get("emotional_state"), question, chat_sessions[history_key][:-1], page_can_show=bool(request.choice_cards),
+                conversational=source_type == "conversational", closing=is_closing_message(question), safety_active=risk_level != RISK_NONE))
+            if support_offer:
+                prompt = prompt + support_choice_utils.OFFER_NOTE
+            # A timeline for a question about the history of something ongoing (backend/utils/timeline.py): every fact and note that names it, oldest first, so "what interview steps have I had
+            # with Casey's?" is answered from all of them, not from the five vaguest facts (2026-11-23). Only on a history question; no model call.
+            if not is_guest_username(username) and get_db() is not None and timeline_utils.asks_for_history(question):
+                timeline_entry = timeline_utils.build(
+                    question, await asyncio.to_thread(load_user_facts, username), await asyncio.to_thread(timeline_utils.fetch_notes, get_db(), username, question))
+                if timeline_entry:
+                    prompt = prompt + timeline_utils.build_block(timeline_entry)
+                    tally(turn_counts, "timeline_shown")
+            # Their own goals about substances and care (backend/utils/goal_guard.py): a message that touches one brings their goal into view, so a reply never cheers on what they are
+            # quitting; a request to cancel care while they are low gets one gentle question first. Facts are read only when the message's words touch these at all.
+            goal_entries: list = []
+            care_pause = False
+            if not is_guest_username(username) and (goal_guard.families_in(question) or goal_guard.care_cancel_request(question)):
+                goal_entries = goal_guard.related_goals(await asyncio.to_thread(load_user_facts, username), question)
+                care_pause = goal_guard.care_cancel_request(question) and (
+                    risk_level != RISK_NONE or energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) != "open")
+                if goal_entries or care_pause:
+                    prompt = prompt + goal_guard.goals_block(goal_entries, care_pause)
+                    tally(turn_counts, "goal_guard_shown")
+                    if care_pause:
+                        tally(turn_counts, "care_pause_shown")
             # The step-back question (backend/utils/recurring_struggles.py): they keep coming back upset about the same person, so once in a while Sonic asks the bigger question a friend eventually
             # would, from a fact the app found (never the count said aloud). The reach dial decides how far it goes; never in a safety context, on a closing message, for a guest, in acute hurt,
             # on a question about Sonic itself, or right after a reply that already asked something.
@@ -1876,7 +1923,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 # passed every check unseen (found 2026-11-02). The checks read a plain-quotes COPY; what the person sees, and what a rewrite is told it rejected, stays the model's own text.
                 checked_reply = plain_quotes(full_response)
                 safety_issue = safety_plan.reply_issue(checked_reply)
-                emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), checked_reply, earlier_replies=[plain_quotes(r) for r in earlier_ai_replies(chat_sessions[history_key])])  # the person's message is deliberately NOT passed: the "restating" check is switched off (docs/model-eval-plan.md Update 16 addendum)
+                emotional_issue = None if safety_plan.active else emotional_reply_issue(final_state.get("emotional_state"), checked_reply, earlier_replies=[plain_quotes(r) for r in earlier_ai_replies(chat_sessions[history_key], RECYCLE_WINDOW)], latest_message=final_state.get("original_question", question))  # the person's message is deliberately NOT passed: the "restating" check is switched off (docs/model-eval-plan.md Update 16 addendum)
+                # What they chose on the support card outranks the guessed need: with advice or a fix asked for, advice is what they want; with "just listen", advice is rewritten out
+                # even when this message was not read as venting (backend/utils/support_choice.py).
+                emotional_issue = support_choice_utils.adjust_issue(emotional_issue, support_mode, checked_reply, safety_plan.active)
                 # Sonic's identity boundary (backend/utils/identity_checks.py): no claimed feelings, no stake in
                 # whether the person stays or comes back. Not applied while a safety context is in force, which has
                 # its own rules for what the reply must do.
@@ -1906,6 +1956,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     encouragement_reply_issue(checked_reply, encouragement_entry)
                     if encouragement_entry and not safety_plan.active else None
                 )
+                # A reply that cheers on what they are trying to quit ("let the bowl do its job", with "quit using weed" among their goals): rewritten once (backend/utils/goal_guard.py).
+                goal_issue = goal_entries and goal_guard.reply_goes_against(checked_reply, goal_entries)
                 if safety_issue:
                     revision_prompt, _ = build_safety_revision_prompt(prompt, full_response, safety_issue)
                     revision_tag = "safety"
@@ -1922,6 +1974,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     revision_prompt, _ = build_encouragement_revision_prompt(prompt, full_response, encouragement_issue)
                     revision_tag = "encouragement"
                     revision_title = "Keeping the encouragement honest"
+                elif goal_issue:
+                    revision_prompt, _ = build_emotional_revision_prompt(prompt, full_response, "against_their_goal")
+                    revision_tag = "against_their_goal"
+                    revision_title = "Keeping what you want for yourself in view"
                 elif closing_turn:
                     closing_issue = closing_reply_issue(checked_reply)
                     if closing_issue:
@@ -2057,7 +2113,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if context_view:
                 yield f"data: {json.dumps({'event': 'context', **context_view})}\n\n"
             yield f"data: {json.dumps({'event': 'final_generation', 'text': full_response})}\n\n"
+            if support_offer:
+                # The support card: a tap sends the option as their next message (support_choice), which sets the mode (backend/utils/support_choice.py).
+                yield f"data: {json.dumps({'event': 'choice_card', **support_choice_utils.card()})}\n\n"
+                tally(turn_counts, "support_choice_offered")
             ai_message = stamp(AIMessage(content=full_response))
+            if support_offer:
+                ai_message.additional_kwargs[support_choice_utils.CARD_MARK] = True
             try:
                 ai_message.additional_kwargs[reply_stamp.KEY] = reply_stamp.build(
                     written_tier, tier_reason, reply_choice, [e["id"] for e in voice_example_entries], [n["id"] for n in people_note_entries],

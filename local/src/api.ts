@@ -2615,7 +2615,8 @@ export async function sendChatMessage(
   gitBranch: string | null = null,
   runnerCards = false,
   demoProject = false,
-  guestReplyModel: ReplyModel | null = null
+  guestReplyModel: ReplyModel | null = null,
+  supportChoice: string | null = null
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   // A deliberate Stop surfaces as an AbortError and is the caller's to handle; every other failure is a ChatSendError that says what is
@@ -2651,6 +2652,8 @@ export async function sendChatMessage(
         demo_project: demoProject,
         // The shared guest's base-model choice (the guests share one settings record, so it rides each message; the server honours only the cheaper ones). Null for everyone else: the server uses their saved setting.
         reply_model: guestReplyModel,
+        // This message is a tap on the support card (just listen / advice / help fixing it): which option it was (backend/utils/support_choice.py). Null for an ordinary message.
+        support_choice: supportChoice,
       }),
       signal,
     });

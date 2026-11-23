@@ -275,7 +275,7 @@ test('every tag the server can send for a rewrite has words: the emotional check
   assert.ok(emotional.length >= 10 && emotional.includes('repeated_presence') && emotional.includes('venting_advice'), `read only ${emotional.length} tags from emotion_checks.py`);
   const app = readFileSync(new URL('../../../app.py', import.meta.url), 'utf8');
   const kinds = [...app.matchAll(/revision_tag = "([a-z_]+)"/g)].map(m => m[1]);
-  assert.deepEqual([...new Set(kinds)].sort(), ['closing_engagement', 'encouragement', 'identity', 'safety']);
+  assert.deepEqual([...new Set(kinds)].sort(), ['against_their_goal', 'closing_engagement', 'encouragement', 'identity', 'safety']);
   for (const tag of [...emotional, ...kinds]) assert.ok(Object.prototype.hasOwnProperty.call(REVISION_WORDS, tag), `no words for the rewrite tag ${tag}`);
 });
 
