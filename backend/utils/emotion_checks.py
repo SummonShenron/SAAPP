@@ -251,6 +251,30 @@ def reply_repeats_opening(reply: str, earlier_replies) -> bool:
     return bool(opening) and any(_opening_words(earlier) == opening for earlier in list(earlier_replies or [])[-OPENING_WINDOW:])
 
 
+# Stock validation stacked up (2026-11-23, Jack's real replies to a low message): "I hear you, Jack. It makes complete sense that you're feeling scared." Two or more of these in the opening paragraph
+# was 3% of October's replies and 7% of November's, and every one read as the formula. One is let through; two in the first paragraph are rewritten once. Calibrated on first paragraphs only:
+# the same lines spread through a long reply were not the problem. Not the old `restating` check (switched off 2026-11-11 for "wrong energy"): this one looks for the stock lines, not their words.
+STOCK_VALIDATION_RE = re.compile(
+    r"\bi hear you\b|\bmakes (?:total |complete |perfect |so much )?sense\b|\b(?:completely|totally|perfectly|so) (?:understandable|valid|normal)\b|\bit'?s (?:okay|ok|alright) to (?:feel|be)\b"
+    r"|\bthat'?s (?:really |so |incredibly )?(?:hard|tough|rough|heavy|painful)\b|\byou'?re not alone\b|\bno wonder\b|\bof course you\b|\bi'?m (?:so )?sorry you'?re\b"
+    r"|\bthat (?:sounds|must be) (?:really |so |incredibly )?(?:hard|tough|painful|exhausting|frustrating|overwhelming)\b",
+    re.IGNORECASE,
+)
+MAX_STOCK_IN_OPENING = 1
+_HEAR_YOU_OPEN_RE = re.compile(r"^\W*(?:oh[,.]?\s*)?(?:\w+[,.]\s*)?i hear you\b", re.IGNORECASE)     # "I hear you", "Jack, I hear you", "Oh, Jack. I hear you"
+
+
+def reply_stacks_validation(reply: str) -> bool:
+    """True when the reply's first paragraph holds more than MAX_STOCK_IN_OPENING stock validation lines. Pure."""
+    first = reply_body(reply).strip().split("\n\n")[0]
+    return len(STOCK_VALIDATION_RE.findall(first.replace("’", "'"))) > MAX_STOCK_IN_OPENING
+
+
+def opened_with_hear_you(earlier_replies) -> bool:
+    """True when any of these earlier replies opened with "I hear you" (the caller passes the last emotion_utils.HEAR_YOU_GAP). Pure."""
+    return any(_HEAR_YOU_OPEN_RE.search(reply_body(r or "").replace("’", "'")) for r in earlier_replies or [])
+
+
 def reply_repeats_permission(reply: str, earlier_replies) -> bool:
     """True when the reply tells them "you don't have to ..." and one of the last PERMISSION_WINDOW replies did too. Pure."""
     if not _PERMISSION_RE.search(reply_body(reply)):
@@ -310,6 +334,11 @@ _REVISION_REASONS = {
     "recycled_point": (
         "the draft hands back a point you have already made at least twice in your last few replies (the same time, day, quote or reassurance). A third time it reads as not listening. Write it again "
         "without that point: respond to what is new in their message, or say less. If nothing new is true, staying with how it feels is enough."
+    ),
+    "stacked_validation": (
+        "the draft opens by stacking stock validation lines (\"I hear you\", \"it makes complete sense\", \"it's completely understandable\" and the like). Together they read as a formula, and "
+        "they spend the opening telling them their own situation. Write it again with at most one short acknowledgement, then something they did not say: what you notice, a true thing that "
+        "bears on it, or what you'd offer. Keep the warmth."
     ),
     "against_their_goal": (
         "the draft encourages something they have told you they are trying to quit or cut back on (their goal is in THEIR OWN GOALS above). Write it again without encouraging it: stay with "
@@ -381,6 +410,8 @@ def emotional_reply_issue(state: Optional[Dict[str, Any]], reply: str, message: 
             return "repeated_permission"
         if reply_recycles_point(reply, earlier_replies, latest_message or ""):
             return "recycled_point"
+        if reply_stacks_validation(reply):
+            return "stacked_validation"
     return None
 
 

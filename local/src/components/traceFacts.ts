@@ -277,6 +277,7 @@ export const REVISION_WORDS: Readonly<Record<string, string>> = {
   repeated_permission: 'The draft told you what you did not have to do again, so it was written again',
   recycled_point: 'The draft handed back a point already made twice, so it was written again',
   against_their_goal: 'The draft went against a goal you told me about, so it was written again',
+  stacked_validation: 'The draft opened with stock sympathy lines, so it was written again',
 };
 export const GENERIC_REVISION_WORDS = 'The draft was checked against what you need and written again';
 

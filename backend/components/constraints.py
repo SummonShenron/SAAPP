@@ -957,6 +957,12 @@ Only include an entry in "facts" for something durable and reusable across futur
 relationship). Return an empty "facts" array if none of the notes contain anything durable — do
 not invent facts that aren't supported by the notes.
 
+What they are doing at the moment is not a fact ("is currently working on a bug", "is preparing to test
+a project"): the summary keeps it. Make a fact of a project only when it names something (the project, the
+employer, a date, an outcome). A name with a possessive ("Casey's", "McDonald's") is usually a business
+or organisation, not a person: write it as the notes do ("an interview at Casey's") and never turn it
+into a person ("an interview with Casey", "Casey is a colleague") unless a note says it is a person.
+
 DOMAIN says which part of their life a fact is about: "work" is anything done for or at their employer
 or a client (the job and its tasks, tools, colleagues); "own" is their OWN projects, done for
 themselves (this assistant only if they say they are building it); "personal" is life outside both; "general" is true everywhere (a name,

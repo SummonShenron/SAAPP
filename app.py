@@ -114,10 +114,11 @@ from backend.utils import material_use
 from backend.utils import corrections as corrections_utils
 from backend.utils import goal_guard
 from backend.utils import timeline as timeline_utils
+from backend.utils import low_moves, reply_bans
 from backend.utils import support_choice as support_choice_utils
 from backend.utils import credits
 from backend.services import payments
-from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier, own_material_tier
+from backend.utils.emotion_utils import HEAR_YOU_GAP, build_emotional_context, effective_intensity, energy_tier, own_material_tier
 from backend.utils.encouragement_utils import (
     ENCOURAGEMENT_MARK, build_encouragement_block, build_encouragement_revision_prompt, encouragement_reply_issue,
     select_encouragement,
@@ -130,7 +131,7 @@ from backend.utils.emotion_checks import reply_body as identity_checks_body
 from backend.utils import placement
 from backend.utils.self_observations import asks_about_itself, build_self_knowledge_block, observations_for_turn
 from backend.utils import situation_facts as situation_facts_utils, substance_note, voice_review
-from backend.utils.emotion_checks import RECYCLE_WINDOW, earlier_ai_replies, emotional_reply_issue, build_emotional_revision_prompt
+from backend.utils.emotion_checks import RECYCLE_WINDOW, earlier_ai_replies, emotional_reply_issue, build_emotional_revision_prompt, opened_with_hear_you
 from backend.utils.wrapup_utils import is_closing_message, CLOSING_DIRECTIVE, closing_reply_issue, build_closing_revision_prompt
 from backend.utils.identity_checks import identity_reply_issue, build_identity_revision_prompt
 from backend.utils.self_counters import new_turn_counts, record_turn_counts, revision_kind, tally
@@ -1286,9 +1287,34 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Pictures Sonic made this turn (a card with the person's words on their photo) are shown the same way a library picture is.
             kb_images = [*kb_images, *(final_state.get("generated_images") or [])]
 
+            # "I hear you" only when no recent reply opened with it (it had become a stamp: emotion_utils.HEAR_YOU_GAP).
+            hear_you_ok = not opened_with_hear_you(earlier_ai_replies(chat_sessions[history_key], HEAR_YOU_GAP))
             emotional_context = safety_plan.context + build_emotional_context(
-                final_state.get("emotional_state"), datetime.now(timezone.utc), safety=safety_plan.active
+                final_state.get("emotional_state"), datetime.now(timezone.utc), safety=safety_plan.active, hear_you_ok=hear_you_ok
             )
+            _mood = final_state.get("emotional_state") or {}
+            if not hear_you_ok and emotional_context and _mood.get("read_this_turn") and not _mood.get("lift_this_turn") and _mood.get("valence") in low_moves.LOW_VALENCES:
+                tally(turn_counts, "hear_you_held")
+            # Something to do for a low person besides reflecting them back (backend/utils/low_moves.py): push back on a harsh self-judgment with a true fact, a pattern memory has seen,
+            # or company in something they like. Chosen by code, at most one, never in a safety context. Facts are only read when the mood could qualify.
+            # The repeat checks, run before the reply instead of only after it (backend/utils/reply_bans.py): what they would catch, worked out from the earlier replies, is told as plain bans.
+            # The same gate and the same earlier replies as the check after the reply, which stays as the backstop.
+            if not safety_plan.active and reply_bans.applies(_mood):
+                _bans_block = reply_bans.build_block(reply_bans.bans(
+                    [plain_quotes(r) for r in earlier_ai_replies(chat_sessions[history_key], RECYCLE_WINDOW)], final_state.get("original_question", question)))
+                if _bans_block:
+                    emotional_context += _bans_block
+                    tally(turn_counts, "reply_bans_shown")
+            low_move = None
+            if not is_guest_username(username) and not safety_plan.active and _mood.get("read_this_turn") and _mood.get("valence") in low_moves.LOW_VALENCES:
+                low_move = low_moves.choose(
+                    final_state.get("original_question", question), _mood,
+                    facts=await asyncio.to_thread(lambda: load_user_facts(username)), interests=await asyncio.to_thread(remembered_interests, username),   # served from the in-memory copy
+                    recent_messages=list(chat_sessions[history_key]), risk_active=risk_level != RISK_NONE, closing=is_closing_message(question),
+                )
+                if low_move:
+                    emotional_context += low_moves.build_block(low_move)
+                    tally(turn_counts, f"low_move_{low_move['kind']}")
             # A later, spaced-out check-in on a feeling that is still being carried, with no lift shown (backend/utils/emotion_checkin.py). Never inside a safety context: that layer has its own.
             if answers_checkin:
                 tally(turn_counts, "emotion_checkin_still_low" if energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) == "subdued" else "emotion_checkin_eased")
@@ -1917,6 +1943,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             tally(turn_counts, "route", source_type)
             if source_type == "conversational":
                 tally(turn_counts, "reply_fit_checked")
+                tally(turn_counts, "fit_checked_mood", reply_bans.mood_label(final_state.get("emotional_state")))
                 revision_prompt, revision_tag = None, None
                 safety_revised, last_resort_line = False, False
                 # Every check below is written with straight apostrophes ("I'm glad you're back"), and some models write typographic ones ("I’m glad you’re back"; GPT does by default): the same sentence then
@@ -1987,6 +2014,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if revision_prompt:
                     logger.info("Reply-fit check failed (%s); regenerating once.", revision_tag)
                     tally(turn_counts, "revised", revision_kind(revision_tag))
+                    tally(turn_counts, "revised_mood", reply_bans.mood_label(final_state.get("emotional_state")))
                     tally(turn_counts, "revised_reason", revision_reasons.reason_for(revision_tag, identity_issue, identity_source))      # what was taken out, as one word (counts only)
                     if revision_tag == "identity":
                         tally(turn_counts, "feeling_revised", feeling_kind or "other")  # a rewrite with no such question asked is a claim that came up unprompted
@@ -2139,6 +2167,8 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 ai_message.additional_kwargs[recurring_struggles.STEP_BACK_MARK] = step_back_entry["key"]
                 tally(turn_counts, "step_back_asked")
                 await asyncio.to_thread(recurring_struggles.note_asked, get_db(), username, step_back_entry["key"])
+            if low_move:
+                ai_message.additional_kwargs[low_moves.MOVE_MARK] = low_move["kind"]       # spaces the same kind of move out (low_moves.MOVE_GAP)
             if checkin_offered and emotion_checkin.asked(full_response):
                 ai_message.additional_kwargs[emotion_checkin.CHECKIN_MARK] = True  # spent only when the reply really ended on a question to them: the spacing reads this mark
                 tally(turn_counts, "emotion_checkin_asked")

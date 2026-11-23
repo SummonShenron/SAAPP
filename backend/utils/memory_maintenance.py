@@ -5,6 +5,8 @@
     python -m backend.utils.memory_maintenance compact-tier2 --username U [--apply]   # merge near-duplicate summaries now, archiving the originals
     python -m backend.utils.memory_maintenance restore-compacted [--run ID|latest] [--apply]   # list compaction runs / undo one (newest first)
     python -m backend.utils.memory_maintenance restore-pruned-facts --username U [--source explicit] [--show] [--apply]   # bring back pruned facts
+    python -m backend.utils.memory_maintenance fix-facts --username U --changes FILE --run ID [--apply]   # approved rewrites/removals of facts, notes flagged stale (backend/utils/fact_cleanup.py)
+    python -m backend.utils.memory_maintenance restore-fact-fixes --username U --run ID [--apply]          # undo a fix-facts run
 
 strip-labels: until the label fix, about a third of the saved notes begin with the model's "SUMMARY:" (it copied the last word of
 the prompt). That word was embedded into the note, which made unrelated notes look alike to the recall search. This removes the label
@@ -178,6 +180,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     undo.add_argument("--username", required=True)
     undo.add_argument("--run", default="latest", help="a run id, or 'latest'")
     undo.add_argument("--apply", action="store_true", help="actually restore (default: only say what would change)")
+    fix = sub.add_parser("fix-facts", help="apply approved fact rewrites and removals and flag notes stale, archiving every original under a run id")
+    fix.add_argument("--username", required=True)
+    fix.add_argument("--changes", required=True, help='a JSON file: {"facts": [{"id", "action": "rewrite"|"archive", "text"?, "goal_status"?}], "stale_notes": [note ids]}')
+    fix.add_argument("--run", required=True, help="a name for this run, used to undo it")
+    fix.add_argument("--apply", action="store_true", help="actually change them (default: only count what would change)")
+    unfix = sub.add_parser("restore-fact-fixes", help="undo a fix-facts run")
+    unfix.add_argument("--username", required=True)
+    unfix.add_argument("--run", required=True)
+    unfix.add_argument("--apply", action="store_true", help="actually restore (default: only count)")
     args = parser.parse_args(argv)
 
     from dotenv import load_dotenv
@@ -200,6 +211,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _classify_domains_command(db, args.username, args.employer, args.own, args.show, args.redo, args.apply, args.rewrites, args.save_answers, args.answers)
     if args.command == "restore-domains":
         return _restore_domains_command(db, args.username, args.run, args.apply)
+    if args.command == "fix-facts":
+        return _fix_facts_command(db, args.username, args.changes, args.run, args.apply, embed_text)
+    if args.command == "restore-fact-fixes":
+        return _restore_fact_fixes_command(db, args.username, args.run, args.apply)
     collection = db[USER_MEMORY_COLLECTION]
     query = {"username": args.username} if args.username else {}
     changes = plan_label_cleanup(list(collection.find(query, {"text": 1, "source_type": 1})))
@@ -362,6 +377,46 @@ def _restore_command(db: Any, run: str, apply: bool) -> int:
         print("Dry run: nothing changed. Add --apply to restore.")
         return 0
     print(restore_run(db, run_id, datetime.now(timezone.utc).isoformat()))
+    return 0
+
+
+def note_id(value: Any) -> Any:
+    """A note id as the database stores it: a 24-hex string becomes an ObjectId, anything else is left as it is. Pure."""
+    from bson import ObjectId
+
+    return ObjectId(value) if isinstance(value, str) and ObjectId.is_valid(value) else value
+
+
+def _fix_facts_command(db: Any, username: str, path: str, run: str, apply: bool, embed: Callable) -> int:
+    import json
+
+    from backend.utils import fact_cleanup, memory_utils
+
+    with open(path, encoding="utf-8") as handle:
+        plan = json.load(handle)
+    changes, notes = plan.get("facts") or [], [note_id(n) for n in plan.get("stale_notes") or []]
+    stored = {f.id for f in memory_utils.load_user_facts(username)}
+    found = sum(1 for c in changes if c.get("id") in stored)
+    print(f"{len(changes)} fact change(s), {found} found; {len(notes)} note(s) to flag stale; run {run!r}.")
+    if not apply:
+        print("Dry run: nothing changed. Add --apply to make the changes (each original is archived first).")
+        return 0
+    result = fact_cleanup.apply_changes(username, changes, run, db=db, load=memory_utils.load_user_facts, save=memory_utils.save_user_facts, embed=embed)
+    flagged = fact_cleanup.flag_notes(db, username, notes, run)
+    print({**result, "notes_flagged": flagged})
+    print(f"Undo with: restore-fact-fixes --username <same> --run {run} --apply")
+    return 0
+
+
+def _restore_fact_fixes_command(db: Any, username: str, run: str, apply: bool) -> int:
+    from backend.utils import fact_cleanup, memory_utils
+
+    count = db[memory_utils.FACT_ARCHIVE_COLLECTION].count_documents({"username": username, "cleanup_run": run, "restored_at": {"$exists": False}})
+    print(f"run {run!r}: {count} archived fact(s) to put back.")
+    if not apply:
+        print("Dry run: nothing changed. Add --apply to restore.")
+        return 0
+    print(fact_cleanup.restore(username, run, db=db, load=memory_utils.load_user_facts, save=memory_utils.save_user_facts, make_fact=lambda fields: memory_utils.UserFact(**fields)))
     return 0
 
 
