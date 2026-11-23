@@ -414,3 +414,13 @@ def test_an_eval_run_prices_one_hour_cache_writes_at_twice_the_input():
     tracker = em.SpendTracker(ceiling_usd=10, price_table={"claude-x": {"input": 1.0, "output": 0.0, "cached_input": 0.1}})
     tracker.record("claude-x", "eval:x", {"input": 1_000_000, "output": 0, "cached": 0, "cache_write": 500_000, "cache_write_1h": 500_000})
     assert tracker.total == pytest.approx(0.5 * 1.0 + 0.5 * 2.0)
+
+
+def test_the_two_fallback_price_tables_agree_on_every_model_they_both_list_and_sonnet_cache_reads_are_ten_cents():
+    """Two copies of the same prices (used only when LLM_PRICES is not set) once both carried the old Sonnet cache price. Anthropic's price for Claude Sonnet 5.5 is $2 / $10 per million tokens with cache reads at $0.10."""
+    for model, entry in em.CANDIDATES.items():
+        if model in be.EVAL_PRICES:
+            assert entry["price"] == be.EVAL_PRICES[model], f"{model} is priced differently in eval_models.py and behavior_eval.py"
+    sonnet = be.EVAL_PRICES["claude-sonnet-5-5"]
+    assert sonnet == {"input": 2.00, "output": 10.00, "cached_input": 0.10} and em.CANDIDATES["claude-sonnet-5-5"]["price"] == sonnet
+

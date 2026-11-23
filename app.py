@@ -108,6 +108,7 @@ from backend.utils import relevant_findings
 from backend.utils import citation_media
 from backend.utils import applied_changes
 from backend.utils import process_info
+from backend.utils import recurring_struggles
 from backend.utils import credits
 from backend.services import payments
 from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier, own_material_tier
@@ -2170,6 +2171,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     spawn_background_task(clarify_utils.capture(
                         username, question, level=clarify_utils.level_of(user_profile), previous_reply=previous_reply, risk_active=risk_level != RISK_NONE,
                     ))
+            # Recurring struggles (backend/utils/recurring_struggles.py): an upset message about one of their saved people is counted as part of an episode with that person, dates only, so a
+            # later step-back question can rest on a fact. Counts only for now: nothing Sonic says changes. Off the response path, never for a guest.
+            if not is_guest_username(username) and get_db() is not None:
+                spawn_background_task(asyncio.to_thread(
+                    recurring_struggles.record_turn, get_db(), username, question, list(chat_sessions[history_key]), final_state.get("emotional_state"), load_user_facts,
+                ))
             # Bounds this conversation's checkpoint history right now rather than waiting for the daily pass.
             spawn_background_task(prune_thread_checkpoints_async(history_key))
             # A guest who asked for something only an account can do gets one card under the reply saying what an account adds (backend/utils/guest_nudge.py); counted by feature.

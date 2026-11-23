@@ -9,6 +9,7 @@ this is the one place that knows all of them, and a test pins the list:
   under the cap (`user_memory_fact_archive`); an archive nothing ever purged would make "forget" a lie
 - the compaction log (`memory_compaction_events`: counts and timestamps for this user)
 - the backups of facts that sorting them by part of life (memory_domains.py) kept so it can be undone (`user_memory_domain_backups`)
+- the dates of the times they came to Sonic upset about one of their people (`user_recurring_struggles`, backend/utils/recurring_struggles.py)
 
 Upcoming-item reminders (open loops) are forgotten by their own module, called next to this by the endpoint. Not touched, on purpose: the
 user's conversations (deleted from the chat list) and the feedback they rated.
@@ -20,12 +21,13 @@ from typing import Any, Dict, List
 from backend.services.memory_search import CHUNK_ARCHIVE_COLLECTION, USER_MEMORY_COLLECTION
 from backend.utils.memory_domains import BACKUP_COLLECTION as DOMAIN_BACKUP_COLLECTION
 from backend.utils.memory_utils import FACT_ARCHIVE_COLLECTION, delete_all_user_facts, load_user_facts
+from backend.utils.recurring_struggles import COLLECTION as STRUGGLES_COLLECTION
 
 logger = logging.getLogger("SASS Logger")
 
 COMPACTION_EVENTS_COLLECTION = "memory_compaction_events"
 # Every collection erased by username, in the order they are emptied: the live notes first, then the copies kept of them.
-ERASED_COLLECTIONS = (USER_MEMORY_COLLECTION, CHUNK_ARCHIVE_COLLECTION, FACT_ARCHIVE_COLLECTION, COMPACTION_EVENTS_COLLECTION, DOMAIN_BACKUP_COLLECTION)
+ERASED_COLLECTIONS = (USER_MEMORY_COLLECTION, CHUNK_ARCHIVE_COLLECTION, FACT_ARCHIVE_COLLECTION, COMPACTION_EVENTS_COLLECTION, DOMAIN_BACKUP_COLLECTION, STRUGGLES_COLLECTION)
 
 
 def stored_counts(db: Any, username: str) -> Dict[str, int]:

@@ -140,6 +140,19 @@ def test_a_skill_file_that_resolves_to_outside_the_folder_is_refused_even_where_
     assert sk.names(sk.discover(tmp_path)) == ["fine"] and sk.read_skill(tmp_path, "evil") is None and sk.read_skill(tmp_path, "fine") is not None
 
 
+def test_a_skill_file_that_is_a_link_is_refused_even_when_it_points_inside_the_project(tmp_path, monkeypatch):
+    """A link is never followed, even one that stays inside the folder: a skill is a plain file. (Simulated, for machines that cannot create links.)"""
+    skill(tmp_path, ".claude/skills", "linked", "A link to somewhere in the project.")
+    skill(tmp_path, ".claude/skills", "plain", "A plain file.")
+    real = pathlib.Path.is_symlink
+
+    def is_symlink(self):
+        return True if (self.name == "SKILL.md" and self.parent.name == "linked") else real(self)
+
+    monkeypatch.setattr(pathlib.Path, "is_symlink", is_symlink)
+    assert sk.names(sk.discover(tmp_path)) == ["plain"] and sk.read_skill(tmp_path, "linked") is None
+
+
 def test_nonsense_roots_give_nothing_and_never_raise(tmp_path):
     for bad in (None, "", "   ", tmp_path / "does-not-exist", 42):
         assert sk.discover(bad) == [] and sk.read_skill(bad, "x") is None
