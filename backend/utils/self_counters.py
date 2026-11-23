@@ -196,7 +196,10 @@ SKILL_KEYS = ("skill_turns_with_skills", "skill_used", "skill_not_found")
 # Tool loops run with one tool list for every call so the prompt cache is read (backend/services/native_loop.py STABLE_CONTINUE_TOOL), and forced endings that used a tool they may not use there and were
 # asked again with the narrow list (each such retry is an uncached call: if this grows, the one-list idea is not paying). Counts only.
 CACHE_KEYS = ("native_stable_tools", "native_narrow_fallback")
-_PLAIN_KEYS = _PLAIN_KEYS + REPO_SCOPE_KEYS + COMMIT_PR_KEYS + CLI_KEYS + RATE_LIMIT_KEYS + CALENDAR_CHANGE_KEYS + DOC_CHANGE_KEYS + SKILL_KEYS + CACHE_KEYS
+# Recurring struggles (backend/utils/recurring_struggles.py): messages read as upset about one of the person's saved people, the ones that started a new episode (a new sitting), and the ones
+# about a person who has become recurring (where a step-back question could later be considered). Counts only: no person, no name, no text.
+STRUGGLE_KEYS = ("struggle_turns", "struggle_episodes", "struggle_recurring")
+_PLAIN_KEYS = _PLAIN_KEYS + REPO_SCOPE_KEYS + COMMIT_PR_KEYS + CLI_KEYS + RATE_LIMIT_KEYS + CALENDAR_CHANGE_KEYS + DOC_CHANGE_KEYS + SKILL_KEYS + CACHE_KEYS + STRUGGLE_KEYS
 KEYS = frozenset(
     list(_PLAIN_KEYS) + [f"{group}_{name}" for group, names in _GROUPS.items() for name in names]
 )

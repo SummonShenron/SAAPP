@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 # USD per million tokens: input, output, and input read from the prompt cache (assumed 10% of input where the price page names no figure).
 CANDIDATES: Dict[str, Dict[str, Any]] = {
     "claude-haiku-5-5": {"provider": "claude", "price": {"input": 0.10, "output": 0.50, "cached_input": 0.01}},
-    "claude-sonnet-5-5": {"provider": "claude", "price": {"input": 2.00, "output": 10.00, "cached_input": 0.20}},
+    "claude-sonnet-5-5": {"provider": "claude", "price": {"input": 2.00, "output": 10.00, "cached_input": 0.10}},
     "gemini-3.1-flash-lite": {"provider": "gemini", "price": {"input": 0.25, "output": 1.50, "cached_input": 0.025}},
     "gemini-3.5-flash-lite": {"provider": "gemini", "price": {"input": 0.30, "output": 2.50, "cached_input": 0.03}},
     "gemini-3.6-flash": {"provider": "gemini", "price": {"input": 0.75, "output": 3.75, "cached_input": 0.075}},

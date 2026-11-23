@@ -81,7 +81,9 @@ class FakeCollection:
         doc = self._first(flt, None)
         inserted = False
         if doc is None and upsert:
-            doc = {"_id": flt["_id"]} if "_id" in flt else {}
+            # As Mongo does: the new document starts with the filter's plain equality fields, and gets an _id when the filter has none.
+            doc = {key: copy.deepcopy(value) for key, value in flt.items() if not key.startswith("$") and not isinstance(value, dict)}
+            doc.setdefault("_id", f"upserted-{len(self.docs) + 1}")
             self.docs[doc["_id"]] = doc
             inserted = True
         if doc is None:
