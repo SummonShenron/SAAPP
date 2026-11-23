@@ -296,3 +296,13 @@ def test_the_fallback_model_gets_the_conversation_unmarked(monkeypatch):
 def test_the_prefix_ttl_reads_its_setting():
     assert claude_llm.prefix_ttl_from(None) == "1h" and claude_llm.prefix_ttl_from(" 1H ") == "1h"
     assert claude_llm.prefix_ttl_from("5m") == "" and claude_llm.prefix_ttl_from("") == ""
+
+
+def test_the_reply_and_reasoner_marks_use_the_hour_long_lifetime(monkeypatch):
+    monkeypatch.setattr(claude_llm, "PREFIX_TTL", "1h")
+    assert claude_llm.prefix_mark() == {"type": "ephemeral", "ttl": "1h"}
+    reasoner = claude_llm.ClaudeLLM(stable_prefix="the long stable instructions " * 5, cache=True)
+    blocks = reasoner._to_messages("the long stable instructions " * 5 + "this turn's message")[0].content
+    assert blocks[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"} and "cache_control" not in blocks[1]
+    monkeypatch.setattr(claude_llm, "PREFIX_TTL", "")
+    assert claude_llm.prefix_mark() == {"type": "ephemeral"}

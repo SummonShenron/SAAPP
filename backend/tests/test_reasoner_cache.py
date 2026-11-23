@@ -1,3 +1,4 @@
+from backend.models import claude_llm
 """The reasoner's prompt cache. Its prompt is one message whose START is the same instructions on every call and whose END (the history, the message) changes, so the cache breakpoint must sit at the end of the
 stable start (ClaudeLLM stable_prefix). With the older automatic caching the breakpoint moved to the end of the prompt, which changes every call: the whole prompt was written at 1.25x and never read
 (measured on the usage rows, 2026-11-15: 70 calls, 0% read, 100% written)."""
@@ -34,7 +35,7 @@ def test_the_prompt_is_sent_as_the_same_words_in_two_blocks_with_only_the_stable
     assert len(messages) == 1
     blocks = messages[0].content
     assert flat(messages[0]) == prompt                                                           # not a word lost or added
-    assert blocks[0] == {"type": "text", "text": PREFIX, "cache_control": {"type": "ephemeral"}}
+    assert blocks[0] == {"type": "text", "text": PREFIX, "cache_control": claude_llm.prefix_mark()}
     assert "cache_control" not in blocks[1]                                                      # the part that changes is never marked
     assert "what is on my calendar?" in blocks[1]["text"] and "what is on my calendar?" not in blocks[0]["text"]
 

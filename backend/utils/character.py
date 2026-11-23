@@ -24,8 +24,8 @@ def for_turn(
     vector: Optional[List[float]] = None,
     allow_experience: bool = False,
 ) -> Dict[str, Any]:
-    """{"text": the prompt block ("" when nothing fits), "leanings": [ids], "experience": the offered entry or None}. Blocking (at most one embedding, shared by both). Never raises."""
-    empty: Dict[str, Any] = {"text": "", "leanings": [], "experience": None}
+    """{"text": the prompt block ("" when nothing fits), "leanings": [ids], "experience": the offered entry or None, "reflection": its approved reflection or ""}. Blocking (at most one embedding, shared by both). Never raises."""
+    empty: Dict[str, Any] = {"text": "", "leanings": [], "experience": None, "reflection": ""}
     try:
         text_in = (request or "").strip()
         if len(text_in) < leanings.MIN_REQUEST_CHARS:
@@ -35,7 +35,7 @@ def for_turn(
         experience = experiences.select(text_in, db, embed, vector=asked) if allow_experience else None
         reflection = experience_reflections.approved_for(db, experience["id"]) if experience else ""      # what it takes from that case, if one was approved
         text = leanings.build_block(chosen) + (experiences.build_block(experience, reflection) if experience else "")
-        return {"text": text, "leanings": [entry["id"] for entry in chosen], "experience": experience}
+        return {"text": text, "leanings": [entry["id"] for entry in chosen], "experience": experience, "reflection": reflection}
     except Exception:
         logger.warning("[character] could not choose leanings or a case for this turn.", exc_info=True)
         return empty

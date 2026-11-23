@@ -195,7 +195,7 @@ def test_a_turn_gets_leanings_and_at_most_one_case_from_one_embedding(monkeypatc
     assert quiet["experience"] is None and "REAL CASE" not in quiet["text"]
     assert character_utils.for_turn("hi", None, counting)["text"] == ""                       # too short to match on
     monkeypatch.setattr(lean, "select", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    assert character_utils.for_turn("selector please and more words", None, counting, vector=[1.0, 0.0]) == {"text": "", "leanings": [], "experience": None}
+    assert character_utils.for_turn("selector please and more words", None, counting, vector=[1.0, 0.0]) == {"text": "", "leanings": [], "experience": None, "reflection": ""}
 
 
 def test_both_kinds_of_turn_use_it_and_the_reply_is_marked_and_counted():
@@ -203,4 +203,4 @@ def test_both_kinds_of_turn_use_it_and_the_reply_is_marked_and_counted():
     workflow = (ROOT / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
     assert "character_utils.for_turn, question, get_db(), embed_text, vector=question_embedding" in app_source
     assert 'slot["proactive_taken"] = True' in app_source and "experiences_utils.cited(str(ai_message.content))" in app_source
-    assert "character_module.for_turn, request, get_db(), embed_text" in workflow and "llm_turns.note_experience()" in workflow
+    assert "character_module.for_turn, request, get_db(), embed_text" in workflow and "llm_turns.note_experience(found[\"experience\"], found.get(\"reflection\", \"\"))" in workflow

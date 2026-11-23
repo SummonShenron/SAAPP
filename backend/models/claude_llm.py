@@ -50,6 +50,13 @@ def prefix_ttl_from(value: Optional[str]) -> str:
 
 
 PREFIX_TTL = prefix_ttl_from(os.getenv("CLAUDE_PREFIX_TTL"))
+
+
+def prefix_mark() -> Dict[str, Any]:
+    """The cache mark on every stable start this wrapper marks itself: a tool loop's system prompt, a reply's system part and history, and the reasoner's instructions. One hour unless
+    CLAUDE_PREFIX_TTL says otherwise (a one-hour write costs 2x the input price, a read 0.1x or less, so it pays as soon as one later turn within the hour reads it). An hour-long entry must come
+    before any five-minute one in a request; these are all at or before the conversation tail that automatic caching marks, so the order holds."""
+    return {"type": "ephemeral", **({"ttl": PREFIX_TTL} if PREFIX_TTL else {})}
 MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "8192"))
 TIMEOUT_SECONDS = float(os.getenv("CLAUDE_TIMEOUT", "60"))
 
@@ -141,7 +148,7 @@ class ClaudeLLM:
 
             parts = claude_voice.split_prompt(prompt, tail=self.voice_tail)
             if parts:
-                mark = {"type": "ephemeral"}
+                mark = prefix_mark()          # an hour by default: chat turns are often more than five minutes apart, and a 5-minute entry expired unread (reply reads were ~12% of input, 2026-11-22)
                 system = [{"type": "text", "text": parts[0], "cache_control": mark}] if self.cache else parts[0]
                 moved = claude_voice.history_first(parts[1]) if self.cache and claude_voice.history_first_enabled() else None
                 if moved:
@@ -154,7 +161,7 @@ class ClaudeLLM:
         if self.cache and self.stable_prefix and isinstance(prompt, str) and len(prompt) > len(self.stable_prefix) and prompt.startswith(self.stable_prefix):
             # The same words as the prompt, in two blocks: the stable start (marked, so the next call reads it from the cache) and what changes this call.
             return [HumanMessage(content=[
-                {"type": "text", "text": self.stable_prefix, "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": self.stable_prefix, "cache_control": prefix_mark()},      # the reasoner wrote 30% and read 18% of its input on 5-minute entries (2026-11-22)
                 {"type": "text", "text": prompt[len(self.stable_prefix):]},
             ])]
         return _messages(prompt)
@@ -240,7 +247,7 @@ class ClaudeLLM:
         first = messages[0]
         if not isinstance(first, SystemMessage) or not isinstance(first.content, str) or not first.content.strip():
             return messages
-        mark: Dict[str, Any] = {"type": "ephemeral", **({"ttl": PREFIX_TTL} if PREFIX_TTL else {})}
+        mark = prefix_mark()
         return [SystemMessage(content=[{"type": "text", "text": first.content, "cache_control": mark}])] + list(messages[1:])
 
     async def ainvoke_tools(self, messages: Any, tools: list) -> Any:

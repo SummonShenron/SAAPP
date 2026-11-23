@@ -115,6 +115,18 @@ def select_relatable(
     return best
 
 
+PLACE_MODES = ("place", "offer")
+
+
+def place_mode() -> str:
+    """"place" (the default, 2026-11-22): an offered line the reply did not use is placed by code, word for word (backend/utils/placement.py), because offering alone rarely reached a reply;
+    "offer" leaves it to the model, as before. Pure."""
+    import os
+
+    value = os.getenv("RELATABLE_MODE", "place").strip().lower()
+    return value if value in PLACE_MODES else "place"
+
+
 def build_relatable_block(entry: Optional[Dict[str, Any]]) -> str:
     """The prompt section for an offered line ("" when none). The model may use it or skip it."""
     if not entry:

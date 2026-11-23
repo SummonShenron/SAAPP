@@ -10,8 +10,8 @@ people (conversation_people: a name from their relationship facts, named in the 
 about the same person less than EPISODE_GAP_HOURS apart are one EPISODE (one sitting); a later one starts a new episode. A person is RECURRING when they have at least
 RECURRING_MIN_EPISODES episodes within WINDOW_DAYS that span at least RECURRING_MIN_SPAN_DAYS: the point at which a step-back question could be considered (step 2, not built).
 
-WHAT IS STORED. One small document per person-who-uses-Sonic: for each saved person, the name as written in their facts and the start time of each episode. No message text, no feeling,
-no reply. Episodes older than WINDOW_DAYS are dropped, a document untouched for EXPIRE_DAYS deletes itself, and "Clear All" on the Memory page deletes it (backend/utils/memory_erase.py).
+WHAT IS STORED. One small document per person-who-uses-Sonic: for each saved person, the name as written in their facts and the start time of each episode, and (step 3, below) when a
+step-back question was asked, until when it is dropped, and their own answer to it (at most ANSWER_MAX_CHARS). No other message text, no feeling, no reply. Episodes older than WINDOW_DAYS are dropped, a document untouched for EXPIRE_DAYS deletes itself, and "Clear All" on the Memory page deletes it (backend/utils/memory_erase.py).
 Guests are never tracked. No name is ever logged; the counters (self_counters STRUGGLE_KEYS) are counts only.
 """
 import logging
@@ -80,8 +80,8 @@ def update(people: List[Dict[str, Any]], name: str, now: datetime) -> Tuple[List
     out: List[Dict[str, Any]] = []
     entry: Optional[Dict[str, Any]] = None
     for person in people or []:
-        copy = {"key": person.get("key"), "name": person.get("name"), "last_seen": person.get("last_seen"),
-                "episodes": [e for e in (person.get("episodes") or []) if (_parse(e) or cutoff) > cutoff]}
+        copy = {**person, "key": person.get("key"), "name": person.get("name"), "last_seen": person.get("last_seen"),
+                "episodes": [e for e in (person.get("episodes") or []) if (_parse(e) or cutoff) > cutoff]}      # the step-back fields (asked_at, dropped_until, answer) ride along
         if copy["key"] == key:
             entry = copy
         out.append(copy)
@@ -94,7 +94,7 @@ def update(people: List[Dict[str, Any]], name: str, now: datetime) -> Tuple[List
         entry["episodes"] = (entry["episodes"] + [now.isoformat()])[-MAX_EPISODES:]
     entry["last_seen"] = now.isoformat()
     entry["name"] = name
-    out = [p for p in out if p["episodes"] or p is entry]
+    out = [p for p in out if p["episodes"] or p is entry or _parse(p.get("dropped_until")) is not None and _parse(p.get("dropped_until")) > now]
     out.sort(key=lambda p: _parse(p.get("last_seen")) or cutoff, reverse=True)
     return out[:MAX_PEOPLE], started
 
@@ -152,6 +152,133 @@ def note_turn(db: Any, username: str, message: str, messages: Sequence[Any], emo
     except Exception:
         logger.warning("[recurring struggles] could not record a turn.", exc_info=True)
         return {}
+
+
+# ---- step 2 and 3: the step-back question, and dropping or pressing it (2026-11-22, on Jack's "do 1-6" with the defaults I recommended) ---------------------------------------
+# WHEN. An upset message about a person who is RECURRING, and not in acute hurt (this message's intensity below ACUTE_INTENSITY): one question about the bigger thing (what they want from it,
+# whether it is giving them what they need), never a verdict and never the count said aloud. At most once per person every ASK_GAP_DAYS.
+# HOW FAR, by the person's reach dial (backend/utils/reach.py), so no new setting: "none" never asks; "low" and "default" ask now and then; "more" may also PRESS, by holding up what they
+# themselves answered last time ("you said you wanted ...") next to what keeps happening.
+# AFTER. The message after an asked step-back is read as its answer: a deflection ("I don't want to get into that") drops it for that person for DROP_DAYS; an engaged answer is kept, in
+# their words (at most ANSWER_MAX_CHARS), for a later press. That answer is the one piece of their text this record keeps; Clear All and the record's expiry delete it.
+STEP_BACK_MARK = "step_back_asked"          # on Sonic's own reply: the key of the person the step-back was about
+ACUTE_INTENSITY = float(os.getenv("STEP_BACK_ACUTE_INTENSITY", "0.75"))
+ASK_GAP_DAYS = 14
+DROP_DAYS = 30
+ANSWER_MIN_CHARS = 25
+ANSWER_MAX_CHARS = 300
+_DEFLECT_RE = re.compile(
+    r"\b(?:don'?t|do not|rather not|not)\s+(?:want|wanna|ready|going)\s+(?:to\s+)?(?:talk|get into|go into|think about|discuss|answer|go there)\b"
+    r"|\b(?:drop it|leave it|let it go|not now|not today|can we not|stop asking|change the subject|that'?s not the point|i don'?t know|idk|no idea|whatever)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_answer(message: str) -> str:
+    """"deflected", "engaged" (at least ANSWER_MIN_CHARS and no deflection) or "unclear". Pure."""
+    text = " ".join((message or "").split())
+    if _DEFLECT_RE.search(text):
+        return "deflected"
+    return "engaged" if len(text) >= ANSWER_MIN_CHARS else "unclear"
+
+
+def step_back_due(person: Optional[Dict[str, Any]], now: datetime, reach_level: str) -> Optional[Dict[str, Any]]:
+    """{"key", "name", "press": their earlier answer or ""} when a step-back question may be asked about this person now, else None. Pure."""
+    if not person or reach_level == "none" or not is_recurring(person, now):
+        return None
+    dropped = _parse(person.get("dropped_until"))
+    if dropped is not None and dropped > now:
+        return None
+    asked = _parse(person.get("asked_at"))
+    if asked is not None and now - asked < timedelta(days=ASK_GAP_DAYS):
+        return None
+    press = str(person.get("answer") or "") if reach_level == "more" else ""
+    return {"key": person.get("key"), "name": person.get("name"), "press": press}
+
+
+def step_back_for_turn(db: Any, username: str, message: str, messages: Sequence[Any], emotional_state: Any, load_facts: Callable[[str], Sequence[Any]], reach_level: str,
+                       now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+    """The step-back question due on this turn, or None: an upset (not acute) message about a recurring person whose cadence allows it. Blocking (reads). Never raises."""
+    try:
+        if db is None or not username or reach_level == "none" or not upset_this_turn(emotional_state):
+            return None
+        if float((emotional_state or {}).get("intensity", 0.0)) >= ACUTE_INTENSITY:
+            return None
+        name = person_of_turn(message, messages, load_facts(username) or [])
+        if not name:
+            return None
+        doc = db[COLLECTION].find_one({"username": username}, {"_id": 0, "people": 1}) or {}
+        person = next((p for p in doc.get("people") or [] if p.get("key") == name.casefold()), None)
+        return step_back_due(person, now or datetime.now(timezone.utc), reach_level)
+    except Exception:
+        logger.warning("[recurring struggles] could not decide on a step-back question.", exc_info=True)
+        return None
+
+
+def step_back_block(entry: Optional[Dict[str, Any]]) -> str:
+    """The prompt section for a due step-back question, or "". Pure."""
+    if not entry:
+        return ""
+    press = " ".join(str(entry.get("press") or "").split())
+    return (
+        f"\nA BIGGER QUESTION (true, from your records, found by the app: they have come to you upset about {entry['name']} many separate times over the past weeks, not only today): "
+        "after you have answered what they said now, you may ask ONE question about the bigger picture, the way a friend eventually would: what they actually want from this, or whether it "
+        "is giving them what they need. It is a question, not advice and not a verdict: never tell them to stay or leave, never diagnose the relationship or the person, never say \"people often\". "
+        "Do not say how many times, and do not make it sound like you have been keeping score: \"this keeps coming back\" is the most you say about it. If anything in what they just said is "
+        "raw or new, stay with that instead and leave the question for another time.\n"
+        + (f"Last time you asked, they said, in their own words: \"{press}\". You may hold that up gently next to what keeps happening, once, as their words, not yours.\n" if press else "")
+    )
+
+
+def _set_fields(db: Any, username: str, key: str, fields: Dict[str, Any], now: datetime) -> bool:
+    doc = db[COLLECTION].find_one({"username": username}, {"_id": 0, "people": 1}) or {}
+    people = doc.get("people") or []
+    if not any(p.get("key") == key for p in people):
+        return False
+    people = [({**p, **fields} if p.get("key") == key else p) for p in people]
+    db[COLLECTION].update_one({"username": username}, {"$set": {"people": people, "updated_at": now}}, upsert=True)
+    return True
+
+
+def note_asked(db: Any, username: str, key: str, now: Optional[datetime] = None) -> bool:
+    """Records that a step-back question about this person was really asked. Blocking. Never raises."""
+    try:
+        moment = now or datetime.now(timezone.utc)
+        return bool(db is not None and key) and _set_fields(db, username, key, {"asked_at": moment.isoformat()}, moment)
+    except Exception:
+        logger.warning("[recurring struggles] could not record a step-back question.", exc_info=True)
+        return False
+
+
+def note_answer(db: Any, username: str, key: str, message: str, now: Optional[datetime] = None) -> Dict[str, int]:
+    """Reads the message after an asked step-back as its answer: a deflection drops the question for DROP_DAYS, an engaged answer is kept for a later press. Returns its counters. Blocking. Never raises."""
+    try:
+        if db is None or not key:
+            return {}
+        moment = now or datetime.now(timezone.utc)
+        kind = classify_answer(message)
+        if kind == "deflected":
+            _set_fields(db, username, key, {"dropped_until": (moment + timedelta(days=DROP_DAYS)).isoformat(), "answer": ""}, moment)
+            return {"step_back_deflected": 1}
+        if kind == "engaged":
+            _set_fields(db, username, key, {"answer": " ".join((message or "").split())[:ANSWER_MAX_CHARS], "answer_at": moment.isoformat()}, moment)
+            return {"step_back_engaged": 1}
+        return {}
+    except Exception:
+        logger.warning("[recurring struggles] could not record a step-back answer.", exc_info=True)
+        return {}
+
+
+def record_answer(db: Any, username: str, key: str, message: str) -> None:
+    """note_answer, then its counters added to the day's totals. For a background task. Never raises."""
+    counts = note_answer(db, username, key, message)
+    if counts:
+        try:
+            from backend.utils.self_counters import record_turn_counts
+
+            record_turn_counts(counts)
+        except Exception:
+            logger.warning("[recurring struggles] could not record the counts.", exc_info=True)
 
 
 def record_turn(db: Any, username: str, message: str, messages: Sequence[Any], emotional_state: Any, load_facts: Callable[[str], Sequence[Any]]) -> None:
