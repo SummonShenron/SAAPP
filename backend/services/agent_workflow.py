@@ -3832,7 +3832,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     llm_turns.note_leanings(found["leanings"])      # the reply is marked with them, so the next message can be counted against them
                     counts.update(leanings_module.counts_for([{"id": leaning_id} for leaning_id in found["leanings"]]))
                 if found["experience"]:
-                    llm_turns.note_experience()                      # counted as cited after the reply, if it says so
+                    llm_turns.note_experience(found["experience"], found.get("reflection", ""))      # counted as cited after the reply, if it says so; placed by code if it does not
                     counts.update(experiences_module.counts_for(True))
                 if counts:
                     await asyncio.to_thread(record_turn_counts, counts)

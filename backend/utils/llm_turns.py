@@ -119,6 +119,7 @@ class Turn:
         self.checkpoints_acted = 0  # ... and, on a change to a folder, where it made the proposal there
         self.leanings: list = []  # the working leanings put in this turn's prompt (ids only: backend/utils/leanings.py)
         self.experience_offered = False  # a real case from its own record was offered to this turn's reply (backend/utils/experiences.py)
+        self.experience_item: Optional[Dict[str, Any]] = None   # that case and its approved reflection ({"item", "reflection"}), so the reply can be given it by code if it did not cite it (backend/utils/placement.py)
         self.shape_offered = False  # a reviewed shape story from its record was offered to a person who is venting (backend/utils/shape_stories.py)
         self.shape_entry = None  # ... and which one (the entry), so the reply can be given its approved sentence once it is written
         self.proposal_files: list = []  # the files of the last change proposed this turn ({path, additions, deletions}: counts only), which decides whether a joke may be told (backend/utils/jokes.py)
@@ -287,13 +288,16 @@ def note_leanings(ids: Any) -> None:
         pass
 
 
-def note_experience() -> None:
-    """A real case from Sonic's own record was put in this turn's prompt (backend/utils/experiences.py), so the reply can be checked for citing it."""
+def note_experience(item: Optional[Dict[str, Any]] = None, reflection: str = "") -> None:
+    """A real case from Sonic's own record was put in this turn's prompt (backend/utils/experiences.py), so the reply can be checked for citing it. `item` (with its approved `reflection`) is kept
+    so a reply that did not cite it can be given it by code (backend/utils/placement.py)."""
     try:
         turn = _current.get()
         if turn is None or turn.done:
             return
         turn.experience_offered = True
+        if item:
+            turn.experience_item = {"item": dict(item), "reflection": str(reflection or "")}
     except Exception:
         pass
 

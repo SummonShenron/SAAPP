@@ -181,7 +181,7 @@ def test_the_app_computes_the_embedding_before_choosing_the_line_and_counts_both
     assert source.count(embedding) == 1  # still one embedding call a turn, now made before the relatable line
     assert source.index(embedding) < source.index("relatable_entry = None if (open_loop_entry or headsup_entry) else select_relatable(")
     for needle in (
-        "vector=question_embedding, vectors=await asyncio.to_thread(entry_vectors, embed_text)",
+        "vector=question_embedding, vectors=await asyncio.to_thread(entry_vectors, embed_text, relatable_pool)",
         'tally(turn_counts, "relatable_by_meaning")',
         "proactive_gates.quiet_reason(",
         'tally(turn_counts, "proactive_quiet", quiet)',

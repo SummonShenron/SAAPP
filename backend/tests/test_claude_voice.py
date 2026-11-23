@@ -1,3 +1,4 @@
+from backend.models import claude_llm
 """How a reply prompt is shaped for a Claude reply model (backend/utils/claude_voice.py). Claude only: Gemini's prompt is the same flat string it always was."""
 import re
 from pathlib import Path
@@ -54,7 +55,7 @@ def test_a_shaped_reply_marks_the_end_of_its_stable_system_part_for_the_cache(mo
     prompt = reply_prompt()
     system, user = cv.split_prompt(prompt, tail="voice")
     shaped = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="voice")._to_messages(prompt)
-    assert shaped[0].content == [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+    assert shaped[0].content == [{"type": "text", "text": system, "cache_control": claude_llm.prefix_mark()}]
     assert shaped[1].content == user and "cache_control" not in str(shaped[1].content)           # the changing part is never marked
     unmarked = ClaudeLLM(model_name="claude-haiku-5-5", fallback=None, voice_shape=True, voice_tail="voice", cache=False)._to_messages(prompt)
     assert unmarked[0].content == system                                                         # caching off: a plain string, as before
@@ -302,7 +303,7 @@ def test_the_history_goes_first_one_block_per_message_with_every_word_kept():
 def test_only_the_end_of_the_persona_and_the_end_of_the_history_are_marked_and_the_changing_part_is_not():
     shaped = shaped_for(reply_prompt(history=HISTORY))
     found = marks(shaped)                                                                        # the persona's and the history's, nothing else
-    assert len(found) == 2 and all(b["cache_control"] == {"type": "ephemeral"} for b in found)
+    assert len(found) == 2 and all(b["cache_control"] == claude_llm.prefix_mark() for b in found)
     assert "cache_control" in shaped[1].content[-2] and "cache_control" not in shaped[1].content[-1]
     assert shaped[1].content[-2]["text"] == "Assistant: Paste the error?\n"                      # the marker sits on the last message of the history
 

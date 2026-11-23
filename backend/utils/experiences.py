@@ -201,6 +201,45 @@ def build_block(item: Dict[str, Any], reflection: str = "") -> str:
     )
 
 
+# The record's notes are written about Sonic in the third person ("It failed a style rule...", approved as written). To be said by Sonic they become first person by a few safe swaps: the
+# note's own opening "It", "it" right before one of these past-tense verbs, and "its" -> "my". Anything else is left as approved; a note that does not open with "It" is not placed.
+_AGENT_VERBS = ("failed", "had", "did", "was", "said", "repeated", "claimed", "gave", "ran", "made", "answered", "read", "tried", "kept", "missed", "skipped", "used", "wrote", "proposed",
+                "checked", "stopped", "hallucinated", "assumed", "guessed", "asked", "ignored", "forgot", "invented", "treated", "told", "took", "got", "went", "spent", "applied", "edited")
+_AGENT_IT_RE = re.compile(r"\bit (?=(?:" + "|".join(_AGENT_VERBS) + r")\b)")
+_ITS_RE = re.compile(r"\bits\b")
+PLACE_MODES = ("place", "offer")
+
+
+def place_mode() -> str:
+    """"place" (the default): a case offered to a reply that did not cite it is placed by code (backend/utils/placement.py); "offer" leaves it to the model, as before 2026-11-22. Pure."""
+    value = os.getenv("EXPERIENCE_MODE", "place").strip().lower()
+    return value if value in PLACE_MODES else "place"
+
+
+def first_person(what: str) -> str:
+    """The note's words with Sonic as "I": "It failed..." -> "I failed...", "because it missed" -> "because I missed", "its" -> "my". "" when the note does not open with "It" (it is not placed). Pure."""
+    text = " ".join(str(what or "").split())
+    if not re.match(r"It\b", text):
+        return ""
+    text = "I" + text[2:]
+    text = _AGENT_IT_RE.sub("I ", text)
+    return _ITS_RE.sub("my", text)
+
+
+def spoken(item: Optional[Dict[str, Any]], reflection: str = "") -> str:
+    """What is placed in a reply for a record case: one sentence naming it as a case in its record, with its month, in the note's own (first-person) words, and the approved reflection after it when there is
+    one. "" when the note cannot be said as it is. It always carries "in my record", which is what the identity check and `cited` read. Pure."""
+    said = first_person((item or {}).get("what", ""))
+    if not said:
+        return ""
+    if said[-1] not in ".!?":
+        said += "."
+    month = _month_label(str((item or {}).get("on", "")))
+    line = f"This is close to a case in my record{', from ' + month if month else ''}: {said}"
+    extra = " ".join(str(reflection or "").split())
+    return f"{line} {extra}" if extra else line
+
+
 def cited(reply: str) -> bool:
     """Whether the reply cites the record: "in my record", "my record shows", or (Jack, 2026-11-13) a past-event statement about its own record ("there was a time when I ...", "this is just like that one time I ...",
     identity_checks.is_past_event_statement). Only ever read on a turn where a case was offered, so the statement form has a real case behind it. Pure."""

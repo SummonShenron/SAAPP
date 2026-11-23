@@ -1759,6 +1759,64 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "record_said_in_a_sentence",
+        "requires": [
+            "backend/utils/placement.py::def after_first_paragraph",
+            "backend/utils/experiences.py::def spoken",
+            "app.py::placement.after_first_paragraph",
+        ],
+        "month": "2026-11",
+        "title": "Saying what I've got",
+        "line": (
+            "When a case from my own record or a habit of mine really fits what you're saying, I now say it in one sentence instead of only having it to hand. At most one a reply, and never when you're going through something hard."
+        ),
+        "keywords": ["my record", "your record", "habit", "experience", "relate", "relatable"],
+        "volunteer": [],
+    },
+    {
+        "id": "my_week_from_my_record",
+        "requires": [
+            "backend/utils/self_report.py::def week_block",
+            "backend/utils/self_report.py::_ASKS_WEEK_RE",
+        ],
+        "month": "2026-11",
+        "title": "How my week's been",
+        "line": (
+            "Ask how I've been lately and I can now answer from my own record: the real days my coding work went rough or well, with the numbers, as plain facts about my work."
+        ),
+        "keywords": ["how have you been", "your week", "how are you doing lately"],
+        "volunteer": [],
+    },
+    {
+        "id": "takes_from_my_reading",
+        "requires": [
+            "backend/components/sonic_takes.py::APPROVED_IDS",
+            "backend/utils/takes.py::def live_takes",
+            "app.py::takes_utils.live_takes",
+        ],
+        "month": "2026-11",
+        "title": "Takes from what I've read",
+        "line": (
+            "When you bring up game design, tabletop games, sci-fi or a tricky bug, I can now share a take from a piece I really read, while that piece is still on my reading shelf."
+        ),
+        "keywords": ["your take", "your opinion", "game design", "board games", "dice", "science fiction", "flaky tests", "what you read"],
+        "volunteer": [],
+    },
+    {
+        "id": "step_back_questions",
+        "requires": [
+            "backend/utils/recurring_struggles.py::def step_back_block",
+            "app.py::recurring_struggles.step_back_for_turn",
+        ],
+        "month": "2026-11",
+        "title": "The bigger question",
+        "line": (
+            "If you keep coming back hurting about the same person, I can now, once in a while, ask the bigger question, like what you actually want from it. Say you'd rather not and I drop it. Your reach setting decides how far I go."
+        ),
+        "keywords": ["bigger picture", "keep venting", "same person", "relationship", "what do i want", "step back"],
+        "volunteer": [],
+    },
+    {
         "id": "rename_conversations",
         "requires": [
             "backend/utils/app_utils.py::def rename_user_conversation",

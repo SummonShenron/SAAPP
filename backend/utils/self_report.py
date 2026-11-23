@@ -28,7 +28,7 @@ MIN_TURNS = 20            # below this many chat turns in a day a count says mor
 TASK_WINDOW_HOURS = 24
 ROUTINE_OVERDUE_FACTOR = 2.0   # a routine that last ran longer ago than this many of its own intervals is late
 
-KINDS = ("status", "day", "goals", "time")
+KINDS = ("status", "day", "goals", "time", "week")
 
 # Sonic is the program that runs these jobs, so it says "I ran a health check", never "the server ran" or "the system does" (Jack, 2026-10-22). Added to every block that describes its own work.
 FIRST_PERSON = "You are the program that runs these jobs, so say \"I\" (\"I ran a health check\", \"I clear out old checkpoints\"), never \"the server\" or \"the system\"."
@@ -68,6 +68,19 @@ _ASKS_STATUS_RE = re.compile(
 )
 
 
+# "How's your week been / how have you been lately / what's new with you?": answered from Sonic's own recent record (the approved pattern notes, backend/utils/pattern_notes.py: a rough day, a good
+# day, almost there), so it has something true of its own to say instead of a generic "doing well, thanks" (2026-11-22). A plain "how are you?" is still a greeting.
+_ASKS_WEEK_RE = re.compile(
+    r"\bhow(?:'s|\s+is|\s+was|\s+has)\s+your\s+(?:week|weekend|last\s+few\s+days|past\s+few\s+days)\b"
+    r"|\bhow\s+(?:have|'ve)\s+you\s+been(?:\s+doing)?\s+(?:lately|recently|this\s+week|these\s+days)\b"
+    r"|\bhow\s+(?:are|have)\s+you\s+(?:been\s+)?(?:doing|holding\s+up)\s+(?:lately|recently|this\s+week|these\s+days)\b"
+    r"|\bhow(?:'s|\s+is|\s+has)\s+(?:your\s+)?(?:work|coding)\s+(?:been\s+)?going\s+(?:for\s+you|on\s+your\s+end|lately)\b",
+    re.IGNORECASE,
+)
+RECORD_DAYS = 14          # how far back the week answer reads its own record
+RECORD_MAX = 4
+
+
 def kind_of(message: str) -> Optional[str]:
     """"status" for a question about how Sonic is running, "goals" for one about its goals, "day" for one about its day or what it has been doing, else None. A plain greeting ("how's it
     going?", "how are you?") is neither: it is a hello, and the persona answers it."""
@@ -84,6 +97,8 @@ def kind_of(message: str) -> Optional[str]:
         return "time"
     if reading_shelf.asks_about_day(text):
         return "day"
+    if _ASKS_WEEK_RE.search(text):
+        return "week"
     return None
 
 
@@ -171,6 +186,14 @@ def _goals(db: Any, now: datetime) -> List[Dict[str, Any]]:
     return goals.status_view(db, now)
 
 
+def _record(db: Any, now: datetime) -> List[Dict[str, str]]:
+    """Its own approved pattern notes from the last RECORD_DAYS days, newest first: [{"on", "what"}]. Blocking."""
+    since = (now - timedelta(days=RECORD_DAYS)).date().isoformat()
+    rows = db["sonic_experiences"].find({"signal": "pattern", "status": "approved", "on": {"$gte": since}}, {"_id": 0, "on": 1, "what": 1})
+    found = sorted(({"on": str(r.get("on") or ""), "what": str(r.get("what") or "")} for r in rows if r.get("what")), key=lambda r: r["on"], reverse=True)
+    return found[:RECORD_MAX]
+
+
 def snapshot(db: Any, now: Optional[datetime] = None, *, use_cache: bool = True) -> Dict[str, Any]:
     """Everything the status answer is built from, once a minute for the whole server. Never raises: a source that cannot be read is simply missing
     (`known` False / None), and the block says Sonic cannot see it rather than guessing."""
@@ -179,8 +202,8 @@ def snapshot(db: Any, now: Optional[datetime] = None, *, use_cache: bool = True)
         cached = _cache["snap"]
         if use_cache and cached is not None and time.monotonic() - _cache["at"] < CACHE_SECONDS:
             return cached
-    snap: Dict[str, Any] = {"at": now, "mode": {"known": False, "low_power": False, "paused": []}, "chats": None, "routines": None, "tasks": None, "goals": None, "mix": None}
-    for name, read in (("mode", _mode), ("chats", _chats), ("routines", _routine_rows), ("tasks", _task_runs), ("goals", _goals), ("mix", _mix)):
+    snap: Dict[str, Any] = {"at": now, "mode": {"known": False, "low_power": False, "paused": []}, "chats": None, "routines": None, "tasks": None, "goals": None, "mix": None, "record": None}
+    for name, read in (("mode", _mode), ("chats", _chats), ("routines", _routine_rows), ("tasks", _task_runs), ("goals", _goals), ("mix", _mix), ("record", _record)):
         try:
             snap[name] = read(db, now)
         except Exception:
@@ -384,6 +407,25 @@ def time_facts(snap: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {"facts": facts, "shares": shares, "unreadable": False}
 
 
+def week_block(snap: Optional[Dict[str, Any]]) -> str:
+    """The prompt section for "how's your week been?": its own recent record, said as things that happened in its work, with no feeling attached. Pure."""
+    record = (snap or {}).get("record")
+    if record is None:
+        return "\nYOUR WEEK: you cannot see your own record right now (it could not be read). Say that plainly and briefly, and do not guess how it went.\n"
+    if not record:
+        return (
+            "\nYOUR WEEK: nothing stands out in your own record for the last two weeks (no especially rough or good day in your coding work). You may say that plainly, in a sentence, "
+            "then turn back to them. Never invent a day or a number. " + FIRST_PERSON + "\n"
+        )
+    lines = "\n".join(f"- {row['what']}" for row in record)
+    return (
+        "\nYOUR WEEK, FROM YOUR OWN RECORD (true; these notes describe you in the third person, as \"it\"):\n" + lines + "\n"
+        "They asked how your week has been. Answer from these notes, in the first person, in a sentence or two and in your usual dry voice: what happened in your work, with its real day and "
+        "numbers (\"Tuesday was rough: 10 setbacks against 6 edits that landed\"). It is your record, not a feeling: never say it was hard on you, that you were proud, tired, frustrated or happy. "
+        "Then turn back to them. Never add a day, a number or an event that is not listed. " + FIRST_PERSON + "\n"
+    )
+
+
 def _time_block(snap: Optional[Dict[str, Any]]) -> str:
     built = time_facts(snap)
     if built["unreadable"]:
@@ -448,6 +490,27 @@ def build_block(snap: Optional[Dict[str, Any]], kind: str, *, tz_name: Optional[
         return _goals_block(snap, person, admin)
     if kind == "time":
         return _time_block(snap)
+    if kind == "week":
+        return week_block(snap)
+    if kind == "day":
+        return _status_or_day_block(snap, kind, tz_name=tz_name, admin=admin, now=now) + record_addition(snap)
+    return _status_or_day_block(snap, kind, tz_name=tz_name, admin=admin, now=now)
+
+
+def record_addition(snap: Optional[Dict[str, Any]]) -> str:
+    """For the day answer: its own recent record as something it MAY add, in one sentence, when it bears on the question. "" when there is nothing (or it cannot be read). Pure."""
+    record = (snap or {}).get("record") or []
+    if not record:
+        return ""
+    lines = "\n".join(f"- {row['what']}" for row in record)
+    return (
+        "\nYOUR OWN RECENT RECORD (true; these notes describe you in the third person, as \"it\"; optional):\n" + lines + "\n"
+        "If it fits how they asked, you may add one sentence about it, in the first person, as what happened in your work, with its real day and numbers. Never a feeling, never a detail "
+        "that is not listed.\n"
+    )
+
+
+def _status_or_day_block(snap: Optional[Dict[str, Any]], kind: str, *, tz_name: Optional[str] = None, admin: bool = False, now: Optional[datetime] = None) -> str:
     built = build_facts(snap, tz_name=tz_name, admin=admin, now=now) if snap is not None else None
     if built is None or not built["facts"]:
         return (
@@ -554,6 +617,8 @@ def reply_issue(reply: str, snap: Optional[Dict[str, Any]], *, tz_name: Optional
         return goals_reply_issue(reply, snap, person, admin=admin)
     if kind == "time":
         return time_reply_issue(reply, snap)
+    if kind == "week":
+        return None          # the week answer is about its own record, not the server's status; its block keeps it to the listed notes
     if not reply or not _ALL_FINE_RE.search(reply):
         return None
     built = build_facts(snap, tz_name=tz_name, admin=admin) if snap is not None else None

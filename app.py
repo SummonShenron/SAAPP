@@ -109,6 +109,8 @@ from backend.utils import citation_media
 from backend.utils import applied_changes
 from backend.utils import process_info
 from backend.utils import recurring_struggles
+from backend.utils import revision_reasons
+from backend.utils import material_use
 from backend.utils import credits
 from backend.services import payments
 from backend.utils.emotion_utils import build_emotional_context, effective_intensity, energy_tier, own_material_tier
@@ -117,6 +119,11 @@ from backend.utils.encouragement_utils import (
     select_encouragement,
 )
 from backend.utils.relatable_utils import RELATABLE_MARK, build_relatable_block, entry_vectors, mentions_itself, recently_offered, select_relatable
+from backend.utils.relatable_utils import place_mode as relatable_place_mode
+from backend.components.sonic_profile import INTERESTS as RELATABLE_INTERESTS, RELATABLE as RELATABLE_LINES
+from backend.utils import takes as takes_utils
+from backend.utils.emotion_checks import reply_body as identity_checks_body
+from backend.utils import placement
 from backend.utils.self_observations import asks_about_itself, build_self_knowledge_block, observations_for_turn
 from backend.utils import situation_facts as situation_facts_utils, substance_note, voice_review
 from backend.utils.emotion_checks import earlier_ai_replies, emotional_reply_issue, build_emotional_revision_prompt
@@ -1350,15 +1357,20 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # Occasionally Sonic may mention a habit of its own when what the user said genuinely overlaps with one
             # (backend/utils/relatable_utils.py), by a trigger word or by meaning; silent under a safety or held-down emotional context, on a closing
             # message, on grounded KB answers, and rate-limited.
+            # Its takes on its interests, from pieces it really read (backend/utils/takes.py: approved, and the piece still live on the shelf), join the same pool, match, gates and placement.
+            relatable_pool = RELATABLE_LINES + RELATABLE_INTERESTS + await asyncio.to_thread(takes_utils.live_takes, get_db())
             relatable_entry = None if (open_loop_entry or headsup_entry) else select_relatable(
                 final_state.get("original_question", question), chat_sessions[history_key],
                 source_type=source_type, risk_active=risk_level != RISK_NONE,
                 energy_tier=own_tier,
                 closing=is_closing_message(question),
-                vector=question_embedding, vectors=await asyncio.to_thread(entry_vectors, embed_text),
+                entries=relatable_pool,
+                vector=question_embedding, vectors=await asyncio.to_thread(entry_vectors, embed_text, relatable_pool),
             )
             if relatable_entry:
                 tally(turn_counts, "relatable_offered")
+                if takes_utils.is_take(relatable_entry):
+                    tally(turn_counts, "take_offered")
                 if relatable_entry.get("match") == "meaning":
                     tally(turn_counts, "relatable_by_meaning")
             # What people commonly go through in the situation they just described, from the approved people notes (backend/utils/people_notes.py): found by meaning with the embedding computed above, for every base model.
@@ -1727,6 +1739,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                         if chat_character["experience"]:
                             slot["proactive_taken"] = True
                             llm_turn.experience_offered = True
+                            llm_turn.experience_item = {"item": dict(chat_character["experience"]), "reflection": str(chat_character.get("reflection") or "")}      # placed by code after the reply if it is not cited (placement.py)
                             chat_counts.update(experiences_utils.counts_for(True))
                         for key, count in chat_counts.items():
                             turn_counts[key] = turn_counts.get(key, 0) + count
@@ -1763,6 +1776,20 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     self_report_person = await asyncio.to_thread(offer_response.person_view, get_db(), username)
                 prompt = prompt + self_report_utils.build_block(self_report_snap, self_report_kind, tz_name=user_tz, admin=is_admin_user, person=self_report_person)
                 tally(turn_counts, "status_offered")
+            # The step-back question (backend/utils/recurring_struggles.py): they keep coming back upset about the same person, so once in a while Sonic asks the bigger question a friend eventually
+            # would, from a fact the app found (never the count said aloud). The reach dial decides how far it goes; never in a safety context, on a closing message, for a guest, in acute hurt,
+            # on a question about Sonic itself, or right after a reply that already asked something.
+            step_back_entry = None
+            if (source_type == "conversational" and risk_level == RISK_NONE and not is_closing_message(question) and not is_guest_username(username) and not self_report_kind
+                    and get_db() is not None and not curiosity_utils.last_reply_asked(chat_sessions[history_key])):
+                step_back_entry = await asyncio.to_thread(
+                    recurring_struggles.step_back_for_turn, get_db(), username, question, list(chat_sessions[history_key]), final_state.get("emotional_state"), load_user_facts, reach_level.level,
+                )
+                if step_back_entry:
+                    prompt = prompt + recurring_struggles.step_back_block(step_back_entry)
+                    tally(turn_counts, "step_back_offered")
+                    if step_back_entry.get("press"):
+                        tally(turn_counts, "step_back_pressed")
             # A clearly closing message ("thanks!", "goodnight") gets a directive to close the conversation
             # instead of fishing for more (backend/utils/wrapup_utils.py); the persona carries the general rule.
             closing_turn = source_type == "conversational" and risk_level == RISK_NONE and is_closing_message(question)
@@ -1856,20 +1883,25 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 identity_issue = None if safety_plan.active else identity_reply_issue(
                     checked_reply, person_signal=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)) != "open",  # concern for the person only with a real emotional signal
                     record_offered=bool(llm_turn.experience_offered or llm_turn.shape_offered))      # a past-event statement about its record is only let through when a real case was put in this turn's prompt
+                identity_source = "identity"          # which check raised an identity issue, for the rewrite's reason count (backend/utils/revision_reasons.py)
                 if identity_issue is None and not safety_plan.active:
                     # An invented read, or a verdict on a piece on the reading shelf: also a matter of what Sonic is (backend/utils/reading_shelf.py).
                     identity_issue = shelf_utils.shelf_reply_issue(
                         checked_reply, shelf_utils.offer_has_items(shelf_offer), refresh_reported=bool(self_report_kind or routines_context))
+                    identity_source = "shelf" if identity_issue else identity_source
                 if identity_issue is None and not safety_plan.active and events_shown:
                     # Named a time for something it was never told the time of: the gap the event block exists to keep honest (backend/utils/event_fields.py).
                     identity_issue = event_fields.reply_issue(checked_reply, events_shown, question)
+                    identity_source = "event" if identity_issue else identity_source
                 if identity_issue is None and not safety_plan.active and self_report_kind:
                     # Said everything is fine while the status on record shows a problem: the one thing the curated-disclosure rule forbids.
                     identity_issue = self_report_utils.reply_issue(checked_reply, self_report_snap, tz_name=user_tz, admin=is_admin_user,
                                                                    kind=self_report_kind, person=self_report_person)
+                    identity_source = "status" if identity_issue else identity_source
                 if identity_issue is None and not safety_plan.active and routines_context:
                     # A job said to run at a different part of the day than the schedule it was given lists (backend/utils/routines.py).
                     identity_issue = routines_utils.reply_issue(checked_reply, routines_context)
+                    identity_source = "routine" if identity_issue else identity_source
                 encouragement_issue = (
                     encouragement_reply_issue(checked_reply, encouragement_entry)
                     if encouragement_entry and not safety_plan.active else None
@@ -1899,6 +1931,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if revision_prompt:
                     logger.info("Reply-fit check failed (%s); regenerating once.", revision_tag)
                     tally(turn_counts, "revised", revision_kind(revision_tag))
+                    tally(turn_counts, "revised_reason", revision_reasons.reason_for(revision_tag, identity_issue, identity_source))      # what was taken out, as one word (counts only)
                     if revision_tag == "identity":
                         tally(turn_counts, "feeling_revised", feeling_kind or "other")  # a rewrite with no such question asked is a claim that came up unprompted
                     yield f"data: {json.dumps({'event': 'node_progress', 'node': 'reply_fit_check', 'title': revision_title, 'detail': revision_tag})}\n\n"
@@ -1990,9 +2023,25 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if claim_check.claims_edit(full_response) and not claim_check.edit_made(llm_turn.tools):
                     full_response = f"{full_response}\n\n{claim_check.NO_EDIT_NOTE}"                    # it says it changed something and nothing was proposed this turn: said plainly, in code
                     tally(turn_counts, "claim_edit_unbacked")
+            placed_own = bool(step_back_entry)          # at most one piece of Sonic's own material is placed by code per reply, and none beside a step-back question: a shape story, else a record case, else a relatable line (backend/utils/placement.py)
             if llm_turn.shape_offered and shape_stories_utils.mode() == "insert" and not safety_plan.active:
                 # The approved shape sentence is placed in the reply by code, word for word, after its first paragraph (backend/utils/shape_stories.py insert_story): asking the model to say it got it said in 1 reply of 20 (blind test 2026-11-14).
+                before_shape = full_response
                 full_response = shape_stories_utils.insert_story(full_response, llm_turn.shape_entry)
+                placed_own = full_response != before_shape
+            if (not placed_own and llm_turn.experience_item and experiences_utils.place_mode() == "place" and not safety_plan.active
+                    and not experiences_utils.cited(identity_checks_body(full_response))):
+                # A case from its record was offered and the reply did not cite it (30 days to 2026-11-22: offered 99, cited 1): its approved words, in the first person, are placed by code.
+                record_words = experiences_utils.spoken(llm_turn.experience_item["item"], llm_turn.experience_item["reflection"])
+                if record_words:
+                    full_response = placement.after_first_paragraph(full_response, record_words)
+                    placed_own = True
+                    tally(turn_counts, "experience_placed")
+            if (not placed_own and relatable_entry and relatable_place_mode() == "place" and not safety_plan.active and not mentions_itself(full_response)):
+                # A habit of its own was offered and the reply did not state one: the approved line is placed by code, word for word.
+                full_response = placement.after_first_paragraph(full_response, relatable_entry["line"])
+                placed_own = True
+                tally(turn_counts, "relatable_placed")
             if llm_turn.proposal_files and not safety_plan.active:
                 # A change was proposed this turn: a curated joke may follow it (backend/utils/jokes.py), placed by code at the end, word for word, and only if every gate allows (a big or a small change, a mood that can take it, once a conversation).
                 joke = await asyncio.to_thread(
@@ -2023,9 +2072,17 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 ai_message.additional_kwargs[ENCOURAGEMENT_MARK] = True
             if callback_offered:
                 ai_message.additional_kwargs[CALLBACK_MARK] = True
+            if step_back_entry and curiosity_utils.asked_a_question(full_response):
+                # Spent only when the reply really asked: the cadence, and reading the next message as its answer, follow this mark (recurring_struggles.py).
+                ai_message.additional_kwargs[recurring_struggles.STEP_BACK_MARK] = step_back_entry["key"]
+                tally(turn_counts, "step_back_asked")
+                await asyncio.to_thread(recurring_struggles.note_asked, get_db(), username, step_back_entry["key"])
             if checkin_offered and emotion_checkin.asked(full_response):
                 ai_message.additional_kwargs[emotion_checkin.CHECKIN_MARK] = True  # spent only when the reply really ended on a question to them: the spacing reads this mark
                 tally(turn_counts, "emotion_checkin_asked")
+            # Sonic's own track-record observations: given to the prompt on many turns, now also counted when the finished reply really used one (backend/utils/material_use.py). Counts only.
+            if self_knowledge_lines and material_use.used_any(full_response, self_knowledge_lines):
+                tally(turn_counts, "observations_used")
             # Counted and capped on what Sonic actually did, not on what it was invited to do.
             if curiosity_invited and curiosity_utils.asked_a_question(full_response):
                 ai_message.additional_kwargs[curiosity_utils.CURIOSITY_MARK] = True
@@ -2173,6 +2230,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     ))
             # Recurring struggles (backend/utils/recurring_struggles.py): an upset message about one of their saved people is counted as part of an episode with that person, dates only, so a
             # later step-back question can rest on a fact. Counts only for now: nothing Sonic says changes. Off the response path, never for a guest.
+            if not is_guest_username(username) and get_db() is not None and previous_marks.get(recurring_struggles.STEP_BACK_MARK):
+                # This message answers a step-back question: a deflection drops it for a while, an engaged answer is kept, in their words, for a later press.
+                spawn_background_task(asyncio.to_thread(recurring_struggles.record_answer, get_db(), username, str(previous_marks.get(recurring_struggles.STEP_BACK_MARK)), question))
             if not is_guest_username(username) and get_db() is not None:
                 spawn_background_task(asyncio.to_thread(
                     recurring_struggles.record_turn, get_db(), username, question, list(chat_sessions[history_key]), final_state.get("emotional_state"), load_user_facts,
