@@ -723,3 +723,40 @@ def test_the_inferred_confidence_default_is_07():
     import inspect
 
     assert 'MEMORY_COMPACTION_FACT_CONFIDENCE", "0.7"' in inspect.getsource(mc)
+
+
+# ---- only tier 1 promotes facts (2026-11-24): tier 2 re-mines notes tier 1 already mined, and was two thirds of the compaction fact inflow ----
+
+def _tier2_run(monkeypatch, facts):
+    fake_db = FakeDB()
+    _seed_chunks(fake_db, "jack", [_chunk("Tier-1 summary A", [1.0, 0.0, 0.0], _id="t1-a"), _chunk("Tier-1 summary B", [0.99, 0.01, 0.0], _id="t1-b")])
+    for doc in fake_db["user_memory_chunks"].docs:
+        doc["source_type"] = "compacted_summary"
+    monkeypatch.setattr(mc.lite_llm, "ainvoke", AsyncMock(return_value=SimpleNamespace(content=json.dumps({"summary": "Meta summary.", "facts": facts}))))
+    monkeypatch.setattr(mc, "embed_and_store_memory_chunk", _fake_embed_into(fake_db))
+    saved = []
+    monkeypatch.setattr(mc, "save_user_fact", lambda username, fact, **k: saved.append(fact))
+    result = asyncio.run(mc.compact_meta_memory(fake_db, vector_store=object(), username="jack"))
+    return result, saved, fake_db
+
+
+def test_tier_two_keeps_its_summary_but_saves_none_of_the_facts_it_names(monkeypatch):
+    monkeypatch.setattr(mc, "TIER2_PROMOTES_FACTS", False)
+    result, saved, fake_db = _tier2_run(monkeypatch, [{"category": "career", "domain": "work", "fact": "Jack specializes in AWS Lambda migrations."}])
+    assert result["status"] == "completed" and result["facts_promoted"] == 0 and saved == []
+    assert [d["text"] for d in fake_db["user_memory_chunks"].find({"username": "jack"})] == ["Meta summary."]
+    assert mc.promotes_facts(1) and not mc.promotes_facts(2)
+
+
+def test_the_switch_turns_tier_two_promotion_back_on(monkeypatch):
+    monkeypatch.setattr(mc, "TIER2_PROMOTES_FACTS", True)
+    result, saved, _db = _tier2_run(monkeypatch, [{"category": "career", "domain": "work", "fact": "Jack specializes in AWS Lambda migrations."}])
+    assert saved == ["Jack specializes in AWS Lambda migrations."] and result["facts_promoted"] == 1
+
+
+def test_tier_two_promotion_is_off_unless_asked_for(monkeypatch):
+    import importlib
+
+    monkeypatch.delenv("MEMORY_TIER2_FACTS", raising=False)
+    source = importlib.util.find_spec("backend.services.memory_compaction").loader.get_source("backend.services.memory_compaction")
+    assert 'os.getenv("MEMORY_TIER2_FACTS", "off")' in source

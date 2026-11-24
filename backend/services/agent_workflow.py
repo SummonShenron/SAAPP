@@ -58,6 +58,7 @@ from backend.services import sandbox_tests
 from backend.services import ci_status, commit_flow, git_commit, pr_read
 from backend.utils import sonic_notes
 from backend.utils import read_log
+from backend.utils import cross_file, symbol_refs
 from backend.utils import advisor as advisor_module
 from backend.utils import demo_project
 from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, snapshot_paths, workspace_status
@@ -170,6 +171,13 @@ REASONER_HISTORY_MAX_MESSAGES = max(int(os.getenv("REASONER_HISTORY_MAX_MESSAGES
 # Menu entries that query GitHub's hosted index of the committed branch — withheld whenever the user
 # has a local folder connected, since that index can't see the folder's (often uncommitted) code.
 _GITHUB_INDEX_ACTIONS_PREFIXES = ("- search_code", "- trace_symbol")
+# With a folder connected, trace_symbol comes back in this form, searching the folder itself (backend/utils/symbol_refs.py; 2026-11-24 coding audit: multi-file changes missed callers because
+# only search_literal, a case-insensitive substring search, was left to find them).
+LOCAL_TRACE_SYMBOL_LINE = (
+    "- trace_symbol — args: symbol (an exact name: a function, class, variable, field, prop or CSS class); searches EVERY file of the connected folder for it as a whole word "
+    "(case-sensitive) and lists where it is DEFINED, every file that USES it with line numbers, and where it is IMPORTED. Use it before you change, rename or remove anything other "
+    "files might use, so one proposal covers every file that needs an edit. For text inside a longer word, or a phrase, use search_literal; for a file by a loose name, find_file"
+)
 # What only the browser that holds the folder can finish: a diff card's Apply writes through the folder it was connected with. The server's copy of a folder belongs to the person, so a phone (which cannot
 # connect a folder) or a second browser sees it too, and a diff proposed there has no Apply button: a dead end. Commits are NOT in this list: propose_commit works from the server's copy and the person's
 # GitHub token, and propose_git_commit runs git on their own machine through the runner, so neither needs this browser to hold the folder (withholding them said "no tool options" on a commit request, 2026-11-06).
@@ -2681,6 +2689,16 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 return "No matches."
             return "\n".join(item.get("path", "") for item in items)
 
+        def _trace_symbol_local(symbol: str):
+            # The folder (or a checkout) is on disk: every file is searched for the whole word, and each hit is sorted into defined / imported / used, with line numbers
+            # (backend/utils/symbol_refs.py). GitHub's index cannot see a connected folder's uncommitted code, which is why trace_symbol used to be withheld there.
+            items = _fetch_repo_tree_items()
+            if isinstance(items, str):
+                return items
+            paths = [item.get("path", "") for item in items if str(item.get("path", "")).lower().endswith(symbol_refs.SEARCHED_SUFFIXES)]
+            found = symbol_refs.find_references(((path, _read_for_check(path) or "") for path in paths), symbol)
+            return symbol_refs.format_references(found, symbol)
+
         def _trace_symbol(symbol: str):
             # Sorts every real reference search_code would already find into WRITE/DECIDE sites
             # (an assignment, a state setter, a def/class that IS this symbol, a function
@@ -2691,6 +2709,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             # opening every hit by hand to figure that out one at a time.
             if not symbol:
                 return "ERROR: no symbol given"
+            if _get_checkout() is not None:
+                return _trace_symbol_local(symbol)
             items = _code_search_items(symbol)
             if isinstance(items, str):
                 return items
@@ -3173,6 +3193,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             # that exists only in the user's folder it answers "No matches" — observed costing four
             # full model round trips in one turn. search_literal greps the folder itself.
             menu_lines = [line for line in menu_lines if not line.startswith(_GITHUB_INDEX_ACTIONS_PREFIXES)]
+            menu_lines.append(LOCAL_TRACE_SYMBOL_LINE)          # the folder's own trace_symbol: it reads the folder, not GitHub's index
             menu_lines.append(
                 "- propose_local_edits — args: summary (one or two sentences on what the edits do and "
                 "why), edits (a list of edit objects: {\"path\", \"old_string\", \"new_string\"} "
@@ -3407,6 +3428,40 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             code = ((decision.get("args") or {}).get("code") or "").lower()
             return any(kw in code for kw in unsafe_keywords)
 
+        cross_file_seen: dict = {}
+
+        def _read_for_check(path: str):
+            """A file's current text for the cross-file check: from this turn's cache when it was read, else straight from the folder on disk (not cached: the check looks at many files)."""
+            if path in _turn_file_cache:
+                return _turn_file_cache[path]
+            checkout = _get_checkout()
+            if checkout is None:
+                return None
+            root = Path(checkout.root).resolve()
+            local_path = (root / path).resolve()
+            if not local_path.is_relative_to(root) or not local_path.is_file():
+                return None
+            try:
+                return local_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return None
+
+        def _cross_file_problems(result: dict) -> list:
+            """What the validated proposal would break elsewhere in the folder (backend/utils/cross_file.py); [] when nothing, when the folder cannot be read, or if the check itself fails
+            (it must never stop a sound proposal)."""
+            try:
+                if _get_checkout() is None:
+                    return []
+                paths = _fetch_repo_paths()
+                if isinstance(paths, str):
+                    return []
+                after = {**{p: None for p in result.get("removed") or []}, **(result.get("texts") or {})}
+                before = {p: _read_for_check(p) for p in after}
+                return cross_file.check(before, after, paths, _read_for_check)
+            except Exception:
+                logger.warning("[tool_agent_node] the cross-file check failed; the proposal goes ahead without it.", exc_info=True)
+                return []
+
         async def _propose_local_edits(args: dict) -> str:
             if plan_phase == code_plan.EXECUTE_PHASE:
                 # The deviation cap (backend/utils/code_plan.py): the person approved these files. More than a file's worth outside them stops the turn instead of widening the change unseen.
@@ -3431,6 +3486,24 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     + "\n- ".join(result["errors"])
                     + "\nFix them and call propose_local_edits again with the complete corrected list."
                 )
+            # The other end of the change (backend/utils/cross_file.py): a name removed or renamed that another file still imports, a call that no longer fits a changed signature, an import
+            # of something its module does not have. Sent back before the person sees a diff. The same problems twice in one turn let the proposal through with them named, so a wrong
+            # check can never trap the turn.
+            cross_note = ""
+            problems = await asyncio.to_thread(_cross_file_problems, result)
+            if problems:
+                from backend.utils.self_counters import record_turn_counts
+
+                if problems != cross_file_seen.get("last"):
+                    cross_file_seen["last"] = problems
+                    await asyncio.to_thread(record_turn_counts, {"code_cross_file_refused": 1})
+                    return (
+                        "ERROR: these edits would break other code, so nothing was proposed:\n- " + "\n- ".join(problems)
+                        + "\nAdd the edits that fix each of these to the same proposal (trace_symbol finds every use of a name) and call propose_local_edits again with the complete list. "
+                        "If one of these is wrong, call it again unchanged and it will go through with the warning shown."
+                    )
+                await asyncio.to_thread(record_turn_counts, {"code_cross_file_overridden": 1})
+                cross_note = " Proposed despite the cross-file check, which still reports: " + "; ".join(problems) + ". Tell the person about these in your answer."
             proposal_id = uuid.uuid4().hex
             # Which paths this proposal changes and by how much, so an Apply reported later is noted as work waiting to be committed (backend/utils/applied_changes.py).
             proposed = {f["path"]: (f.get("additions", 0), f.get("deletions", 0)) for f in result["files"] if f["path"] in (result.get("texts") or {}) or f.get("kind") == "delete"}
@@ -3457,7 +3530,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             shown = (
                 f"Proposed {len(result['edits'])} edit(s) across {len(result['files'])} file(s): "
                 + ", ".join(f["path"] for f in result["files"])
-                + "."
+                + "." + cross_note
             )
             if not waiting:
                 return (
@@ -4008,11 +4081,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     "final answer and let the user ask for it as a separate request."
                 )
 
-            if local_workspace_handle is not None and tool_action in {"search_code", "trace_symbol"}:
+            if local_workspace_handle is not None and tool_action == "search_code":
                 return (
                     f"ERROR: {tool_action} queries GitHub's index of the committed branch and cannot "
-                    f"see the user's connected local folder — use search_literal (exact text or "
-                    f"identifier) or find_file (file names) instead."
+                    f"see the user's connected local folder — use trace_symbol (every use of a name, in the folder itself), "
+                    f"search_literal (exact text) or find_file (file names) instead."
                 )
             if tool_action == "ask_choice":
                 return await _ask_choice(args)
