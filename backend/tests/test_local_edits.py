@@ -246,7 +246,8 @@ async def test_github_index_tools_are_withheld_and_refused_while_a_folder_is_con
 
     assert "cannot see the user's connected local folder" in observed[0]
     assert "- search_code" not in captured["prompt_template"]
-    assert "- trace_symbol" not in captured["prompt_template"]
+    assert aw.LOCAL_TRACE_SYMBOL_LINE in captured["prompt_template"]                 # trace_symbol comes back in its folder form (2026-11-24)
+    assert "WRITE/DECIDE" not in captured["prompt_template"]                         # not the GitHub one
     assert "- search_literal" in captured["prompt_template"]
 
 

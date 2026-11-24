@@ -133,3 +133,17 @@ def test_the_maintenance_command_turns_a_stored_note_id_back_into_an_object_id_a
     from backend.utils.memory_maintenance import note_id
     assert note_id("6b0425e571fd1f14cb783a0a") == ObjectId("6b0425e571fd1f14cb783a0a")
     assert note_id("n1") == "n1"
+
+
+def test_reembed_missing_embeds_only_facts_without_one_and_saves_once_or_not_at_all():
+    from backend.utils.memory_maintenance import reembed_missing
+
+    store = Store([_fact("a", "Has one."), _fact("b", "Missing."), _fact("c", "Missing too.")])
+    store.facts[1].embedding = None
+    store.facts[2].embedding = None
+    embedded = []
+    result = reembed_missing(USER, load=store.load, save=store.save, embed=lambda text: embedded.append(text) or ([0.5, 0.5] if text == "Missing." else None))
+    assert result == {"embedded": 1, "failed": 1} and embedded == ["Missing.", "Missing too."] and store.saves == 1
+    assert [(f.id, f.embedding, f.fact) for f in store.facts] == [("a", [0.1, 0.2], "Has one."), ("b", [0.5, 0.5], "Missing."), ("c", None, "Missing too.")]
+    saves = store.saves
+    assert reembed_missing(USER, load=store.load, save=store.save, embed=lambda text: None) == {"embedded": 0, "failed": 1} and store.saves == saves

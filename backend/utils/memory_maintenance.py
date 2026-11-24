@@ -7,6 +7,7 @@
     python -m backend.utils.memory_maintenance restore-pruned-facts --username U [--source explicit] [--show] [--apply]   # bring back pruned facts
     python -m backend.utils.memory_maintenance fix-facts --username U --changes FILE --run ID [--apply]   # approved rewrites/removals of facts, notes flagged stale (backend/utils/fact_cleanup.py)
     python -m backend.utils.memory_maintenance restore-fact-fixes --username U --run ID [--apply]          # undo a fix-facts run
+    python -m backend.utils.memory_maintenance reembed-missing --username U [--apply]                       # embed facts that have no embedding (never found by relevance)
 
 strip-labels: until the label fix, about a third of the saved notes begin with the model's "SUMMARY:" (it copied the last word of
 the prompt). That word was embedded into the note, which made unrelated notes look alike to the recall search. This removes the label
@@ -189,6 +190,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     unfix.add_argument("--username", required=True)
     unfix.add_argument("--run", required=True)
     unfix.add_argument("--apply", action="store_true", help="actually restore (default: only count)")
+    reembed = sub.add_parser("reembed-missing", help="embed the facts that have no embedding, so recall can find them by relevance")
+    reembed.add_argument("--username", required=True)
+    reembed.add_argument("--apply", action="store_true", help="actually embed and save (default: only count)")
     args = parser.parse_args(argv)
 
     from dotenv import load_dotenv
@@ -213,6 +217,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _restore_domains_command(db, args.username, args.run, args.apply)
     if args.command == "fix-facts":
         return _fix_facts_command(db, args.username, args.changes, args.run, args.apply, embed_text)
+    if args.command == "reembed-missing":
+        from backend.utils import memory_utils
+
+        missing = [f for f in memory_utils.load_user_facts(args.username) if not f.embedding]
+        print(f"{len(missing)} fact(s) have no embedding.")
+        if not args.apply:
+            print("Dry run: nothing changed. Add --apply to embed them.")
+            return 0
+        print(reembed_missing(args.username, load=memory_utils.load_user_facts, save=memory_utils.save_user_facts, embed=embed_text))
+        return 0
     if args.command == "restore-fact-fixes":
         return _restore_fact_fixes_command(db, args.username, args.run, args.apply)
     collection = db[USER_MEMORY_COLLECTION]
@@ -378,6 +392,24 @@ def _restore_command(db: Any, run: str, apply: bool) -> int:
         return 0
     print(restore_run(db, run_id, datetime.now(timezone.utc).isoformat()))
     return 0
+
+
+def reembed_missing(username: str, *, load: Callable, save: Callable, embed: Callable) -> Dict[str, int]:
+    """Gives every fact with no embedding one (2026-11-23: 10 of 887 had none, so recall could never find them by relevance). Text, dates and everything else stay as they
+    were. One save at the end, only when something was embedded. {"embedded", "failed"}."""
+    facts = load(username)
+    done = failed = 0
+    for fact in facts:
+        if fact.embedding:
+            continue
+        vector = embed(fact.fact)
+        if vector:
+            fact.embedding, done = vector, done + 1
+        else:
+            failed += 1
+    if done:
+        save(username, facts)
+    return {"embedded": done, "failed": failed}
 
 
 def note_id(value: Any) -> Any:

@@ -36,6 +36,18 @@ MIN_FACTS_FOR_PATTERN_EXTRACTION = int(os.getenv("MIN_FACTS_FOR_PATTERN_EXTRACTI
 MIN_PATTERN_EXTRACTION_INTERVAL_HOURS = float(os.getenv("MIN_PATTERN_EXTRACTION_INTERVAL_HOURS", "24"))
 MIN_NEW_FACTS_FOR_PATTERN_EXTRACTION = int(os.getenv("MIN_NEW_FACTS_FOR_PATTERN_EXTRACTION", "5"))
 
+# Only tier 1 turns summaries into facts (2026-11-24, measured on the busiest store). Tier 2 re-summarizes notes tier 1 has already mined, and in November it offered 768 facts
+# for 218 that were kept as new (tier 1: 305 offered, 127 new): two thirds of the compaction inflow, about 550 wasted dedupe judgments, and facts drawn from summaries of
+# summaries, the least reliable source ("Jack is a professional contact or colleague of the user who communicates with Kelsey"). The tier-2 summaries themselves are kept.
+# MEMORY_TIER2_FACTS=on turns tier-2 promotion back on.
+TIER2_PROMOTES_FACTS = os.getenv("MEMORY_TIER2_FACTS", "off").strip().lower() in ("1", "true", "on", "yes")
+
+
+def promotes_facts(tier: int) -> bool:
+    """Whether a compaction run of this tier saves the facts its summaries name. Pure."""
+    return tier < 2 or TIER2_PROMOTES_FACTS
+
+
 TIER1_SOURCE_TYPE = "compacted_summary"
 TIER2_SOURCE_TYPE = "compacted_meta_summary"
 
@@ -318,7 +330,7 @@ async def _run_compaction(
             ))
             await asyncio.to_thread(lambda: db[USER_MEMORY_COLLECTION].delete_many({"_id": {"$in": [c["_id"] for c in cluster]}}))
 
-            for fact in summarized["facts"]:
+            for fact in summarized["facts"] if promotes_facts(tier) else []:
                 fact_text = fact.get("fact") if isinstance(fact, dict) else None
                 if fact_text and fact_gate.is_passing_status(fact_text, fact.get("category"), fact.get("domain")):
                     facts_skipped_vague += 1          # passing work status naming nothing: the summary above keeps it, with its date (backend/utils/fact_gate.py)

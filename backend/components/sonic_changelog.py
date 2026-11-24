@@ -1788,6 +1788,20 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "multi_file_changes",
+        "requires": [
+            "backend/utils/symbol_refs.py::def find_references",
+            "backend/utils/cross_file.py::def check",
+        ],
+        "month": "2026-11",
+        "title": "Changes that span several files",
+        "line": (
+            "I can now find every place a name is defined and used in your connected folder, and before showing you a change I check it won't break another file that imports or calls what I changed."
+        ),
+        "keywords": ["multi-file", "several files", "callers", "references", "imports", "break other files", "rename"],
+        "volunteer": [],
+    },
+    {
         "id": "more_than_reflecting",
         "requires": [
             "backend/utils/low_moves.py::def choose",
