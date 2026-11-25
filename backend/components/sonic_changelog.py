@@ -1788,6 +1788,34 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "replies_survive_leaving",
+        "requires": [
+            "backend/utils/detached_stream.py::def relay",
+            "app.py::steering.request_stop",
+        ],
+        "month": "2026-11",
+        "title": "Replies that finish when you leave",
+        "line": (
+            "I now keep working on a reply if you close the tab, switch apps or open another page, and it shows up in the conversation when you come back. Only the Stop button stops me."
+        ),
+        "keywords": ["close the tab", "switch apps", "keep working", "safari", "background", "left the page"],
+        "volunteer": [],
+    },
+    {
+        "id": "plan_steps_close",
+        "requires": [
+            "backend/utils/code_plan.py::def close_step",
+            "backend/utils/code_plan.py::def mark_applied",
+        ],
+        "month": "2026-11",
+        "title": "Plans that don't get stuck",
+        "line": (
+            "I can now close a plan step that needs no edit myself, with a line on the plan card saying what I found, and a step whose files were changed across several proposals is ticked off once they all are."
+        ),
+        "keywords": ["plan step", "stuck plan", "mark done", "close step", "plan mode"],
+        "volunteer": [],
+    },
+    {
         "id": "multi_file_changes",
         "requires": [
             "backend/utils/symbol_refs.py::def find_references",

@@ -32,6 +32,7 @@ GUEST_HANDLED: FrozenSet[Route] = frozenset({
 # and the toggles on the composer (the chat path ignores a guest's stored values and uses safe defaults, so these write nothing that matters).
 GUEST_DEMO_WRITES: FrozenSet[Route] = frozenset({
     ("POST", "/api/chat/steer"),
+    ("POST", "/api/chat/stop"),            # Stop on the guest's own running turn (a dropped connection no longer stops it)
     ("POST", "/api/chat/clear"),
     ("POST", "/api/chat/choice/{choice_id}"),
     ("POST", "/api/chat/feedback"),

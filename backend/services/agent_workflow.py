@@ -357,7 +357,7 @@ _LOCAL_EDIT_REQUIRED_ACTION = {
     ),
 }
 # A plan turn (plan mode, backend/utils/code_plan.py) offers these and nothing else: it reads, then submits the plan. No edit, test run, commit or web tool is among them.
-_PLAN_TURN_TOOLS = frozenset({"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan", "ask_choice", "use_skill"})
+_PLAN_TURN_TOOLS = frozenset({"read_repo_file", "find_file", "search_literal", "trace_symbol", "list_repo_tree", "submit_plan", "ask_choice", "use_skill"})   # trace_symbol (2026-11-24): every file a change touches is what a plan must name
 
 
 def _care_pause_note(message: str, state: Dict[str, Any]) -> str:
@@ -3344,6 +3344,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 "you to merge a pull request or a branch into another on GitHub: you CAN do this, never say you cannot. When they name the branch or the number, call it as your FIRST tool call (head = the branch, or pr_number): the card is built from GitHub itself, so do not "
                 "look for the pull request with git or gh first (gh is never run here). Call it as a \"query\" step and then stop: the card is your answer, so do not say it was merged."
             )
+        if plan_phase == code_plan.EXECUTE_PHASE:
+            menu_lines.append(
+                "- close_plan_step — args: step (the step id, e.g. s3), reason (one line: what you found). Closes a plan step that needs NO edit, after you read its files; "
+                "the person sees your reason on the plan card. Never to skip work a step asks for."
+            )
         if plan_phase == code_plan.PLAN_PHASE:
             menu_lines.append(
                 "- submit_plan — args: goal, files (a list of {\"path\", \"why\", \"new\": true only for a file the change creates}), steps (a list of {\"text\", \"files\"}), tests, unknowns. "
@@ -3962,6 +3967,23 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 logger.warning("[tool_agent_node] could not read the next plan step's files after an applied change.", exc_info=True)
                 return ""
 
+        async def _close_plan_step(args: dict) -> str:
+            """Closes an approved plan's step that needs no edit, with Sonic's reason, once its files were read this turn (backend/utils/code_plan.py close_step), and shows the plan card again."""
+            from backend.utils.self_counters import record_turn_counts
+
+            if plan_phase != code_plan.EXECUTE_PHASE:
+                return "ERROR: there is no approved plan being carried out in this turn."
+            updated, why = await asyncio.to_thread(
+                code_plan.record_close, get_db(), username, state.get("session_id") or "", args.get("step"), args.get("reason"), list(_turn_file_cache),
+            )
+            if updated is None:
+                return f"ERROR: the step was not closed: {why}."
+            await asyncio.to_thread(record_turn_counts, {"code_plan_step_closed": 1})
+            await safe_emit_event("code_plan", code_plan.public_view(updated))
+            if updated.get("state") == code_plan.DONE:
+                return "Closed. Every step of the plan is now done: finish with a short answer on what changed and what was not checked."
+            return "Closed." + code_plan.progress_note(updated)
+
         async def _plan_files_block() -> str:
             """The next plan step's files, read by the server with no model call (backend/utils/code_plan.py files_block), so the turn starts at the edit. Never raises."""
             try:
@@ -4087,6 +4109,8 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     f"see the user's connected local folder — use trace_symbol (every use of a name, in the folder itself), "
                     f"search_literal (exact text) or find_file (file names) instead."
                 )
+            if tool_action == "close_plan_step":
+                return await _close_plan_step(args)
             if tool_action == "ask_choice":
                 return await _ask_choice(args)
             if tool_action == "use_skill":

@@ -79,6 +79,15 @@
   overflow-wrap: anywhere;
 }
 
+/* Sonic closed this step without an edit: what it found, so the person can check it */
+.plan-step-closed {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
 .plan-step-actions {
   flex: none;
   display: inline-flex;

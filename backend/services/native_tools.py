@@ -309,6 +309,11 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "tests": {"type": "array", "items": _STRING, "description": "behaviour tests for the change, one small spec per line: test file and name, what it sets up (the real shape the code returns), what it calls, the exact assertion; it must fail without the change"},
         "unknowns": {"type": "array", "items": _STRING, "description": "what you could not tell from reading, instead of guessing"},
     }, ["goal", "files", "steps"]),
+    # an approved plan's step that needs no edit (backend/utils/code_plan.py close_step): closed with what was found, shown on the plan card.
+    "close_plan_step": _object({
+        "step": {"type": "string", "description": "the step's id as the plan shows it, for example s3"},
+        "reason": {"type": "string", "description": "one line: what you found in the step's files that means no edit is needed"},
+    }, ["step", "reason"]),
     # a connected local folder: a proposal the person applies (or not) from a diff card. Nothing is written by the call.
     # asking the person to choose (backend/services/choice_cards.py): one question, two to four options, the answer comes back as this call's result
     "ask_choice": _object({
@@ -498,6 +503,11 @@ NATIVE_DESCRIPTIONS: Dict[str, str] = {
         "everything you have read. Use it when you cannot tell which of several things they mean and reading or searching would not settle it: a design choice, which of two behaviours they want, which of a few files or places is meant. Give two to four "
         "options with a short label and one sentence saying what choosing it means, and set `recommended` to the number of the one you would pick (it is shown first). One question only; never ask something a search or a read could answer, never "
         "ask permission to continue, never ask twice for the same thing, and do not add an 'other' option (the card has a box). It returns what they chose or wrote; carry on with it. If no answer comes, say what you were going to ask and stop."
+    ),
+    "close_plan_step": (
+        "Close a step of the approved plan that needs NO edit: its files already do what the step says, or a file it names turns out not to need changing. Read the step's files first (a step "
+        "is closed only after they were read this turn or already edited). Give the step id and one line on what you found; the person sees it on the plan card. Never use it to skip work a "
+        "step asks for: if something must change, propose it. Returns the plan's progress, or an error saying what to do first."
     ),
     "propose_local_edits": (
         "Make a change to the person's connected local folder. It changes nothing by itself: the person sees a diff with an Apply button, which is their confirmation, and can undo it. "

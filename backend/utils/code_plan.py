@@ -42,7 +42,7 @@ _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 # Narrow on purpose: it starts with a condition, or with a looking verb and has no edit verb ("Check the flag and replace it" is an edit), or says the change depends on need.
 _NOT_AN_EDIT_RE = re.compile(
     r"^(?:if|when|decide|consider|see (?:if|whether))\b"
-    r"|^(?:check|verify|confirm|review|inspect|investigate|read|look|ensure|make sure)\b(?!.*\b(?:add|change|update|replace|remove|fix|create|rename|move|implement|write|edit|wire|extend|delete|set|use|pass|call|import|export|show|hide)\b)"
+    r"|^(?:check|verify|confirm|review|inspect|investigate|read|look|ensure|make sure|run|re-?run|execute)\b(?!.*\b(?:add|change|update|replace|remove|fix|create|rename|move|implement|write|edit|wire|extend|delete|set|use|pass|call|import|export|show|hide)\b)"
     r"|\b(?:if (?:needed|necessary|required|any)|as needed|optionally)\b",
     re.IGNORECASE,
 )
@@ -156,15 +156,21 @@ def next_step(plan: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 
 def mark_applied(plan: Dict[str, Any], applied_paths: List[str]) -> Tuple[Dict[str, Any], int]:
-    """The plan after an edit covering `applied_paths` was applied, and how many steps that finished. A step is done when it names files and all of them were applied. When every step that
-    names files is done, the plan is DONE. Pure (the plan passed in is not changed)."""
+    """The plan after an edit covering `applied_paths` was applied, and how many steps that finished. A step is done when it names files and every one of them has had an edit applied, in this
+    Apply or an earlier one (each step keeps the files applied so far in "applied"). When every step that names files is done, the plan is DONE. Pure (the plan passed in is not changed).
+
+    2026-11-24: a step used to need ALL its files in ONE Apply, so a step whose files went in two proposals (a tests step naming five files) never ticked: the stalls of 2026-11-04."""
     done_paths = {clean_path(p) for p in applied_paths}
     steps, finished = [], 0
     for step in plan.get("steps") or []:
         step = dict(step)
-        if step.get("status") != "done" and step.get("files") and all(p in done_paths for p in step["files"]):
-            step["status"] = "done"
-            finished += 1
+        if step.get("status") != "done" and step.get("files"):
+            applied = sorted(set(step.get("applied") or []) | (done_paths & set(step["files"])))
+            if applied:
+                step["applied"] = applied
+            if set(step["files"]) <= set(applied):
+                step["status"] = "done"
+                finished += 1
         steps.append(step)
     with_files = [s for s in steps if s.get("files")]
     complete = bool(with_files) and all(s["status"] == "done" for s in with_files)
@@ -213,6 +219,43 @@ def mark_step_done(plan: Dict[str, Any], step_id: str) -> Optional[Dict[str, Any
     return {**plan, "steps": steps, "state": DONE if complete else APPROVED, "stalled": 0, "done_seen": steps_done({"steps": steps})}
 
 
+CLOSE_REASON_MIN = 12
+
+
+def close_step(plan: Optional[Dict[str, Any]], step_id: Any, reason: Any, read_paths: List[str]) -> Tuple[Optional[Dict[str, Any]], str]:
+    """(the plan, "") after Sonic closes a step that needs no edit, or (None, why not). The step must be in an approved plan and not done; the reason must say why (at least
+    CLOSE_REASON_MIN characters), and every file the step names must have been read this turn or already had an edit applied: closing is a finding about those files, never a way to skip one.
+    The reason is kept on the step ("closed") and shown on the plan card. Pure (the plan passed in is not changed).
+
+    2026-11-24: a step whose file turned out to need no change could only be closed by the person (the stalls of 2026-11-04, Jack pressing Mark done by hand)."""
+    if not plan or plan.get("state") != APPROVED:
+        return None, "there is no approved plan to close a step of"
+    steps = [dict(s) for s in plan.get("steps") or []]
+    target = next((s for s in steps if s.get("id") == str(step_id or "").strip()), None)
+    if target is None:
+        return None, "no step has that id; use the id shown in the plan (s1, s2, ...)"
+    if target.get("status") == "done":
+        return None, f"{target['id']} is already done"
+    why = _flat(reason, SHORT_MAX)
+    if len(why) < CLOSE_REASON_MIN:
+        return None, "say in one line why the step needs no edit (what you found in its files)"
+    seen = {clean_path(p) for p in read_paths} | set(target.get("applied") or [])
+    unread = [p for p in target.get("files") or [] if p not in seen]
+    if unread:
+        return None, f"read {', '.join(unread)} first: a step is closed only after its files were looked at"
+    target["status"], target["closed"] = "done", why
+    complete = all(s.get("status") == "done" for s in steps)
+    return {**plan, "steps": steps, "state": DONE if complete else APPROVED, "stalled": 0, "done_seen": steps_done({"steps": steps})}, ""
+
+
+def record_close(db, username: str, session_id: str, step_id: Any, reason: Any, read_paths: List[str], now: Optional[datetime] = None) -> Tuple[Optional[Dict[str, Any]], str]:
+    """close_step against the stored plan, saved when it worked. Blocking."""
+    updated, why = close_step(load(db, username, session_id), step_id, reason, read_paths)
+    if updated is not None:
+        save(db, username, session_id, updated, now)
+    return updated, why
+
+
 def file_lines(plan: Dict[str, Any]) -> List[str]:
     return [f"{f['path']}{' (new file)' if f.get('new') else ''}: {f.get('why') or 'no reason given'}" for f in plan.get("files") or []]
 
@@ -229,7 +272,8 @@ EXECUTE_RULES = (
     "Finish with a short answer on what changed and what was not checked (say plainly if no test was run). "
     "Say a check passed (tests, type-check, build) only if a run_local_check, run_local_command or run_sandbox_tests result IN THIS TURN showed it; otherwise say it was not run. "
     "If something fails that is not in the plan's files (a test that was already failing, say), say so once in one line and leave it alone: do not spend steps on it. "
-    "If the step left needs no edit because its files already hold the change, say that in one line and stop: the person can mark the step done. "
+    "If a step needs no edit (its files already do what it says, or it named a file that turns out not to need changing), read its files and call close_plan_step with its id and one line "
+    "saying what you found; the person sees that line on the plan card. Never use it to skip work a step asks for. "
     "THE PLAN'S TESTS: when a step writes a test, write it as its line says (that setup, that call, that assertion), with no weaker assertion. After the code it tests is in, run it with run_local_check (the project's "
     "own test check) and make it pass by fixing the CODE, never by loosening or removing the test; if the test itself is wrong, say why in one line instead."
 )
@@ -242,7 +286,8 @@ def build_context(plan: Optional[Dict[str, Any]]) -> str:
     lines = [f"Goal: {plan.get('goal', '')}", "Files:"] + [f"- {line}" for line in file_lines(plan)] + ["Steps:"]
     for step in plan.get("steps") or []:
         files = f" [{', '.join(step.get('files') or [])}]" if step.get("files") else ""
-        lines.append(f"- {step['id']} ({'done' if step.get('status') == 'done' else 'to do'}): {step.get('text', '')}{files}")
+        status = "done" if step.get("status") == "done" else (f"to do, applied so far: {', '.join(step['applied'])}" if step.get("applied") else "to do")
+        lines.append(f"- {step['id']} ({status}): {step.get('text', '')}{files}")
     if plan.get("tests"):
         lines += ["Tests (small specs: write each as its line says, then make it pass):"] + [f"- {t}" for t in plan["tests"]]
     if plan.get("unknowns"):
@@ -559,7 +604,7 @@ def off_plan_paths(plan: Optional[Dict[str, Any]], edits: Any) -> List[str]:
 # model says what else it needs. A hard ceiling on total steps keeps even an on-plan turn from running on.
 DEVIATION_STEPS = int(os.getenv("CODE_PLAN_DEVIATION_STEPS", "3"))
 EXEC_HARD_CAP = int(os.getenv("CODE_PLAN_EXEC_HARD_CAP", "30"))
-_ON_PLAN_TOOLS = frozenset({"read_repo_file", "propose_local_edits", "run_sandbox_tests", "run_local_check", "run_local_command"})
+_ON_PLAN_TOOLS = frozenset({"read_repo_file", "propose_local_edits", "run_sandbox_tests", "run_local_check", "run_local_command", "close_plan_step"})
 
 
 class PlanBudget:

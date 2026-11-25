@@ -66,6 +66,7 @@ import '../components/__styles__/FeedbackTime.css';
 import { CODE_BOX_STYLE } from '../components/codeBoxStyle';
 import { useAuth } from '@clerk/clerk-react';
 import { describeChatError, toChatSendError } from '../chatErrors';
+import { BUSY_NOTICE, DROPPED_NOTICE, STILL_WORKING_NOTICE, shouldCatchUp, waitForTurn, withNotice } from '../turnCatchUp';
 import { formatMessageTime, fullMessageTime } from '../messageTime';
 import { MessageMarkdown } from '../components/MessageMarkdown';
 import { StreamPacer } from '../components/streamPacer';
@@ -1002,6 +1003,27 @@ useEffect(() => {
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
+  // Waits for a turn the page lost track of to finish on the server, then shows the conversation as saved (turnCatchUp.ts). One at a time per conversation.
+  const catchingUpRef = useRef<string | null>(null);
+  const catchUpRef = useRef(async (sid: string) => {
+    if (!sid || catchingUpRef.current === sid) return;
+    catchingUpRef.current = sid;
+    try {
+      await waitForTurn(async () => (await api.getTurnStatus(sid)).running);
+      if (sessionIdRef.current !== sid) return;
+      const conversation = await api.getConversation(sid, { limit: HISTORY_PAGE_SIZE });
+      const saved: Message[] = (conversation.messages || []).filter((m: any) => m.type !== 'system').map(mapServerMessage);
+      if (sessionIdRef.current === sid && saved.length > 0) {
+        setMessages(saved);
+        setHistoryStart(conversation.start ?? 0);
+      }
+    } catch {
+      /* the conversation could not be fetched: the notice stays, and opening the conversation again loads it */
+    } finally {
+      if (catchingUpRef.current === sid) catchingUpRef.current = null;
+    }
+  });
+
   useEffect(() => {
     if (!principal || !sessionId) return;
     let cancelled = false;
@@ -1015,6 +1037,16 @@ useEffect(() => {
           setMessages(serverMessages);
           setHistoryStart(conversation.start ?? 0);
           setHasChatted(serverMessages.some(m => m.sender === 'user'));
+          // The last turn may still be running (the page was closed or suspended while Sonic was answering): say so and show the reply once it is saved.
+          if (!abortControllerRef.current) {
+            api.getTurnStatus(sessionId)
+              .then(status => {
+                if (cancelled || !status.running) return;
+                setMessages(prev => [...prev, { id: genId(), sender: 'ai', text: STILL_WORKING_NOTICE, sentAt: new Date().toISOString() }]);
+                void catchUpRef.current(sessionId);
+              })
+              .catch(() => { /* an older server has no turn-status: nothing to catch up on */ });
+          }
           // Opening an existing conversation: Sonic may have one anchored thing to say first (usually it doesn't, and
           // never unless the user turned that on). Asked once per conversation load.
           if (!isEmbedded && openingRequestedRef.current !== sessionId) {
@@ -2197,6 +2229,13 @@ useEffect(() => {
         // What went wrong, said plainly and only as far as it is known (chatErrors.ts). The raw error stays in the console and, as one
         // technical line with no message text in it, behind a "Details" disclosure on the notice.
         const sendError = toChatSendError(err);
+        if (shouldCatchUp(sendError)) {
+          // The server finishes the turn whatever happened to the connection (backend/utils/detached_stream.py): no error, the reply is fetched once it is saved (turnCatchUp.ts).
+          const notice = sendError.status === 409 ? BUSY_NOTICE : DROPPED_NOTICE;
+          setMessages(prev => prev.map(m => (m.id === aiMessageId ? { ...m, text: withNotice(m.text, notice) } : m)));
+          void catchUpRef.current(sessionId);
+          return;
+        }
         const view = describeChatError(sendError);
         console.error("Chat send failed:", sendError.kind, sendError.status ?? '', err);
         failed = true;
@@ -2246,6 +2285,7 @@ useEffect(() => {
   };
 
   const stopGeneration = () => {
+    void api.stopChat(sessionIdRef.current).catch(() => { /* nothing running here: the abort below still ends the page's side */ });
     abortControllerRef.current?.abort();
   };
 

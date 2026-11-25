@@ -98,5 +98,5 @@ def test_a_non_positive_interval_passes_the_stream_through_untouched():
 
 def test_the_chat_endpoint_streams_through_it():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert "async for chunk in stream_keepalive.with_keepalive(token_streamer()):" in source
+    assert "stream_keepalive.with_keepalive(detached_stream.relay(steerable_turn))" in source             # the keepalive now wraps the relay of the detached turn (2026-11-24)
     assert "from backend.utils import stream_keepalive" in source

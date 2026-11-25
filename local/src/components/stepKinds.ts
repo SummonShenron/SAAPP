@@ -30,7 +30,7 @@ const TOOL_KIND: Readonly<Record<string, StepKind>> = {
   // looking at a page in a browser
   look_at_local_page: 'browser',
   // working out a plan, and talking to the person
-  propose_steps: 'think', submit_plan: 'think',
+  propose_steps: 'think', submit_plan: 'think', close_plan_step: 'think',
   ask_choice: 'chat',
 };
 
