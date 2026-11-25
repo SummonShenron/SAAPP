@@ -70,6 +70,7 @@ export const PlanCard: React.FC<Props> = ({ sessionId, plan, busy, onChange, onA
                 <span className="plan-step-text">
                   {step.text}
                   {step.files.length > 0 && <span className="plan-step-files">{step.files.join(', ')}</span>}
+                  {step.closed && <span className="plan-step-closed">No edit needed: {step.closed}</span>}
                 </span>
                 {step.status !== 'done' && plan.state !== 'done' && (
                   <span className="plan-step-actions">

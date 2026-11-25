@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { lazy, Suspense, useState } from "react";
 import { LandingPage } from "./pages/LandingPage";
-import { ChatPage } from "./pages/Chat";
 import { Layout } from "../src/components/Layout";
 import { api } from "./api";
 
@@ -79,7 +78,7 @@ function App() {
       >
        <Route
         path="/chat"
-        element={<ChatPage theme={theme} toggleTheme={toggleTheme} />}
+        element={null /* Layout keeps the chat page mounted itself (components/Layout.tsx) */}
       />
         <Route path="/self-service" element={<SelfServicePage />} />
         <Route path="/tidy" element={<TidyPage />} />

@@ -396,7 +396,7 @@ def test_the_execute_rules_say_a_check_passed_only_with_a_result_from_this_turn(
     text = cp.EXECUTE_RULES
     assert "IN THIS TURN" in text and "otherwise say it was not run" in text
     assert "not in the plan's files" in text and "leave it alone" in text
-    assert "mark the step done" in text
+    assert "call close_plan_step" in text            # a step needing no edit is closed by Sonic with what it found (2026-11-24), no longer left for the person
 
 
 def test_the_stall_wiring_is_in_the_route_the_turn_end_and_the_counters():
@@ -438,7 +438,7 @@ def test_a_plan_turn_offers_only_read_tools_and_the_plan_tool():
 
     # ask_choice is read-only in effect (it changes nothing, it shows a question and waits for the answer), and a plan is where the clarity is needed (backend/services/choice_cards.py);
     # use_skill only loads a project skill's text (backend/utils/skills.py), so a plan can follow the project's own procedure
-    assert aw._PLAN_TURN_TOOLS == {"read_repo_file", "find_file", "search_literal", "list_repo_tree", "submit_plan", "ask_choice", "use_skill"}
+    assert aw._PLAN_TURN_TOOLS == {"read_repo_file", "find_file", "search_literal", "trace_symbol", "list_repo_tree", "submit_plan", "ask_choice", "use_skill"}
     assert not {"propose_local_edits", "run_sandbox_tests", "propose_commit", "propose_merge", "run_python", "web_search"} & aw._PLAN_TURN_TOOLS
     assert aw._PLAN_REQUIRED_ACTION["tool_action"] == "submit_plan"
 

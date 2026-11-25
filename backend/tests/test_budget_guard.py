@@ -364,7 +364,7 @@ def test_the_chat_turn_decides_the_budget_first_and_pauses_the_extras_and_the_mo
     for gate in ('budget_guard.allows("answer_recheck", budget_state)', 'budget_guard.allows("memory_summaries", budget_state)',
                  'budget_guard.allows("open_loops", budget_state)'):
         assert source.count(gate) == 1, gate
-    streamer = source[source.index("async def token_streamer():"): source.index("async def steerable_stream():")]
+    streamer = source[source.index("async def token_streamer():"): source.index("async def steerable_turn():")]
     blocked_at = streamer.index("if budget_guard.blocked(budget_state):")
     assert blocked_at < streamer.index("workflow.ainvoke")           # the stop is before any model-calling work
     block = streamer[blocked_at: streamer.index("        try:\n", blocked_at)]

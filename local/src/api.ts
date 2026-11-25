@@ -2173,7 +2173,11 @@ export const compactConversationSummary = (sessionId: string): Promise<Conversat
   taskRequest(`/api/conversation-summary/compact?session_id=${encodeURIComponent(sessionId)}`, { method: 'POST' }, 'Failed to fold the conversation into a summary.');
 
 /** Plan mode (backend/utils/code_plan.py): a plan the person approves before Sonic edits their folder. */
-export interface CodePlanStep { id: string; text: string; files: string[]; status: 'todo' | 'done'; }
+export interface CodePlanStep {
+  id: string; text: string; files: string[]; status: 'todo' | 'done';
+  closed?: string;      // Sonic closed it without an edit, and this is what it found (backend/utils/code_plan.py close_step)
+  applied?: string[];   // the step's files that have had an edit applied so far
+}
 export interface CodePlan {
   state: 'proposed' | 'approved' | 'done';
   goal: string;
@@ -2581,6 +2585,26 @@ export async function steerChat(sessionId: string, message: string): Promise<{ s
   return res.json();
 }
 
+/** Stop: the running turn of this conversation ends at its next check. A dropped connection no longer stops a turn on the server, so Stop has to say so itself. */
+export async function stopChat(sessionId: string): Promise<{ status: string }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/chat/stop`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  if (!res.ok) throw new Error("Failed to stop the reply.");
+  return res.json();
+}
+
+/** Whether a turn of this conversation is still running on the server (it carries on after the page loses its stream). */
+export async function getTurnStatus(sessionId: string): Promise<{ running: boolean }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${BASE_URL}/api/chat/turn-status?session_id=${encodeURIComponent(sessionId)}`, { headers: { ...authHeaders } });
+  if (!res.ok) throw new Error("Failed to ask whether the reply is still being written.");
+  return res.json();
+}
+
 /** What the server did with a report of the person's decision: 'recorded' (a turn was waiting and has it), 'no_waiter' (nobody is waiting any more: the turn ended, timed out or was lost when the server restarted), or 'error' (it could not be asked). */
 export type EditDecisionResult = 'recorded' | 'no_waiter' | 'error';
 
@@ -2772,6 +2796,8 @@ export const api = {
   uploadAttachment,
   sendChatMessage,
   steerChat,
+  stopChat,
+  getTurnStatus,
   listConversations,
   getConversation,
   renameConversation,

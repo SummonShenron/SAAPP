@@ -155,6 +155,7 @@ from backend.utils import open_loops as open_loops_utils
 from backend.utils import plan_changes as plan_changes_utils
 from backend.utils import claim_check
 from backend.utils import stream_keepalive
+from backend.utils import detached_stream
 from backend.utils import working_state as working_state_utils
 from backend.utils import conversation_summary as conversation_summary_utils
 from backend.utils import code_plan as code_plan_utils
@@ -818,6 +819,9 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
     history_key = f"{username}::{session_id}"
+    if steering.is_running(history_key):
+        # The last turn of this conversation is still finishing (the browser may have gone away and come back): a second one would write into the same transcript.
+        raise HTTPException(status_code=409, detail="Sonic is still finishing the last reply in this conversation. It will show here when it's done.")
     # history_key already uniquely identifies one conversation — reused directly as the
     # checkpointer's thread_id, no separate ID scheme needed. Defined once, up front, so both
     # graph invocation sites below use the exact same config regardless of which branch runs.
@@ -1082,14 +1086,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
 
                 event_stream = workflow.astream_events(initial_state, version="v2", config=graph_config)
                 async for event in event_stream:
-                    # A user-initiated Stop (see docs/coding-agent-roadmap.md) aborts the
-                    # client's fetch — without this check the graph (including slow admin
-                    # tools like run_repo_tests/run_snippet) would keep running to completion
-                    # server-side anyway, burning real LLM/tool cost for a response nobody is
-                    # waiting for. aclose() sends the generator a real cancellation signal
-                    # rather than just abandoning it half-consumed.
-                    if await http_request.is_disconnected():
-                        logger.info(f"[secure_chat] Client disconnected mid-investigation for {history_key}; stopping graph execution.")
+                    # Stop (POST /api/chat/stop, backend/services/steering.py): the person asked for the turn to end, so the graph (slow tools included) does not run
+                    # on for a reply nobody wants. A dropped CONNECTION does not stop it any more (2026-11-24): closing Safari or the phone suspending the page left
+                    # "[Stopped by user]" for something the person never did; the turn now finishes on its own (backend/utils/detached_stream.py) and is saved.
+                    # aclose() sends the generator a real cancellation signal rather than just abandoning it half-consumed.
+                    if steering.stop_requested(history_key):
+                        logger.info(f"[secure_chat] Stop requested mid-investigation for {history_key}; stopping graph execution.")
                         await event_stream.aclose()
                         chat_sessions[history_key].append(stamp(AIMessage(content="_[Stopped by user before responding]_")))
                         await asyncio.to_thread(save_conversation_turn, username, session_id, chat_sessions[history_key])
@@ -1891,11 +1893,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             written_tier = reply_tier.STANDARD if (turn_llm is response_llm or risk_level != RISK_NONE) else tier         # the tier that actually writes it: a lite or Haiku voice that was not offered falls back to the standard one
             token_stream = turn_llm.astream(prompt)
             async for chunk in token_stream:
-                # Same Stop check as the graph phase above — a user cutting off a response
-                # that's clearly going the wrong way shouldn't leave the LLM generating the
-                # rest of it into the void.
-                if await http_request.is_disconnected():
-                    logger.info(f"[secure_chat] Client disconnected mid-response for {history_key}; stopping token stream.")
+                # Same Stop check as the graph phase above — a person cutting off a response that's clearly going the wrong way shouldn't leave the LLM
+                # generating the rest of it into the void. A dropped connection is not a Stop (the reply is finished and saved for when the page comes back).
+                if steering.stop_requested(history_key):
+                    logger.info(f"[secure_chat] Stop requested mid-response for {history_key}; stopping token stream.")
                     await token_stream.aclose()
                     stopped_note = f"{full_response}\n\n_[Stopped by user]_" if full_response else "_[Stopped by user before responding]_"
                     chat_sessions[history_key].append(stamp(AIMessage(content=stopped_note)))
@@ -2387,12 +2388,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
         finally:
             llm_turns.finish(llm_turn)  # a turn the client walked away from still counts (only the first finish does)
 
-    async def steerable_stream():
-        # Registered for the whole turn so POST /api/chat/steer has somewhere to deliver messages.
+    async def steerable_turn():
+        # Registered for the whole TURN (not the connection) so POST /api/chat/steer and /api/chat/stop have somewhere to go, and /api/chat/turn-status can say it is still running.
         run = steering.open_run(history_key, chat_sessions[history_key])
         try:
-            # The stream says it is alive (backend/utils/stream_keepalive.py), so the page can tell a quiet turn from a dead connection and does not stay busy until a reload.
-            async for chunk in stream_keepalive.with_keepalive(token_streamer()):
+            async for chunk in token_streamer():
                 yield chunk
         finally:
             leftover = steering.close_run(history_key, run)
@@ -2400,8 +2400,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 logger.info("[steering] %d steer(s) were never consumed for %s; the browser re-sends them.", len(leftover), history_key)
 
     logger.info(f"Initializing secured token stream for {username}")
+    # The turn runs in its own task and the response only relays it (backend/utils/detached_stream.py): if the browser goes away the turn still finishes and is saved.
+    # The stream says it is alive (backend/utils/stream_keepalive.py), so the page can tell a quiet turn from a dead connection and does not stay busy until a reload.
     return StreamingResponse(
-        steerable_stream(),
+        stream_keepalive.with_keepalive(detached_stream.relay(steerable_turn)),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2409,6 +2411,26 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             "Connection": "keep-alive",
         },
     )
+
+class StopRequest(BaseModel):
+    session_id: str
+
+
+@app.post("/api/chat/stop")
+async def stop_chat(request: StopRequest, current_user = Depends(get_current_user)):
+    """The person pressed Stop: the running turn of this conversation ends at its next check (a dropped connection no longer stops a turn). "stopping",
+    or "no_active_run" when none runs here."""
+    username = current_user.get("sub")
+    return {"status": steering.request_stop(f"{username}::{request.session_id.strip()}")}
+
+
+@app.get("/api/chat/turn-status")
+async def chat_turn_status(session_id: str, current_user = Depends(get_current_user)):
+    """Whether a turn of this conversation is still running here, so a page that lost its stream (Safari closed, the phone suspended it) waits for the
+    reply to be saved and then reloads the conversation."""
+    username = current_user.get("sub")
+    return {"running": steering.is_running(f"{username}::{session_id.strip()}")}
+
 
 @app.post("/api/chat/steer")
 async def steer_chat(request: SteerRequest, current_user = Depends(get_current_user)):

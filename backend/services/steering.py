@@ -32,6 +32,7 @@ class _Run:
     pending: list = field(default_factory=list)
     applied: int = 0
     accepting: bool = True
+    stop: bool = False          # the person pressed Stop (POST /api/chat/stop): the only thing that ends a turn early now that a lost connection does not
 
 
 _runs: dict = {}
@@ -56,6 +57,36 @@ def close_run(key: str, run: _Run) -> list:
         run.pending.clear()
         run.accepting = False
     return leftover
+
+
+# ---- Stop, and whether a turn is still running (2026-11-24) -----------------------------------------------------------------------------
+# A turn used to end whenever the browser's connection dropped, because Stop was only the browser cancelling its request and the server could
+# not tell the two apart. So closing Safari, or the phone suspending the page, stopped the turn and saved "[Stopped by user]". Now the turn runs
+# to the end whatever happens to the connection (backend/utils/detached_stream.py), and Stop is its own request that sets this flag.
+
+def request_stop(key: str) -> str:
+    """Asks the running turn of this conversation to stop at its next check. "stopping", or "no_active_run" (none here: it finished, or it runs
+    on another server instance)."""
+    with _lock:
+        run = _runs.get(key)
+        if run is None:
+            return "no_active_run"
+        run.stop = True
+        run.accepting = False
+    return "stopping"
+
+
+def stop_requested(key: str) -> bool:
+    """Whether the person asked the running turn of this conversation to stop."""
+    with _lock:
+        run = _runs.get(key)
+        return bool(run and run.stop)
+
+
+def is_running(key: str) -> bool:
+    """Whether a turn of this conversation is still running here (it may be finishing after the browser went away)."""
+    with _lock:
+        return key in _runs
 
 
 def stop_accepting(key: str) -> None:

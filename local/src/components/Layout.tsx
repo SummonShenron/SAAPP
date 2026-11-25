@@ -15,11 +15,12 @@ import TopBar from "./TopBar";
 import ProviderAlert from "./ProviderAlert";
 import { HelpModeProvider } from "./HelpMode";
 import { useShell } from "./shellStore";
+import { ChatPage } from "../pages/Chat";
 import { useAuth } from '@clerk/clerk-react';
 import "./__styles__/AppShell.css";
 
 interface LayoutProps {
-  theme: string;
+  theme: "sonic" | "shadow";
   toggleTheme: () => void;
   onExit: () => void;
 }
@@ -52,6 +53,9 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   // The drawer remembers which page it was opened on, so it is open only there: going to another page (or the browser's back button) closes it.
   const [drawerOpenAt, setDrawerOpenAt] = useState<string | null>(null);
   const [railPreference, setRailPreference] = useState<boolean | null>(readRailPreference);
+  // The chat page stays mounted once opened (hidden on other pages), so a reply that is still streaming when the person visits another page keeps going and is there when they return.
+  const [chatOpened, setChatOpened] = useState(() => pathname.startsWith("/chat"));
+  useEffect(() => { if (pathname.startsWith("/chat")) setChatOpened(true); }, [pathname]);
 
   // --- EMBED MODE DETECTION ---
   const hashSearch = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
@@ -154,7 +158,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   if (isEmbedded) {
     return (
       <div className="portal-container bty-embed-container" style={{ minHeight: '100vh', background: '#121316', padding: 0 }}>
-        <Suspense fallback={null}><Outlet /></Suspense>
+        <Suspense fallback={null}>{pathname.startsWith("/chat") ? <ChatPage theme={theme} toggleTheme={toggleTheme} /> : <Outlet />}</Suspense>
       </div>
     );
   }
@@ -163,6 +167,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const selectConversation = (sessionId: string) => {
     if (bridge) {
       bridge.select(sessionId);
+      if (!pathname.startsWith("/chat")) navigate("/chat");   // the chat stays mounted behind other pages, so its bridge is still registered there
     } else {
       localStorage.setItem(activeKey, sessionId);
       navigate("/chat");
@@ -172,6 +177,7 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
   const newConversation = () => {
     if (bridge) {
       bridge.newChat();
+      if (!pathname.startsWith("/chat")) navigate("/chat");
     } else {
       localStorage.setItem(activeKey, crypto.randomUUID());
       navigate("/chat");
@@ -235,9 +241,17 @@ export function Layout({ theme, toggleTheme }: LayoutProps) {
           {/* Main page content: only once the person is fully signed in */}
           {authReady ? (
             // A page that is fetched on first use (see App.tsx) shows a quiet spinner for the moment it takes, inside the same shell.
-            <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: '4rem 0' }}><Spinner size={32} /></div>}>
-              <Outlet />
-            </Suspense>
+            <>
+              <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: '4rem 0' }}><Spinner size={32} /></div>}>
+                <Outlet />
+              </Suspense>
+              {/* Outside the Suspense above: a page that is still loading must not swap the chat (and a reply streaming in it) out for the spinner. */}
+              {chatOpened && (
+                <div style={{ display: onChat ? "contents" : "none" }}>
+                  <ChatPage theme={theme} toggleTheme={toggleTheme} />
+                </div>
+              )}
+            </>
           ) : (
             <AuthLoadingScreen state={auth.state as 'checking' | 'denied' | 'timeout'} slow={auth.slow} onRetry={auth.retry} />
           )}
