@@ -52,7 +52,7 @@ def facts(monkeypatch):
 
 
 def test_every_place_memory_is_kept_is_on_the_list_and_the_names_match_the_ones_the_app_writes_to():
-    assert set(me.ERASED_COLLECTIONS) == {"user_memory_chunks", "user_memory_chunk_archive", "user_memory_fact_archive", "memory_compaction_events", "user_memory_domain_backups", "user_recurring_struggles"}
+    assert set(me.ERASED_COLLECTIONS) == {"user_memory_chunks", "user_memory_chunk_archive", "user_memory_fact_archive", "memory_compaction_events", "user_memory_domain_backups", "user_recurring_struggles", "shared_moments"}
     assert ms.USER_MEMORY_COLLECTION in me.ERASED_COLLECTIONS
     assert mc.ARCHIVE_COLLECTION == ms.CHUNK_ARCHIVE_COLLECTION == mm.ARCHIVE_COLLECTION
     assert memory_utils.FACT_ARCHIVE_COLLECTION in me.ERASED_COLLECTIONS

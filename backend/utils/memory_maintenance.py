@@ -7,6 +7,7 @@
     python -m backend.utils.memory_maintenance restore-pruned-facts --username U [--source explicit] [--show] [--apply]   # bring back pruned facts
     python -m backend.utils.memory_maintenance fix-facts --username U --changes FILE --run ID [--apply]   # approved rewrites/removals of facts, notes flagged stale (backend/utils/fact_cleanup.py)
     python -m backend.utils.memory_maintenance restore-fact-fixes --username U --run ID [--apply]          # undo a fix-facts run
+    python -m backend.utils.memory_maintenance propose-moments --username U --file FILE [--apply]          # shared moments, PROPOSED for the person to approve (backend/utils/shared_moments.py)
     python -m backend.utils.memory_maintenance reembed-missing --username U [--apply]                       # embed facts that have no embedding (never found by relevance)
 
 strip-labels: until the label fix, about a third of the saved notes begin with the model's "SUMMARY:" (it copied the last word of
@@ -190,6 +191,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     unfix.add_argument("--username", required=True)
     unfix.add_argument("--run", required=True)
     unfix.add_argument("--apply", action="store_true", help="actually restore (default: only count)")
+    moments = sub.add_parser("propose-moments", help="add moments from the person's history with Sonic, as PROPOSED: nothing is used until they approve each one on the Memory page")
+    moments.add_argument("--username", required=True)
+    moments.add_argument("--file", required=True, help='a JSON list of {"text", "when": "YYYY-MM-DD", "cues": [...]}')
+    moments.add_argument("--apply", action="store_true", help="actually add them (default: only check them)")
     reembed = sub.add_parser("reembed-missing", help="embed the facts that have no embedding, so recall can find them by relevance")
     reembed.add_argument("--username", required=True)
     reembed.add_argument("--apply", action="store_true", help="actually embed and save (default: only count)")
@@ -217,6 +222,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _restore_domains_command(db, args.username, args.run, args.apply)
     if args.command == "fix-facts":
         return _fix_facts_command(db, args.username, args.changes, args.run, args.apply, embed_text)
+    if args.command == "propose-moments":
+        return _propose_moments_command(db, args.username, args.file, args.apply)
     if args.command == "reembed-missing":
         from backend.utils import memory_utils
 
@@ -391,6 +398,23 @@ def _restore_command(db: Any, run: str, apply: bool) -> int:
         print("Dry run: nothing changed. Add --apply to restore.")
         return 0
     print(restore_run(db, run_id, datetime.now(timezone.utc).isoformat()))
+    return 0
+
+
+def _propose_moments_command(db: Any, username: str, path: str, apply: bool) -> int:
+    import json
+
+    from backend.utils import shared_moments
+
+    with open(path, encoding="utf-8") as handle:
+        items = json.load(handle)
+    problems = {i: shared_moments.clean(item)[1] for i, item in enumerate(items) if shared_moments.clean(item)[1]}
+    print(f"{len(items)} moment(s); {len(problems)} with problems: {problems}")
+    if not apply or problems:
+        print("Nothing added." + ("" if problems else " Add --apply to add them as proposed."))
+        return 0 if not problems else 2
+    added = sum(1 for item in items if shared_moments.propose(db, username, item, source="seed")[0] is not None)
+    print(f"added {added} as proposed (already there or over the limit: {len(items) - added}). The person approves them on the Memory page, under Our history.")
     return 0
 
 

@@ -2585,6 +2585,31 @@ export async function steerChat(sessionId: string, message: string): Promise<{ s
   return res.json();
 }
 
+/** A moment from the person's history with Sonic that Sonic may bring up, once they approve it (backend/utils/shared_moments.py). */
+export interface SharedMoment {
+  id: string; text: string; when: string; cues: string[];
+  status: 'proposed' | 'approved';
+  source?: string; uses?: number; last_used_at?: string | null;
+}
+
+export async function listSharedMoments(): Promise<SharedMoment[]> {
+  const res = await fetch(`${BASE_URL}/api/shared-moments`, { headers: { ...(await getAuthHeaders()) } });
+  if (!res.ok) throw new Error("Failed to load shared moments.");
+  return ((await res.json()).moments || []) as SharedMoment[];
+}
+
+export async function setSharedMomentStatus(id: string, status: 'approved' | 'dismissed'): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/shared-moments/${encodeURIComponent(id)}/status`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) }, body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error("Failed to update the moment.");
+}
+
+export async function deleteSharedMoment(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/shared-moments/${encodeURIComponent(id)}`, { method: "DELETE", headers: { ...(await getAuthHeaders()) } });
+  if (!res.ok) throw new Error("Failed to remove the moment.");
+}
+
 /** Stop: the running turn of this conversation ends at its next check. A dropped connection no longer stops a turn on the server, so Stop has to say so itself. */
 export async function stopChat(sessionId: string): Promise<{ status: string }> {
   const authHeaders = await getAuthHeaders();
@@ -2797,6 +2822,9 @@ export const api = {
   sendChatMessage,
   steerChat,
   stopChat,
+  listSharedMoments,
+  setSharedMomentStatus,
+  deleteSharedMoment,
   getTurnStatus,
   listConversations,
   getConversation,
