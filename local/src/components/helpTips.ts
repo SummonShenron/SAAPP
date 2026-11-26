@@ -82,6 +82,7 @@ export const HELP_TIPS: Record<string, HelpTip> = {
   'card.steps': { title: 'Steps to run', what: 'A short list of steps Sonic suggests, each with its own Run button. A step that changes things asks you to confirm first.', wont: 'Run a step until you press it.' },
 
   // ---- Memory ----
+  'memory.ourHistory': { title: 'Our history', what: 'Moments from your time with Sonic that it may bring up when something you say calls one up. Only the ones you approve are ever used.', when: 'You want to choose what Sonic may remind you of, or take something back.' },
   'memory.comingUp': { title: 'Coming up', what: 'Things you mentioned that are on the way, with what Sonic knows about each and where it came from. A detail you never gave shows as not known.', when: 'You want to check or correct what Sonic has noted about an event.' },
   'memory.looksRight': { title: 'Looks right', what: 'Marks this upcoming item as checked by you, so Sonic treats its details as right.' },
   'memory.editLoop': { title: 'Edit an upcoming item', what: 'Lets you change its day, time, who it is with and where.', when: 'A detail is wrong or you can now fill in one that was not known.' },

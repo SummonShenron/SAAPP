@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { api, type UserFact, type OpenLoop, type OpenLoopChanges, type MemoryStored, type MemoryDomain } from '../api';
+import { api, type UserFact, type OpenLoop, type OpenLoopChanges, type MemoryStored, type MemoryDomain, type SharedMoment } from '../api';
 import './__styles__/SelfService.css';
 import './__styles__/Memory.css';
-import { ALL_TOPIC, COMING_UP, activeTopicOf, topicLabel } from './memoryTopics';
+import { ALL_TOPIC, COMING_UP, OUR_HISTORY, activeTopicOf, topicLabel } from './memoryTopics';
 
 const CATEGORY_COLORS: Record<string, string> = {
   identity: 'cat-identity',
@@ -93,6 +93,8 @@ const TopicButton: React.FC<{ active: boolean; label: string; count: number; dot
 export const MemoryPage: React.FC = () => {
   const [facts, setFacts] = useState<UserFact[]>([]);
   const [loops, setLoops] = useState<OpenLoop[]>([]);
+  const [moments, setMoments] = useState<SharedMoment[]>([]);        // moments from their history with Sonic (backend/utils/shared_moments.py)
+  const [momentBusyId, setMomentBusyId] = useState<string | null>(null);
   const [stored, setStored] = useState<MemoryStored>({ notes: 0, archived: 0 });
   const [loading, setLoading] = useState<boolean>(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -136,6 +138,28 @@ export const MemoryPage: React.FC = () => {
       .catch((err: unknown) => { console.error('Failed to load upcoming items:', err); if (!cancelled) setLoops([]); });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listSharedMoments()
+      .then((data: SharedMoment[]) => { if (!cancelled) setMoments(data); })
+      .catch((err: unknown) => { console.error('Failed to load shared moments:', err); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Approving lets Sonic bring a moment up when something they say calls it up; "Not this one" and Remove take it away for good.
+  const decideMoment = async (moment: SharedMoment, action: 'approved' | 'dismissed' | 'remove') => {
+    setMomentBusyId(moment.id);
+    try {
+      if (action === 'remove') await api.deleteSharedMoment(moment.id);
+      else await api.setSharedMomentStatus(moment.id, action);
+      setMoments(prev => (action === 'approved' ? prev.map(m => (m.id === moment.id ? { ...m, status: 'approved' } : m)) : prev.filter(m => m.id !== moment.id)));
+    } catch (err) {
+      console.error('Failed to update a shared moment:', err);
+    } finally {
+      setMomentBusyId(null);
+    }
+  };
 
   const handleDeleteLoop = async (loopId: string, loopText: string) => {
     if (!window.confirm(`Forget "${loopText}"? Sonic won't ask about it.`)) return;
@@ -283,7 +307,7 @@ export const MemoryPage: React.FC = () => {
   };
 
   const categories = Array.from(new Set(facts.map(f => f.category))).sort();
-  const activeTopic = activeTopicOf(topic, categories, loops.length);          // a topic with nothing left in it falls back to everything
+  const activeTopic = activeTopicOf(topic, categories, loops.length, moments.length);          // a topic with nothing left in it falls back to everything
   const comingUpCount = loops.filter(l => l.status !== 'cancelled').length;
 
   const filteredFacts = facts
@@ -307,6 +331,7 @@ export const MemoryPage: React.FC = () => {
         <nav className="memory-topics" aria-label="Topics" data-help="memory.category">
           <div className="memory-topics-title">Topics</div>
           {loops.length > 0 && <TopicButton active={activeTopic === COMING_UP} label="Coming up" count={comingUpCount} onSelect={() => setTopic(COMING_UP)} />}
+          {moments.length > 0 && <TopicButton active={activeTopic === OUR_HISTORY} label="Our history" count={moments.length} onSelect={() => setTopic(OUR_HISTORY)} />}
           <TopicButton active={activeTopic === ALL_TOPIC} label="All memories" count={facts.length} onSelect={() => setTopic(ALL_TOPIC)} />
           {categories.map(cat => (
             <TopicButton key={cat} active={activeTopic === cat} label={topicLabel(cat)} count={facts.filter(f => f.category === cat).length} dot={CATEGORY_COLORS[cat] || 'cat-preference'} onSelect={() => setTopic(cat)} />
@@ -314,6 +339,40 @@ export const MemoryPage: React.FC = () => {
         </nav>
 
       <div className="memory-main vertical-card-stack">
+        {activeTopic === OUR_HISTORY && (
+          <section className="service-card memory-card" data-help="memory.ourHistory">
+            <div className="card-badge">{moments.filter(m => m.status === 'proposed').length} WAITING FOR YOU</div>
+            <h2>Our history</h2>
+            <p className="card-description">
+              Moments from your time with Sonic that it may bring up, the way a friend remembers something you both lived through. It only uses one you approved, only when
+              something you say calls it up, and not often. Approve the ones you're happy for it to mention, or remove the rest.
+            </p>
+            <div className="memory-list">
+              {moments.map(moment => (
+                <div key={moment.id} className="memory-row">
+                  <div className="memory-row-main">
+                    <div className="memory-row-badges">
+                      <span className="memory-badge memory-source-badge">{formatDueDay(moment.when)}</span>
+                      <span className="memory-badge memory-status-badge">{moment.status === 'approved' ? 'approved' : 'waiting for your OK'}</span>
+                      {(moment.uses ?? 0) > 0 && <span className="memory-badge memory-source-badge">brought up {moment.uses}×</span>}
+                    </div>
+                    <div className="memory-row-text">{moment.text}</div>
+                  </div>
+                  <div className="memory-row-actions">
+                    {moment.status === 'proposed' && (
+                      <button type="button" className="memory-event-action" disabled={momentBusyId === moment.id} onClick={() => void decideMoment(moment, 'approved')}>Approve</button>
+                    )}
+                    {moment.status === 'proposed' ? (
+                      <button type="button" className="memory-event-action" disabled={momentBusyId === moment.id} onClick={() => void decideMoment(moment, 'dismissed')}>Not this one</button>
+                    ) : (
+                      <button type="button" className="memory-event-action" disabled={momentBusyId === moment.id} onClick={() => void decideMoment(moment, 'remove')}>Remove</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
         {activeTopic === COMING_UP && (
           <section className="service-card memory-card" data-help="memory.comingUp">
             <div className="card-badge">{loops.filter(l => l.status !== 'cancelled').length} COMING UP</div>
@@ -408,7 +467,7 @@ export const MemoryPage: React.FC = () => {
             </div>
           </section>
         )}
-        {activeTopic !== COMING_UP && (
+        {activeTopic !== COMING_UP && activeTopic !== OUR_HISTORY && (
         <section className="service-card memory-card" data-help="memory.saved">
           <div className="card-badge">{activeTopic === ALL_TOPIC ? `${facts.length} SAVED` : `${filteredFacts.length} OF ${facts.length}`}</div>
           <h2>{activeTopic === ALL_TOPIC ? 'Saved Memories' : topicLabel(activeTopic)}</h2>

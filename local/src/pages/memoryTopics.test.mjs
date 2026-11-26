@@ -36,15 +36,21 @@ test('a topic with nothing left in it falls back to everything, so the page neve
 });
 
 test('the page draws the panel and one list at a time, filters the saved memories by the topic, and the old category dropdown is gone', () => {
-  assert.match(page, /import \{ ALL_TOPIC, COMING_UP, activeTopicOf, topicLabel \} from '\.\/memoryTopics';/);
+  assert.match(page, /import \{ ALL_TOPIC, COMING_UP, OUR_HISTORY, activeTopicOf, topicLabel \} from '\.\/memoryTopics';/);
   assert.match(page, /const \[topic, setTopic\] = useState<string>\(ALL_TOPIC\);/);
-  assert.match(page, /const activeTopic = activeTopicOf\(topic, categories, loops\.length\);/);
+  assert.match(page, /const activeTopic = activeTopicOf\(topic, categories, loops\.length, moments\.length\);/);
   assert.match(page, /\.filter\(f => activeTopic === ALL_TOPIC \|\| f\.category === activeTopic\)/);
   assert.match(page, /<nav className="memory-topics" aria-label="Topics" data-help="memory\.category">/);          // the Help Mode tip for categories now sits on the panel
   assert.match(page, /\{loops\.length > 0 && <TopicButton active=\{activeTopic === COMING_UP\} label="Coming up"/);
   assert.match(page, /\{categories\.map\(cat => \(\s+<TopicButton key=\{cat\} active=\{activeTopic === cat\} label=\{topicLabel\(cat\)\}/);
   assert.match(page, /\{activeTopic === COMING_UP && \(\s+<section className="service-card memory-card" data-help="memory\.comingUp">/);
-  assert.match(page, /\{activeTopic !== COMING_UP && \(\s+<section className="service-card memory-card" data-help="memory\.saved">/);
+  assert.match(page, /\{activeTopic !== COMING_UP && activeTopic !== OUR_HISTORY && \(\s+<section className="service-card memory-card" data-help="memory\.saved">/);
+  // Our history (backend/utils/shared_moments.py): the moments the person approves, removes, or turns down
+  assert.match(page, /\{moments\.length > 0 && <TopicButton active=\{activeTopic === OUR_HISTORY\} label="Our history"/);
+  assert.match(page, /\{activeTopic === OUR_HISTORY && \(\s+<section className="service-card memory-card" data-help="memory\.ourHistory">/);
+  assert.match(page, /moment\.status === 'proposed' && \([\s\S]{0,200}decideMoment\(moment, 'approved'\)[\s\S]{0,40}>Approve</);
+  assert.match(page, /decideMoment\(moment, 'dismissed'\)\}>Not this one</);
+  assert.match(page, /decideMoment\(moment, 'remove'\)\}>Remove</);
   assert.doesNotMatch(page, /categoryFilter|setCategoryFilter/);
   assert.doesNotMatch(page, /All categories/);
   // the rows, editing, forgetting and linking are the page's own code, untouched: the same handlers are still wired
@@ -63,4 +69,15 @@ test('the layout is a topics panel beside the list, and on a phone the topics ar
   assert.match(phone, /\.memory-topics-title \{ display: none; \}/);
   // the controls row is a column on a phone: the search box's 240px flex basis was its HEIGHT (a 240px-tall box) until it was told not to flex
   assert.match(css, /\.memory-controls-row \.manifest-search-input \{\s+max-width: 100%;\s+flex: 0 0 auto;/);
+});
+
+
+test('our history is a topic only while it has moments, listed after coming up, and an empty one falls back to everything', async () => {
+  const { OUR_HISTORY } = await import('./memoryTopics.ts');
+  assert.ok(OUR_HISTORY.startsWith('__') && OUR_HISTORY !== COMING_UP);
+  assert.deepEqual(topicList(['career'], 1, 2), [COMING_UP, OUR_HISTORY, 'all', 'career']);
+  assert.deepEqual(topicList(['career'], 0, 0), ['all', 'career']);
+  assert.equal(activeTopicOf(OUR_HISTORY, ['career'], 0, 3), OUR_HISTORY);
+  assert.equal(activeTopicOf(OUR_HISTORY, ['career'], 0, 0), ALL_TOPIC);
+  assert.equal(activeTopicOf(OUR_HISTORY, ['career'], 0), ALL_TOPIC);           // a caller that does not pass the count never shows an empty topic
 });

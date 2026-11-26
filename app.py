@@ -156,6 +156,8 @@ from backend.utils import plan_changes as plan_changes_utils
 from backend.utils import claim_check
 from backend.utils import stream_keepalive
 from backend.utils import detached_stream
+from backend.utils import shared_moments
+from backend.utils import moment_capture
 from backend.utils import working_state as working_state_utils
 from backend.utils import conversation_summary as conversation_summary_utils
 from backend.utils import code_plan as code_plan_utils
@@ -1529,6 +1531,7 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 )
                 tally(turn_counts, "duration_offered")
             callback_offered = False
+            shared_moment = None          # a moment from their history with Sonic that this message called up (backend/utils/shared_moments.py)
             callback_at_lull = False
             lean_entry = None
             # A plain conversation turn in a conversation that has working notes (backend/utils/working_state.py): the reply may refer back to what was decided. Not on a tool-agent turn (it had
@@ -1708,6 +1711,17 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     proactive_taken=bool(open_loop_entry or headsup_entry or task_results_context or meeting_context or relatable_entry or encouragement_entry or self_history
                                          or callback_offered or goal_nudge_context or finding_offer),
                 )
+                # A shared moment (backend/utils/shared_moments.py): something real from their history with Sonic that THIS message calls up by a cue, and that they
+                # approved. It takes the turn's one slot, ahead of a getting-to-know-you question (their own words asked for it).
+                if not slot["proactive_taken"] and get_db() is not None:
+                    shared_moment = shared_moments.pick(
+                        await asyncio.to_thread(shared_moments.approved_for, get_db(), username), question, chat_sessions[history_key],
+                        now=datetime.now(timezone.utc), closing=is_closing_message(question), **slot,
+                    )
+                    if shared_moment:
+                        prompt = prompt + shared_moments.build_block(shared_moment)
+                        slot["proactive_taken"] = True
+                        tally(turn_counts, "shared_moment_offered")
                 # A getting-to-know-you question (backend/utils/clarifications.py): takes the turn's one slot, so nothing below stacks with it.
                 clarify_level = clarify_utils.level_of(user_profile)
                 if (clarify_utils.clarify_enabled() and clarify_level != clarify_utils.LESS and not slot["proactive_taken"] and slot["energy_tier"] == "open"
@@ -2173,6 +2187,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 await asyncio.to_thread(recurring_struggles.note_asked, get_db(), username, step_back_entry["key"])
             if low_move:
                 ai_message.additional_kwargs[low_moves.MOVE_MARK] = low_move["kind"]       # spaces the same kind of move out (low_moves.MOVE_GAP)
+            if shared_moment:
+                ai_message.additional_kwargs[shared_moments.MARK] = True          # spaces moments out (shared_moments.GAP_MESSAGES)
+                if shared_moments.used(full_response, shared_moment):
+                    tally(turn_counts, "shared_moment_used")
+                    spawn_background_task(asyncio.to_thread(shared_moments.note_used, get_db(), username, shared_moment["id"]))     # starts its cooldown
             if checkin_offered and emotion_checkin.asked(full_response):
                 ai_message.additional_kwargs[emotion_checkin.CHECKIN_MARK] = True  # spent only when the reply really ended on a question to them: the spacing reads this mark
                 tally(turn_counts, "emotion_checkin_asked")
@@ -2324,6 +2343,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     spawn_background_task(clarify_utils.capture(
                         username, question, level=clarify_utils.level_of(user_profile), previous_reply=previous_reply, risk_active=risk_level != RISK_NONE,
                     ))
+            # A new shared moment (backend/utils/moment_capture.py): when their message says something memorable just happened between them and Sonic, one small-model look at the
+            # exchange may propose a moment for "Our history". Proposed only: they approve it on the Memory page before Sonic ever brings it up. Off the response path; code gates first.
+            if moment_capture.worth_a_look(question, guest=is_guest_username(username), risk_active=risk_level != RISK_NONE, mood=final_state.get("emotional_state")) \
+                    and budget_guard.allows("shared moments", budget_state):
+                spawn_background_task(moment_capture.capture(
+                    username, list(chat_sessions[history_key]), guest=is_guest_username(username), risk_active=risk_level != RISK_NONE, mood=final_state.get("emotional_state"),
+                ))
             # Recurring struggles (backend/utils/recurring_struggles.py): an upset message about one of their saved people is counted as part of an episode with that person, dates only, so a
             # later step-back question can rest on a fact. Counts only for now: nothing Sonic says changes. Off the response path, never for a guest.
             if not is_guest_username(username) and get_db() is not None and previous_marks.get(recurring_struggles.STEP_BACK_MARK):
@@ -2411,6 +2437,32 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             "Connection": "keep-alive",
         },
     )
+
+class SharedMomentStatus(BaseModel):
+    status: str
+
+
+@app.get("/api/shared-moments")
+async def list_shared_moments(current_user = Depends(get_member_user)):
+    """The person's shared moments (backend/utils/shared_moments.py): what Sonic may bring up from their history together, once approved."""
+    rows = await asyncio.to_thread(shared_moments.list_for, get_db(), current_user.get("sub"))
+    return {"moments": [shared_moments.public(m) for m in rows if m.get("status") != shared_moments.DISMISSED]}
+
+
+@app.post("/api/shared-moments/{moment_id}/status")
+async def set_shared_moment_status(moment_id: str, request: SharedMomentStatus, current_user = Depends(get_member_user)):
+    """Approves or dismisses one of the person's own moments."""
+    if not await asyncio.to_thread(shared_moments.set_status, get_db(), current_user.get("sub"), moment_id, request.status):
+        raise HTTPException(status_code=404, detail="No such moment.")
+    return {"ok": True}
+
+
+@app.delete("/api/shared-moments/{moment_id}")
+async def delete_shared_moment(moment_id: str, current_user = Depends(get_member_user)):
+    if not await asyncio.to_thread(shared_moments.delete, get_db(), current_user.get("sub"), moment_id):
+        raise HTTPException(status_code=404, detail="No such moment.")
+    return {"ok": True}
+
 
 class StopRequest(BaseModel):
     session_id: str

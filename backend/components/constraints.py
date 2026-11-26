@@ -629,6 +629,27 @@ Return ONLY a JSON object matching this schema, with no preamble or markdown:
 }}
 """
 
+# Shared moments, noticed as they happen (backend/utils/moment_capture.py): one moment from the last few messages, or nothing. Code checks what comes back (grounded, cues present,
+# nothing sensitive) and the person approves it before Sonic ever uses it.
+MOMENT_CAPTURE_PROMPT = """You keep a short list of real moments from a person's history with their assistant, Sonic: things Sonic may fondly bring up later, the way a friend
+does ("the day we finally got the budget fix merged").
+
+THE LAST FEW MESSAGES (oldest first; "Person" is them, "Sonic" is the assistant):
+{exchange}
+
+Is there ONE moment here worth remembering together? It must be what the Person's LAST message is reacting to, and something that happened between the two of them: a win
+or milestone, a funny or memorable line, a mistake Sonic made that they called out, something they built or finished together. Not a passing remark, not a plan for later, nothing
+painful or private (health, grief, a relationship ending, money trouble, drinking or drugs, anything about hurting themselves). If the last message is about something else
+(their evening, a concert, a show), or only hopes something works, the answer is null.
+
+Keep it as it was for them. If they were frustrated with Sonic, the moment is that ("the day you told me I'd spent fifty cents on two asks I couldn't finish"), never a softened
+or happier version. Use their own words where you can.
+
+Reply with ONLY a JSON object:
+{{"moment": "one line in Sonic's voice, starting with 'the day', 'the time', 'the night' or 'your', under 160 characters, using only what the messages say", "cues": ["2 to 4 words or short phrases copied from the messages that would make it relevant again"]}}
+or {{"moment": null}} when there is none. Most of the time there is none.
+"""
+
 CLARIFY_EXTRACTION_PROMPT = """
 You read ONE message from a user to a friendly assistant and decide whether it introduces a specific thing in THEIR own life that the assistant knows nothing about
 yet and would understand much better after one short question about how it fits in their life: a project they work on, an organization or team they belong to or

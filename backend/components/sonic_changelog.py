@@ -1788,6 +1788,21 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "our_history",
+        "requires": [
+            "backend/utils/shared_moments.py::def pick",
+            "app.py::shared_moments.build_block",
+            "backend/utils/moment_capture.py::def capture",
+        ],
+        "month": "2026-11",
+        "title": "Our history",
+        "line": (
+            "I can now bring up moments from our own history together when something you say calls one up, and I notice new ones as they happen, but I only use the ones you approve under Our history on the Memory page."
+        ),
+        "keywords": ["our history", "shared moments", "remember when", "inside joke", "callback to"],
+        "volunteer": [],
+    },
+    {
         "id": "replies_survive_leaving",
         "requires": [
             "backend/utils/detached_stream.py::def relay",
