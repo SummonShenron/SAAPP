@@ -88,7 +88,7 @@ test('the pose of the loader carries the numbers behind its transform, and the t
     const pose = logoPose(t);
     assert.equal(pose.transform, bodyTransform(pose.body), `at ${t}`);
   }
-  assert.ok(logoPose(250).body.scaleY < 1 && logoPose(430).body.scaleY > 1, 'the crouch and the stretch are in it');
+  assert.ok(logoPose(250).body.scaleY === 1 && logoPose(430).body.scaleY === 1, 'stage 1 holds still: no crouch or stretch in it');
 });
 
 test('the sparkle is drawn from the same path as the think icon, so it can turn into it', () => {

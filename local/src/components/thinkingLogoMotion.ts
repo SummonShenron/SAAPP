@@ -1,11 +1,12 @@
 // The Sonic mark, animated as the "thinking" loader (2026-11-18). One cycle of TEN EQUAL STAGES (STAGE_MS each), then it starts again:
-//   1. the logo crouches, springs up and lands with a squash (the whole mark; it never turns);
-//   2. the logo is still, and the runner goes through it again, the other way (through the trough);
-//   3. the dots break apart into a circle and go round it (two turns);
+//   1. the logo holds still (no bounce) and the runner goes over its crest, pulsing each dot it reaches;
+//   2. the six dots MORPH into a double helix (two strands that twist round each other, three dots on each, the one in the approved preview HelixLogo.tsx) and the runner goes down one strand, across the
+//      gap at the bottom and up the other (the two strands are separate, as in the preview: they are never joined at either end);
+//   3. the helix morphs into a circle, round which the dots go (two turns);
 //   4. the circle unrolls into a straight line, which is held;
 //   5. the line bends into a PIPE (a plumbing pipe: up a leg, over an arch, down the middle, round a U-bend and up the other leg), and the runner goes along it;
 //   6. the pipe becomes an infinity loop (a lying figure eight), and the dots circulate round it once;
-//   7. the dots become a STAR graph (the big dot is the hub, with a spoke to each of the other five);
+//   7. the dots become a STAR graph (the big dot is the hub, with a spoke to each of the other five); the hub pulses as the stage begins and a pulse shoots out from it along all five spokes at once, reaching the five points together as the star settles;
 //   8. then a TREE (the big dot is the root, with two children and three leaves);
 //   9. then a LADDER (two rows of three, joined along the rows and by rungs);
 //  10. the dots fly back into the logo.
@@ -16,12 +17,12 @@
 // components/ThinkingLogo.tsx draws it. Everything starts and ends at rest, so the cycles join on.
 import { LOGO_EDGES, LOGO_NODES } from './logoMarkData.ts';
 
-/** The cycle is ten stages, each the SAME length: the bounce, the runner through the logo, the circle (it breaks apart and goes round), the line, the pipe, the infinity loop, the star, the tree, the ladder, and the return to the logo. Each stage's own coming-in is part of its time. */
+/** The cycle is ten stages, each the SAME length: the logo with its runner, the double helix, the circle (the helix morphs into it and the dots go round), the line, the pipe, the infinity loop, the star, the tree, the ladder, and the return to the logo. Each stage's own coming-in is part of its time. */
 export const STAGE_MS = 1600;
 export const STAGE_COUNT = 10;
 export const LOOP_MS = STAGE_MS * STAGE_COUNT;
 
-// stage 1, the bounce (0 to STAGE_MS), in ms
+// stage 1 used to be a bounce (0 to STAGE_MS), in ms. It no longer bounces: heightScale and liftAt hold the logo still, so these numbers only keep the shape of those functions
 const BOUNCE = (ms: number) => Math.round((ms * STAGE_MS) / 2300);          // the bounce was timed for 2300 ms: these are the same moments, squeezed into one stage
 export const CROUCH_END = BOUNCE(450);      // down into a crouch
 export const LAUNCH_END = BOUNCE(700);      // springs off the ground, stretched tall
@@ -38,7 +39,8 @@ export const TRAIL_FADE_IN_MS = 80; // and a piece fades in over this long as th
 export const RUN_MS = STAGE_MS - TRAIL_HOLD_MS - TRAIL_FADE_MS;
 
 // the stages with the dots apart
-export const MORPH_START = 2 * STAGE_MS;               // the logo breaks apart...
+export const HELIX_END = STAGE_MS + 650;               // stage 2: the dots morph from the logo into the double helix in this long, and the helix is then held until the stage ends
+export const MORPH_START = 2 * STAGE_MS;               // the helix morphs...
 export const BREAK_END = MORPH_START + 550;            // ...into a circle (stage 3)
 export const SPIN_END = 3 * STAGE_MS;                  // ...round which the dots go until the stage ends
 export const UNROLL_END = SPIN_END + 650;              // stage 4: the circle unrolls into a straight line...
@@ -69,6 +71,14 @@ const JUMP = 22;                    // how high it goes, in drawing units
 
 // the shapes the dots take, all centred on the middle of the mark
 export const CIRCLE_RADIUS = 38;
+// the double helix (stage 2): the drawing of HelixLogo.tsx. TWO separate strands, never joined (each stops a little short of the top and the bottom, so the two ends are apart), three dots on each
+export const HELIX_AMP = 16;        // how far each strand swings either side of the middle
+export const HELIX_TURNS = 1.5;     // how many twists from top to bottom
+export const HELIX_TOP = 14;
+export const HELIX_BOTTOM = 97;
+export const HELIX_MARGIN = 0.08;   // each strand starts and stops this far (of the height) in from the top and the bottom
+/** Where the three dots of a strand sit down it (as a share of the helix's height), the first and last at the strand's own ends: as in the preview. */
+export const HELIX_DOT_FRACS: readonly number[] = [0, 0.5, 1].map(k => HELIX_MARGIN + k * (1 - 2 * HELIX_MARGIN));
 export const LINE_FROM_X = 14;      // the line runs from the logo's first dot's x...
 export const LINE_TO_X = 162;       // ...to its last
 export const INFINITY_WIDTH = 66;   // half the width of the infinity loop
@@ -86,21 +96,25 @@ export const PIPE_TIP_Y = 16;       // ...and ends here, high on the right
 /** Slot s of every shape holds dot SLOT_ORDER[s]: the dots in the order they sit round the logo (crest, the two on the right, trough, then the two on the left), so they fly out to the circle without crossing. */
 export const SLOT_ORDER: readonly number[] = [2, 4, 5, 3, 0, 1];
 
-/** The runner's ways through the dots, as dot numbers. Through the logo they follow the mark's own edges: over the crest (dot 2), through the trough (dot 3), and back again, right to left. On the circle, the line and the loop it goes along the shape, slot by slot. */
+/** The runner's ways through the dots, as dot numbers. Through the logo they follow the mark's own edges: over the crest (dot 2), and home again, right to left. On the helix, the circle, the line and the loop it goes along the shape, slot by slot. */
 export const CREST_ROUTE: readonly number[] = [0, 1, 2, 4, 5];
-export const TROUGH_ROUTE: readonly number[] = [0, 1, 3, 4, 5];
 export const HOME_ROUTE: readonly number[] = [5, 4, 2, 1, 0];
-/** The runner's way through each graph shape, along its links and never to a dot it has been to: across the star through its hub, down one side of the tree and up the other, and along the ladder's top, down, and back along its bottom. */
-export const STAR_ROUTE: readonly number[] = [1, 2, 5];
+/** The runner's way through each graph shape, along its links and never to a dot it has been to: down one side of the tree and up the other, and along the ladder's top, down, and back along its bottom. The star has no way through: its run is a BURST (the hub, then all five points at once). */
+export const STAR_BURST: readonly number[] = [2, 4, 5, 3, 0, 1];        // the hub first, then the five points as they sit round it, clockwise from the top: a burst, not a way through
 export const TREE_ROUTE: readonly number[] = [0, 1, 2, 4, 5];
 export const LADDER_ROUTE: readonly number[] = [0, 2, 4, 5, 3, 1];
 /** One run for each stage, starting as the stage does. A run, its trail and its last pop are all over by the time its stage ends, so only one is ever going. */
-export interface Run { start: number; dots: readonly number[] }
-export const RUNS: ReadonlyArray<Run> = [CREST_ROUTE, TROUGH_ROUTE, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, STAR_ROUTE, TREE_ROUTE, LADDER_ROUTE, HOME_ROUTE].map((dots, stage) => ({ start: stage * STAGE_MS, dots }));
+export interface Run {
+  start: number;
+  dots: readonly number[];
+  /** A burst: `dots[0]` is a hub and the rest are reached together, along a line of their own each, instead of one after another. The hub pulses at `start`, the points when the lines reach them (RUN_MS later). */
+  burst?: boolean;
+}
+export const RUNS: ReadonlyArray<Run> = [CREST_ROUTE, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, STAR_BURST, TREE_ROUTE, LADDER_ROUTE, HOME_ROUTE].map((dots, stage): Run => (dots === STAR_BURST ? { start: stage * STAGE_MS, dots, burst: true } : { start: stage * STAGE_MS, dots }));
 /** How many pieces of trail there can be: one for each step of the longest run. */
 export const TRAIL_SLOTS = Math.max(...RUNS.map(run => run.dots.length)) - 1;
 /** When the runner reaches each dot of a run: evenly, from the start of the stage to RUN_MS after it. */
-export const runTimes = (run: Run): number[] => run.dots.map((_, i) => run.start + (RUN_MS * i) / (run.dots.length - 1));
+export const runTimes = (run: Run): number[] => (run.burst ? run.dots.map((_, i) => run.start + (i === 0 ? 0 : RUN_MS)) : run.dots.map((_, i) => run.start + (RUN_MS * i) / (run.dots.length - 1)));
 
 export type Point = readonly [number, number];
 /** A link between two dots, by dot number. */
@@ -112,7 +126,7 @@ export interface RunnerPose { x: number; y: number; opacity: number }
 /** One piece of the dashed trail: a line from one dot of the run towards the next, along whatever the dots are on, as far as the runner has got (or all the way), and how visible it is. */
 export interface TrailPose { points: ReadonlyArray<Point>; opacity: number }
 /** The line through the dots once the logo has broken apart: a circle, a straight line, an infinity loop, or the shape between two of them. */
-export interface CurvePose { points: ReadonlyArray<Point>; opacity: number }
+export interface CurvePose { points: ReadonlyArray<Point>; opacity: number; /** The helix's second strand: a line of its own, there only while the dots are on the helix or leaving it. */ second?: { points: ReadonlyArray<Point>; opacity: number } }
 /** How the whole mark is squashed, stretched and lifted: the numbers behind `transform` (the loader's hand-over to the first step's icon, thinkingLogoBecome.ts, blends them back to rest). */
 export interface Body { lift: number; scaleX: number; scaleY: number }
 export interface LogoPose {
@@ -144,6 +158,7 @@ const roundPoint = (p: Point): Point => [round(p[0]), round(p[1])];
 
 /** How tall the whole mark is at `t` ms into a cycle (1 at rest). */
 export function heightScale(t: number): number {
+  if (t < SETTLE_END) return 1; // stage 1 holds still: no bounce, the comet pulse plays on the logo
   if (t < CROUCH_END) return 1 - (1 - CROUCH_SQUASH) * easeInOut(t / CROUCH_END);
   if (t < LAUNCH_END) return CROUCH_SQUASH + (LAUNCH_STRETCH - CROUCH_SQUASH) * easeOut((t - CROUCH_END) / (LAUNCH_END - CROUCH_END));
   if (t < AIR_END) return LAUNCH_STRETCH + (1.2 - LAUNCH_STRETCH) * easeOut((t - LAUNCH_END) / (AIR_END - LAUNCH_END));
@@ -157,7 +172,7 @@ export function heightScale(t: number): number {
 
 /** How far it is off the ground at `t` (drawing units, up is negative). */
 function liftAt(t: number): number {
-  if (t < LAUNCH_END || t >= AIR_END) return 0;
+  if (t < SETTLE_END || t >= AIR_END) return 0; // no jump during stage 1
   const k = (t - LAUNCH_END) / (AIR_END - LAUNCH_END);
   return -JUMP * 4 * k * (1 - k);
 }
@@ -234,6 +249,30 @@ const LOGO_POINTS: Point[] = LOGO_NODES.map(node => [node[0], node[1]] as const)
 const RESTING_CURVE: Point[] = between(CIRCLE, CIRCLE, 0).curve;
 const LOGO_LINKS: Link[] = LOGO_EDGES.map(([from, to]) => [from, to] as const);
 
+// ---- the double helix: two separate strands -----------------------------------------------------------------------------------------------------------------------------------------------
+
+/** A point of strand `strand` (0, or 1 which is half a turn out of step) at `f` of the helix's height, 0 at the top and 1 at the bottom. */
+export function helixPoint(strand: number, f: number): Point {
+  return [MID_X + HELIX_AMP * Math.sin(2 * Math.PI * HELIX_TURNS * f + strand * Math.PI), HELIX_TOP + f * (HELIX_BOTTOM - HELIX_TOP)];
+}
+/** `k` (0 to 1) of the way down a strand, which runs from HELIX_MARGIN to 1 - HELIX_MARGIN of the height. */
+const helixStrand = (strand: number, k: number): Point => helixPoint(strand, HELIX_MARGIN + k * (1 - 2 * HELIX_MARGIN));
+const helixCurve = (strand: number): Point[] => Array.from({ length: CURVE_SAMPLES + 1 }, (_, i) => helixStrand(strand, i / CURVE_SAMPLES));
+/** Where the six dots are on the helix, each dot's place along its own strand (0 top, 1 bottom) and which strand it is on. Slot s of SLOT_ORDER: the first strand's three going down, then the second strand's three coming back up. */
+const HELIX_HELD = (() => {
+  const dots: Point[] = [];
+  const u: number[] = [];
+  const side: number[] = [];
+  SLOT_ORDER.forEach((dot, slot) => {
+    const strand = slot < 3 ? 0 : 1;
+    const k = slot < 3 ? slot / 2 : (5 - slot) / 2;
+    dots[dot] = helixStrand(strand, k);
+    u[dot] = k;
+    side[dot] = strand;
+  });
+  return { dots, u, side, curve: helixCurve(0), second: helixCurve(1) };
+})();
+
 // ---- the graph shapes: where the six dots go, and which are joined ---------------------------------------------------------------------------------------------------------------------
 
 interface Scene { dots: Point[]; links: Link[] }
@@ -263,18 +302,35 @@ function crossLinks(from: Link[], to: Link[], k: number): { links: Link[]; edgeO
 }
 
 /** `u` is where each dot is along `curve` (0 to 1), or null when the dots are not on it: at home in the logo, or flying out to the circle and back. */
-interface Layout { dots: Point[]; curve: Point[]; u: number[] | null; links: Link[]; curveOpacity: number; edgeOpacity: number }
+interface Layout {
+  dots: Point[]; curve: Point[]; u: number[] | null; links: Link[]; curveOpacity: number; edgeOpacity: number;
+  /** The helix's second strand and how visible it is, and which strand each dot is on (`u` is then along its own strand): only while the dots are on the helix or leaving it. */
+  second?: Point[]; secondOpacity?: number; side?: number[];
+}
 
-/** Where the six dots are, and what the links and the line through them are doing, `t` ms into the cycle. The logo itself until it breaks apart, and again once the dots are back. */
+/** Where the six dots are, and what the links and the line through them are doing, `t` ms into the cycle. The logo itself in stage 1, then the helix, the circle and the rest, and the logo again once the dots are back. */
 function layoutAt(t: number): Layout {
-  if (t < MORPH_START || t >= RETURN_END) return { dots: LOGO_POINTS, curve: RESTING_CURVE, u: null, links: LOGO_LINKS, curveOpacity: 0, edgeOpacity: 1 };
+  if (t < STAGE_MS || t >= RETURN_END) return { dots: LOGO_POINTS, curve: RESTING_CURVE, u: null, links: LOGO_LINKS, curveOpacity: 0, edgeOpacity: 1 };
   const onShape = (shape: Shaped): Layout => ({ dots: shape.dots, curve: shape.curve, u: shape.u, links: LOGO_LINKS, curveOpacity: 1, edgeOpacity: 0 });
-  if (t < BREAK_END) {
-    // break apart: the dots fly out to the circle (overshooting it a little), the logo's lines fade at once, and the circle's line fades in as they get there
-    const k = (t - MORPH_START) / (BREAK_END - MORPH_START);
-    const circle = between(CIRCLE, CIRCLE, 0);
+  if (t < MORPH_START) {
+    // stage 2: the dots fly from the logo onto the two strands of the helix (overshooting a little, like the other shapes), the logo's lines fade at once and the strands fade in as they get there; then the helix is held
+    const helix = HELIX_HELD;
+    const held: Layout = { dots: helix.dots, curve: helix.curve, second: helix.second, secondOpacity: 1, side: helix.side, u: helix.u, links: LOGO_LINKS, curveOpacity: 1, edgeOpacity: 0 };
+    if (t >= HELIX_END) return held;
+    const k = (t - STAGE_MS) / (HELIX_END - STAGE_MS);
     const e = easeOutBack(k);
-    return { dots: circle.dots.map((point, dot) => lerpPoint(LOGO_POINTS[dot], point, e)), curve: circle.curve, u: null, links: LOGO_LINKS, curveOpacity: clamp01((k - 0.4) / 0.6), edgeOpacity: 1 - clamp01(k / 0.35) };
+    const fade = clamp01((k - 0.4) / 0.6);
+    return { dots: helix.dots.map((point, dot) => lerpPoint(LOGO_POINTS[dot], point, e)), curve: helix.curve, second: helix.second, secondOpacity: fade, u: null, links: LOGO_LINKS, curveOpacity: fade, edgeOpacity: 1 - clamp01(k / 0.35) };
+  }
+  if (t < BREAK_END) {
+    // stage 3: the helix morphs into the circle: the dots go to their places on it, the first strand bends round into the ring and the second fades away as they leave it, so nothing pops
+    const k = easeInOut((t - MORPH_START) / (BREAK_END - MORPH_START));
+    const circle = between(CIRCLE, CIRCLE, 0);
+    return {
+      dots: HELIX_HELD.dots.map((point, dot) => lerpPoint(point, circle.dots[dot], k)),
+      curve: HELIX_HELD.curve.map((point, i) => lerpPoint(point, circle.curve[i], k)),
+      second: HELIX_HELD.second, secondOpacity: 1 - k, u: null, links: LOGO_LINKS, curveOpacity: 1, edgeOpacity: 0,
+    };
   }
   if (t < SPIN_END) {
     const spin = SPIN_TURNS * easeInOut((t - BREAK_END) / (SPIN_END - BREAK_END));
@@ -324,9 +380,11 @@ function hopPath(layout: Layout, a: number, b: number, k: number): Point[] {
   const from = layout.dots[a];
   const to = layout.dots[b];
   if (!layout.u || k <= 0) return [from, lerpPoint(from, to, k)];
+  if (layout.side && layout.side[a] !== layout.side[b]) return [from, lerpPoint(from, to, k)];       // from one strand of the helix to the other: straight across, there is no line between them
+  const curve = layout.side && layout.side[a] === 1 && layout.second ? layout.second : layout.curve;
   const steps = Math.max(1, Math.ceil(8 * k));
   const path: Point[] = [from];
-  for (let i = 1; i <= steps; i += 1) path.push(i === steps && k >= 1 ? to : pointAlong(layout.curve, lerp(layout.u[a], layout.u[b], (k * i) / steps)));
+  for (let i = 1; i <= steps; i += 1) path.push(i === steps && k >= 1 ? to : pointAlong(curve, lerp(layout.u[a], layout.u[b], (k * i) / steps)));
   return path;
 }
 
@@ -344,6 +402,7 @@ function runnerAt(t: number, run: Run, layout: Layout): RunnerPose {
   const times = runTimes(run);
   const end = times[times.length - 1];
   const first = layout.dots[run.dots[0]];
+  if (run.burst) return { x: round(first[0]), y: round(first[1]), opacity: 0 };       // a burst is the lines shooting out from the hub: there is no single runner
   if (t < run.start || t > end + 250) return { x: round(first[0]), y: round(first[1]), opacity: 0 };
   if (t >= end) {
     const last = layout.dots[run.dots[run.dots.length - 1]];
@@ -364,6 +423,14 @@ function runnerAt(t: number, run: Run, layout: Layout): RunnerPose {
 function trailAt(t: number, run: Run, layout: Layout): TrailPose[] {
   const times = runTimes(run);
   const end = times[times.length - 1];
+  if (run.burst) {
+    // a line shoots from the hub to each point, all together; they stay a moment and fade together once they have arrived
+    return Array.from({ length: TRAIL_SLOTS }, (_, segment) => {
+      if (segment >= run.dots.length - 1) return { points: [[0, 0], [0, 0]] as Point[], opacity: 0 };
+      const path = hopPath(layout, run.dots[0], run.dots[segment + 1], along(t, [times[0], end], 0));
+      return { points: path.map(roundPoint), opacity: round(Math.min(clamp01((t - times[0]) / TRAIL_FADE_IN_MS), 1 - clamp01((t - (end + TRAIL_HOLD_MS)) / TRAIL_FADE_MS))) };
+    });
+  }
   return Array.from({ length: TRAIL_SLOTS }, (_, segment) => {
     if (segment >= run.dots.length - 1) return { points: [[0, 0], [0, 0]] as Point[], opacity: 0 };
     const from = layout.dots[run.dots[segment]];
@@ -413,7 +480,7 @@ export function logoPose(t: number): LogoPose {
     dots,
     links: Array.from({ length: LINK_SLOTS }, (_, slot) => layout.links[slot] ?? null),
     edgeOpacity: round(layout.edgeOpacity),
-    curve: { points: layout.curve.map(roundPoint), opacity: round(layout.curveOpacity) },
+    curve: { points: layout.curve.map(roundPoint), opacity: round(layout.curveOpacity), ...(layout.second ? { second: { points: layout.second.map(roundPoint), opacity: round(layout.secondOpacity ?? 0) } } : {}) },
     runner: runnerAt(at, run, layout),
     trail: trailAt(at, run, layout),
   };

@@ -97,7 +97,7 @@ def test_the_native_loop_records_what_it_read_and_it_becomes_counters_for_the_tu
     turn = llm_turns.begin("jack")
     asyncio.run(native_loop.run(llm=ScriptedLLM(replies), tools=[{"name": n} for n in ("list_repo_tree", "find_file", "search_literal", "read_repo_file", "propose_local_edits")], act=act, question="fix it", max_steps=12))
     assert turn.reading == {"files_read": 2, "edited_and_read": 1, "files_edited": 1, "rereads": 0, "searches": 1, "empty_searches": 1, "tree_listings": 1, "find_files": 1, "applied": 1,
-                            "top_reads": 2, "window_reads": 0, "orient_shown": 0, "orient_first_read_in_block": 0, "orient_rank": 0, "opening": "tree"}
+                            "top_reads": 2, "window_reads": 0, "multi_reads": 0, "orient_shown": 0, "orient_first_read_in_block": 0, "orient_rank": 0, "opening": "tree"}
     for name in ("list_repo_tree", "search_literal", "find_file", "read_repo_file", "read_repo_file", "propose_local_edits"):
         llm_turns.note_tool_call(name, True)                       # the tool agent's dispatcher counts each call by name; the loop itself does not
     counts = {}

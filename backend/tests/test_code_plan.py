@@ -769,9 +769,62 @@ def test_prefetch_is_cut_by_file_and_by_total_and_says_so(monkeypatch):
     monkeypatch.setattr(cp, "PREFETCH_TOTAL_CHARS", cp.PREFETCH_FILE_CHARS + 1000)
     plan = _approved()
     plan["steps"][0]["status"] = "done"
-    big = {"local/src/pages/Chat.tsx": "x" * (cp.PREFETCH_FILE_CHARS + 500), "local/src/chatPreferences.ts": "y" * (cp.PREFETCH_TOTAL_CHARS)}
+    whole = {"local/src/pages/Chat.tsx": "x" * cp.PREFETCH_FILE_CHARS, "local/src/chatPreferences.ts": "y" * 2000}      # each fits by itself; together they are over the total
+    block = cp.files_block(plan, whole.get)
+    assert "x" * cp.PREFETCH_FILE_CHARS in block and "--- local/src/chatPreferences.ts: not included here (2000 characters)" in block and "y" * 50 not in block
+    big = {"local/src/pages/Chat.tsx": "x" * (cp.PREFETCH_FILE_CHARS + 500), "local/src/chatPreferences.ts": "prefs body"}
     block = cp.files_block(plan, big.get)
-    assert "[cut: the first" in block and "not included here" in block
+    assert "[NOT SHOWN: it has 1 lines" in block and "x" * 200 not in block and "prefs body" in block       # too big for one file: a map, never its first characters (2026-11-27)
+
+
+def _big_module():
+    lines = ["import os", "import re"] + [f"SETTING_{i} = {i}" for i in range(400)]                        # the top: imports and setup, well over what a prefetch shows
+    lines += ["", "def unrelated(value):", "    return value", ""] + [f"# filler {i}" for i in range(300)]
+    lines += ["async def _counted_act(decision):", "    name = decision['tool_action']", "    return await _act(decision)", ""] + [f"# more filler {i}" for i in range(300)]
+    lines += ["def last_one():", "    return _counted_act"]
+    return "\n".join(lines)
+
+
+def test_a_big_file_is_shown_as_the_parts_that_hold_the_steps_words_not_as_its_top():
+    # 2026-11-27: the first 12,000 characters were shown, which for a big file is the imports; the function the step changes was never in it.
+    text = _big_module()
+    assert len(text) > cp.PREFETCH_FILE_CHARS
+    plan = _approved()
+    plan["steps"][0]["status"] = "done"
+    plan["steps"][1]["text"] = "Add a branch for the new tool in _counted_act"
+    block = cp.files_block(plan, {"local/src/pages/Chat.tsx": text, "local/src/chatPreferences.ts": "prefs body"}.get)
+    at = text.splitlines().index("async def _counted_act(decision):") + 1
+    assert "--- local/src/pages/Chat.tsx [IN PARTS: it has" in block and "async def _counted_act(decision):\n    name = decision['tool_action']" in block
+    assert f"lines {at - cp.PREFETCH_LINES_BEFORE}-{at + cp.PREFETCH_LINES_AFTER} of local/src/pages/Chat.tsx:" in block
+    assert "SETTING_5 = 5" not in block and "[cut: the first" not in block                                 # the top is not what is shown
+    assert "--- local/src/chatPreferences.ts\nprefs body" in block                                        # a small file is still shown whole
+
+
+def test_the_line_that_defines_a_name_comes_before_its_uses_and_parts_that_meet_are_merged():
+    text = _big_module()
+    lines = text.splitlines()
+    at = lines.index("async def _counted_act(decision):") + 1
+    first, last = at - cp.PREFETCH_LINES_BEFORE, at + cp.PREFETCH_LINES_AFTER
+    room = sum(len(line) + 1 for line in lines[first - 1:last])              # room for exactly the part around the definition: the use in last_one() is earlier in no order, so it is left out
+    assert cp.step_windows(text, ["_counted_act"], room) == [(first, last)]
+    assert cp.step_windows(text, ["_counted_act"], room - 1) == [(len(lines) - cp.PREFETCH_LINES_BEFORE, len(lines))]      # too little room for it: only the small part around the use fits
+    both = cp.step_windows(text, ["_counted_act", "unrelated"], 100000)
+    assert any(first <= lines.index("def unrelated(value):") + 1 <= last for first, last in both) and any(first <= at <= last for first, last in both)
+    assert all(a_last + 1 < b_first for (_, a_last), (b_first, _) in zip(both, both[1:]))                 # in file order, and none touching: those were merged
+    assert (at - 10 - cp.PREFETCH_LINES_BEFORE, last) in cp.step_windows(text, ["_counted_act", "filler 290"], 100000)      # "# filler 290" is ten lines above the definition: its part runs into the definition's, so they are one
+    assert cp.step_windows(text, ["UNRELATED"], 100000) and cp.step_windows(text, ["_Counted_Act"], 100000) == []            # a plain word matches in any case; a name only exactly
+    assert cp.step_windows(text, ["filler"], 100000) == []                 # a plain word on hundreds of lines says nothing about where
+    assert cp.step_windows(text, ["nowhere_to_be_found"], 100000) == []
+
+
+def test_a_big_file_with_none_of_the_steps_words_is_shown_as_a_map_of_where_things_are():
+    plan = _approved()
+    plan["steps"][0]["status"] = "done"
+    plan["steps"][1]["text"] = "Wire the zebra crossing"
+    plan["files"] = [{**f, "why": ""} for f in plan["files"]]
+    block = cp.files_block(plan, {"local/src/pages/Chat.tsx": _big_module()}.get)
+    assert "[NOT SHOWN: it has 1012 lines" in block and "Where things are in local/src/pages/Chat.tsx:\n  line 3: SETTING_0 = 0" in block
+    assert "name = decision['tool_action']" not in block and "import os" not in block           # a map with line numbers: no body, and not the imports
 
 
 def test_nothing_is_read_for_a_plan_that_is_not_approved_or_finished():

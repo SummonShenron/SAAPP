@@ -1669,6 +1669,49 @@ CHANGELOG = [
         "volunteer": [],
     },
     {
+        "id": "corrections_make_the_change",
+        "requires": [
+            "backend/utils/agent_utils.py::def corrects_recent_change",
+            "backend/utils/handback_check.py::def may_send_back",
+            "backend/utils/claim_check.py::def drop_write_denials",
+        ],
+        "month": "2026-11",
+        "title": "Corrections to my code go straight into the change",
+        "line": (
+            "When you correct a change I just made (\"no, it should morph, not fade\"), I now treat that as the next change to make, and I keep going in the same turn until the whole request is done instead of stopping halfway."
+        ),
+        "keywords": ["correction", "stops halfway", "stopped mid edit", "steps left", "keeps stopping", "finish the change", "it should", "didn't work"],
+        "volunteer": [],
+    },
+    {
+        "id": "check_after_apply",
+        "requires": [
+            "backend/utils/after_edit_check.py::def pick",
+            "backend/utils/runner_jobs.py::after_edit_auto",
+        ],
+        "month": "2026-11",
+        "title": "I check a change right after you apply it",
+        "line": (
+            "Right after you apply a change I made, I run the one check of yours that fits it (its own tests, or the type check) and fix what it finds in the same turn. Turn on \"Check my changes right after I apply them\" for your runner and it runs without a click."
+        ),
+        "keywords": ["check after apply", "run the tests after", "type check after", "verify my change", "check my changes", "after edit check"],
+        "volunteer": [],
+    },
+    {
+        "id": "multi_range_reads",
+        "requires": [
+            "backend/utils/multi_read.py::def render",
+            "backend/services/agent_workflow.py::multi_read.parse",
+        ],
+        "month": "2026-11",
+        "title": "I read several places in one step",
+        "line": (
+            "I can now read several parts of a file, or of several files, in one step instead of one step each, so a change that spans files gets to the edit sooner and costs less."
+        ),
+        "keywords": ["several places", "read faster", "too many steps", "reads too much", "multiple files at once", "ranges"],
+        "volunteer": [],
+    },
+    {
         "id": "voice_examples",
         "requires": [
             "backend/utils/voice_examples.py::def select",

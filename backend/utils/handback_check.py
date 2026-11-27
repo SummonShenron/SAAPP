@@ -48,13 +48,37 @@ _UNFINISHED_RE = re.compile(
     r"\b(?:not (?:fully |yet |quite |completely )?(?:wired(?: up)?|hooked up|connected|finished|done|complete|implemented|live)"
     r"|isn't (?:wired|hooked up|connected|finished|done|complete)|aren't (?:wired|hooked up|finished|done)"
     r"|(?:is|are) still (?:open|missing|to do|unfinished)|what (?:still )?needs to be (?:finished|done|wired|added)|what's (?:still )?left"
-    r"|(?:still )?needs? to be (?:wired|hooked up|finished|done|added|updated)|remaining (?:work|steps|pieces)|(?:laid|built|put in) (?:the )?foundation)\b",
+    r"|(?:still )?needs? to be (?:wired|hooked up|finished|done|added|updated)|remaining (?:work|steps|pieces)|(?:laid|built|put in) (?:the )?foundation"
+    # 2026-11-27, the loader session: "The morph still isn't wired into ThinkingLogo.tsx ... I can't make that edit from this reply, so it needs a new request." with 13 steps left. A turn can always make another edit.
+    r"|(?:needs?|requires?|in) (?:a |another |the next )?(?:new|separate|another|next|fresh) (?:request|reply|turn|message)|send (?:the request|it) again"
+    r"|still (?:isn'?t|is not|aren'?t|are not|hasn'?t|has not|doesn'?t|does not) (?:wired|hooked|connected|routed|done|finished|used|shown|drawn))\b",
     re.IGNORECASE,
 )
 _PROMISE_RE = re.compile(
-    r"\b(?:i'?ll|i will|i'm going to|i am going to|next,? i(?:'ll| will)|let me) (?:now |next |then |go ahead and )?(?:read|wire|hook|finish|continue|add|update|write|look|check|run|implement|make|fix|trace|search|open)\b",
+    r"\b(?:i'?ll|i will|i'm going to|i am going to|next,? i(?:'ll| will)|let me) (?:now |next |then |go ahead and )?(?:read|wire|hook|finish|continue|add|update|write|look|check|run|implement|make|fix|trace|search|open)\b"
+    r"|\b(?:my next step is|the next (?:change|step|edit) is|next step:|what'?s left is)\b",
     re.IGNORECASE,
 )
+# How many times one turn's answer may be sent back for handing work back. The first version sent it back once, and Haiku handed it back again with 13 steps left (2026-11-27): each further send-back is one cheap call,
+# and the steps were there. "unfinished" and "offer" may repeat up to this many times while steps remain; the other kinds stay at one.
+MAX_REPEATS = 3
+REPEATABLE = ("unfinished", "offer")
+
+
+def may_send_back(sent: dict, which: str) -> bool:
+    """Whether a hand-back of kind `which` may be sent back again this turn. `sent` is the loop's {"handback_<kind>": count}. Pure."""
+    total = sum(int(sent.get(f"handback_{k}", 0) or 0) for k in KINDS)
+    if which in REPEATABLE:
+        return total < MAX_REPEATS
+    return total == 0
+
+
+def repeat_note(times_before: int) -> str:
+    """Added to the notice on a repeat send-back: it said the same thing again. Pure."""
+    if times_before <= 0:
+        return ""
+    return (f" This is send-back number {times_before + 1}: you have already been told this {times_before} time{'s' if times_before != 1 else ''} this turn. You CAN make another edit in this same turn: "
+            "there is no need for a new request. Read the one thing you still need (if any) and call propose_local_edits now.")
 _CHECK_CALL_PREFIXES = ("run_local_check(", "run_local_command(", "run_sandbox_tests(")
 _FAILED_RE = re.compile(r"^LOCAL (?:CHECK|COMMAND)\b[^\n]*\bFAILED \(exit code", re.IGNORECASE)
 

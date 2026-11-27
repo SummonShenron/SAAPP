@@ -175,11 +175,28 @@ def test_a_tool_that_raises_becomes_an_error_result_and_the_run_carries_on():
 
 def test_results_that_are_not_text_are_turned_into_text_and_long_ones_are_cut_for_the_model_but_kept_in_full_for_the_receipt():
     big = "x" * (nl.MAX_OBSERVATION_CHARS + 500)
-    llm = ToolLLM(asks(call("search_code", {"query": "a"}), call("read_repo_file", {"path": "p"})), answers("ok"))
-    result = go(llm, Acts({"search_code": [{"title": "t"}], "read_repo_file": big}))
+    llm = ToolLLM(asks(call("search_code", {"query": "a"}), call("check_deploy_status", {"service": "p"})), answers("ok"))       # not a file read: that has its own limit (the next test)
+    result = go(llm, Acts({"search_code": [{"title": "t"}], "check_deploy_status": big}))
     assert result["attempts"][0]["observation"] == '[{"title": "t"}]' and result["attempts"][1]["observation"] == big
     sent = [m for m in llm.calls[1][0] if isinstance(m, ToolMessage)]
     assert sent[0].content == '[{"title": "t"}]' and len(sent[1].content) < len(big) and "truncated: 500 more characters" in sent[1].content
+
+
+def test_a_file_read_is_sent_whole_up_to_what_the_read_tool_allows_and_past_that_is_cut_after_a_whole_line():
+    # 2026-11-27: every result was cut at 6,000 characters, so a read the tool allowed (24,000) arrived as its first quarter under a header naming all of it.
+    from backend.utils import multi_read
+    assert nl.READ_OBSERVATION_CHARS >= multi_read.MAX_CHARS + 1000 and nl.result_limit("read_repo_file") == nl.READ_OBSERVATION_CHARS and nl.result_limit("search_code") == nl.MAX_OBSERVATION_CHARS
+    allowed = "\n".join("r" * 99 for _ in range(multi_read.MAX_CHARS // 100))            # as much as one read may show
+    llm = ToolLLM(asks(call("read_repo_file", {"path": "p"})), answers("ok"))
+    go(llm, Acts({"read_repo_file": allowed}))
+    assert [m for m in llm.calls[1][0] if isinstance(m, ToolMessage)][0].content == allowed
+    too_much = "\n".join("r" * 99 for _ in range(400))                                    # 40,000 characters: more than any read returns, so only the backstop sees it
+    llm = ToolLLM(asks(call("read_repo_file", {"path": "q"})), answers("ok"))
+    go(llm, Acts({"read_repo_file": too_much}))
+    sent = [m for m in llm.calls[1][0] if isinstance(m, ToolMessage)][0].content
+    body, note = sent.split("\n... [CUT HERE: ")
+    assert len(body) <= nl.READ_OBSERVATION_CHARS and set(body.split("\n")) == {"r" * 99} and "were NOT read" in note
+    assert note.startswith(f"{len(too_much) - len(body)} more characters")
 
 
 # ---- it cannot run away -----------------------------------------------------------------------------------------------------------------
@@ -378,7 +395,7 @@ def test_declarations_come_from_the_live_menu_for_tools_the_engine_can_handle_on
     assert [d["name"] for d in decls] == ["list_repo_tree", "read_repo_file", "check_deploy_status", "list_app_incidents", "propose_local_edits", "browser_navigate"]          # browser_navigate has a native schema now; propose_code_plan and some_future_tool still do not
     read = decls[1]
     assert read["description"] == "args: path (relative file path), start_line (optional); shows the file"          # whitespace collapsed
-    assert read["parameters"]["required"] == ["path"] and set(read["parameters"]["properties"]) == {"path", "start_line", "line_count"}
+    assert read["parameters"]["required"] == ["path"] and set(read["parameters"]["properties"]) == {"path", "start_line", "line_count", "ranges"}
     assert "parameters" not in decls[0] and "parameters" not in decls[2]                                          # no-argument tools have none
 
 

@@ -51,6 +51,7 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
   const edgesRef = useRef<SVGGElement>(null);
   const edgeRefs = useRef<Array<SVGLineElement | null>>([]);
   const curveRef = useRef<SVGPathElement>(null);
+  const curve2Ref = useRef<SVGPathElement>(null);
   const dotRefs = useRef<Array<SVGEllipseElement | null>>([]);
   const ringRefs = useRef<Array<SVGCircleElement | null>>([]);
   const trailRefs = useRef<Array<SVGGElement | null>>([]);
@@ -75,6 +76,9 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
       }
       curveRef.current?.setAttribute('opacity', String(pose.curve.opacity));
       if (pose.curve.opacity > 0) curveRef.current?.setAttribute('d', pathOf(pose.curve.points));
+      // a second, separate line: the other strand of the double helix, there only while the dots are on it or leaving it
+      curve2Ref.current?.setAttribute('opacity', String(pose.curve.second?.opacity ?? 0));
+      if (pose.curve.second && pose.curve.second.opacity > 0) curve2Ref.current?.setAttribute('d', pathOf(pose.curve.second.points));
       LOGO_NODES.forEach(([, , radius], index) => {
         const dot = pose.dots[index];
         const body = dotRefs.current[index];
@@ -108,7 +112,7 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
     // the hand-over to the first step's icon: the dots gather and a sparkle forms and travels (thinkingLogoBecome.ts), drawn through the same `apply`
     const applyBecoming = (b: NonNullable<typeof becoming.current>, now: number) => {
       const pose = becomePose(b.from, (now - b.start) / b.total, b.target);
-      apply({ ...b.from, transform: pose.transform, body: pose.body, dots: pose.dots, edgeOpacity: pose.edgeOpacity, curve: { points: b.from.curve.points, opacity: pose.curveOpacity }, trail: pose.trail, runner: { ...b.from.runner, opacity: pose.runnerOpacity } }, pose.dotsOpacity);
+      apply({ ...b.from, transform: pose.transform, body: pose.body, dots: pose.dots, edgeOpacity: pose.edgeOpacity, curve: { points: b.from.curve.points, opacity: pose.curveOpacity, ...(b.from.curve.second ? { second: { points: b.from.curve.second.points, opacity: b.from.curve.second.opacity * (pose.curveOpacity / Math.max(b.from.curve.opacity, 1e-6)) } } : {}) }, trail: pose.trail, runner: { ...b.from.runner, opacity: pose.runnerOpacity } }, pose.dotsOpacity);
       glyphRef.current?.setAttribute('opacity', String(pose.glyph.opacity));
       glyphRef.current?.setAttribute('transform', `translate(${pose.glyph.x} ${pose.glyph.y}) scale(${pose.glyph.size / GLYPH_BOX}) translate(${-GLYPH_BOX / 2} ${-GLYPH_BOX / 2})`);
     };
@@ -167,8 +171,9 @@ const ThinkingLogo: React.FC<Props> = ({ size = 48, reducedMotion, leaving = fal
             <line key={index} ref={element => { edgeRefs.current[index] = element; }} x1={LOGO_NODES[from][0]} y1={LOGO_NODES[from][1]} x2={LOGO_NODES[to][0]} y2={LOGO_NODES[to][1]} stroke="currentColor" strokeWidth={LOGO_STROKE * LINE_BOOST} />
           ))}
         </g>
-        {/* the line through the dots once the logo has broken apart: a circle, a straight line, an infinity loop */}
+        {/* the line through the dots once the logo has broken apart: a double helix's first strand, a circle, a straight line, an infinity loop; and the helix's other strand, a line of its own */}
         <path ref={curveRef} d="" fill="none" stroke="currentColor" strokeWidth={LOGO_STROKE * LINE_BOOST} strokeLinejoin="round" strokeLinecap="round" opacity="0" />
+        <path ref={curve2Ref} d="" fill="none" stroke="currentColor" strokeWidth={LOGO_STROKE * LINE_BOOST} strokeLinejoin="round" strokeLinecap="round" opacity="0" />
         {/* the trail: dashes in the accent, with a bright thin core, so they show over a solid line as well as over the empty page */}
         {SLOTS.map(slot => (
           <g key={`trail-${slot}`} ref={element => { trailRefs.current[slot] = element; }} opacity="0">

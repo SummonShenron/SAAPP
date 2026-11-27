@@ -821,6 +821,13 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
     question = request.question.strip()
     session_id = request.session_id.strip() if request.session_id else f"{username}_session"
     history_key = f"{username}::{session_id}"
+    if steering.is_running(history_key) and steering.abandon_wait(history_key):
+        # The last turn is blocked on a card or a check waiting for the person's answer, and they have sent a new message instead: they moved on, so that wait ends (nothing is applied)
+        # and the turn finishes. Give it a moment to save, so the new message does not have to be sent twice.
+        for _abandon_poll in range(50):
+            if not steering.is_running(history_key):
+                break
+            await asyncio.sleep(0.1)
     if steering.is_running(history_key):
         # The last turn of this conversation is still finishing (the browser may have gone away and come back): a second one would write into the same transcript.
         raise HTTPException(status_code=409, detail="Sonic is still finishing the last reply in this conversation. It will show here when it's done.")
@@ -2125,6 +2132,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if claim_check.claims_edit(full_response) and not claim_check.edit_made(llm_turn.tools):
                     full_response = f"{full_response}\n\n{claim_check.NO_EDIT_NOTE}"                    # it says it changed something and nothing was proposed this turn: said plainly, in code
                     tally(turn_counts, "claim_edit_unbacked")
+            if int((getattr(llm_turn, "rhythm", None) or {}).get("applies", 0) or 0) > 0:
+                # The person applied an edit this turn: a sentence saying nothing was written is false, and is taken out by code (backend/utils/claim_check.py drop_write_denials).
+                full_response, denials_dropped = claim_check.drop_write_denials(full_response)
+                if denials_dropped:
+                    tally(turn_counts, "claim_denial_dropped")
             placed_own = bool(step_back_entry)          # at most one piece of Sonic's own material is placed by code per reply, and none beside a step-back question: a shape story, else a record case, else a relatable line (backend/utils/placement.py)
             if llm_turn.shape_offered and shape_stories_utils.mode() == "insert" and not safety_plan.active:
                 # The approved shape sentence is placed in the reply by code, word for word, after its first paragraph (backend/utils/shape_stories.py insert_story): asking the model to say it got it said in 1 reply of 20 (blind test 2026-11-14).

@@ -6,10 +6,10 @@ import { test } from 'node:test';
 import {
   AIR_END, BREAK_END, CIRCLE_RADIUS, CREST_ROUTE, CROUCH_END, CROUCH_SQUASH, FLOW_END, HOLD_END, HOME_ROUTE, IMPACT_END, INFINITY_END, INFINITY_HEIGHT, INFINITY_WIDTH, LAUNCH_END, LAUNCH_STRETCH, LAND_SQUASH,
   LINE_FROM_X, LINE_TO_X, LOOP_MS, MORPH_START, POP_MS, PULSES, RETURN_END, RING_MS, RUNS, RUN_MS, SETTLE_END, SLOT_ORDER, SPIN_END, SPIN_TURNS, STAGE_COUNT, STAGE_MS, TRAIL_FADE_MS, TRAIL_HOLD_MS, TRAIL_SLOTS,
-  TROUGH_ROUTE, UNROLL_END, heightScale, logoPose, poseAt, runTimes, widthFor, RESTING_POSE,
+  HELIX_AMP, HELIX_BOTTOM, HELIX_DOT_FRACS, HELIX_END, HELIX_MARGIN, helixPoint, HELIX_TOP, HELIX_TURNS, UNROLL_END, heightScale, logoPose, poseAt, runTimes, widthFor, RESTING_POSE,
 } from './thinkingLogoMotion.ts';
 import {
-  LADDER_END, LADDER_ROUTE, LADDER_START, LINK_SLOTS, LOGO_SCENE, RETURN_START, SCENES, STAR_END, STAR_RADIUS, STAR_ROUTE, TREE_END, TREE_ROUTE, TREE_START,
+  LADDER_END, LADDER_ROUTE, LADDER_START, LINK_SLOTS, LOGO_SCENE, RETURN_START, SCENES, STAR_END, STAR_RADIUS, STAR_BURST, TREE_END, TREE_ROUTE, TREE_START,
   GRAPH_MOVE_MS, PIPE_ARCH_Y, PIPE_BASE_Y, PIPE_END, PIPE_FOOT_Y, PIPE_LEFT_X, PIPE_MID_X, PIPE_RADIUS, PIPE_RIGHT_X, PIPE_TIP_Y, PIPE_HOLD_END, LOOP_PHASE,
 } from './thinkingLogoMotion.ts';
 import { LOGO_EDGES, LOGO_NODES } from './logoMarkData.ts';
@@ -43,11 +43,16 @@ test('the cycle is ten equal stages, each with a run of its own that starts with
     assert.ok(Math.abs(times[times.length - 1] + TRAIL_HOLD_MS + TRAIL_FADE_MS - (stage + 1) * STAGE_MS) < 1e-6, `run ${stage + 1} and its trail are over when its stage ends`);
     assert.ok(Math.abs(times[times.length - 1] - run.start - RUN_MS) < 1e-6);
     assert.ok(times[times.length - 1] + POP_MS <= (stage + 1) * STAGE_MS + 1e-6, 'and its last pop');
-    times.slice(1).forEach((time, i) => assert.ok(time > times[i], 'in order'));
+    if (run.burst) {
+      assert.ok(times[1] > times[0] && times.slice(2).every(time => time === times[1]), 'a burst: the hub first, then all the points together');
+    } else {
+      times.slice(1).forEach((time, i) => assert.ok(time > times[i], 'in order'));
+    }
   });
   // where each stage's own showing ends: the bounce has settled, the runner has gone through the logo, the circle has been gone round, the line held, the pipe held, the loop gone round, the star, the tree and the ladder held, the logo is home
   [SETTLE_END, STAGE_MS * 2, SPIN_END, HOLD_END, PIPE_HOLD_END, FLOW_END, TREE_START, LADDER_START, RETURN_START, LOOP_MS].forEach((end, i) => assert.equal(end, (i + 1) * STAGE_MS, `stage ${i + 1}`));
-  assert.ok(at(MORPH_START + 1).edgeOpacity < 1 && at(SPIN_END - 1).curve.opacity === 1 && at(SPIN_END - 1).edgeOpacity === 0, 'stage 3: the circle');
+  assert.ok(at(STAGE_MS + 1).edgeOpacity > 0.9 && at(HELIX_END).edgeOpacity === 0 && at(HELIX_END).curve.opacity === 1 && at(MORPH_START - 1).curve.opacity === 1 && at(MORPH_START - 1).edgeOpacity === 0, 'stage 2: the logo\'s lines let go and the helix is there, held to the end of its stage');
+  assert.ok(at(MORPH_START + 1).edgeOpacity === 0 && at(SPIN_END - 1).curve.opacity === 1 && at(SPIN_END - 1).edgeOpacity === 0, 'stage 3: the circle');
   assert.ok(at(SPIN_END + 1).curve.opacity === 1 && at(HOLD_END - 1).curve.opacity === 1, 'stage 4: the line');
   assert.ok(at(HOLD_END + 1).curve.opacity === 1 && at(PIPE_HOLD_END - 1).curve.opacity === 1 && at(PIPE_HOLD_END - 1).edgeOpacity === 0, 'stage 5: the pipe, a line and no links, held to the end of its stage');
   assert.ok(at(PIPE_HOLD_END + 1).curve.opacity === 1 && at(FLOW_END - 1).curve.opacity === 1, 'stage 6: the loop');
@@ -55,16 +60,17 @@ test('the cycle is ten equal stages, each with a run of its own that starts with
   assert.deepEqual(linkSet(at(LADDER_START - 1)), setOf(SCENES.tree.links), 'stage 8: the tree');
   assert.deepEqual(linkSet(at(RETURN_START - 1)), setOf(SCENES.ladder.links), 'stage 9: the ladder');
   assert.ok(at(RETURN_START + 1).edgeOpacity > 0.9 && at(LOOP_MS - 1).curve.opacity === 0 && at(LOOP_MS - 1).edgeOpacity === 1 && at(LOOP_MS - 1).links.length === LINK_SLOTS, 'stage 10: back to the logo');
-  assert.ok(heightScale(SETTLE_END - 100) !== 1 && heightScale(SETTLE_END) === 1, 'stage 1: the bounce is still settling until its stage ends');
+  assert.ok(heightScale(SETTLE_END - 100) === 1 && heightScale(SETTLE_END) === 1, 'stage 1: the logo holds still until its stage ends');
 });
 
-test('through the logo the runner follows the mark\'s own edges (over the crest, through the trough, and home again right to left); on the other shapes it goes slot by slot along them', () => {
+test('through the logo the runner follows the mark\'s own edges (over the crest, and home again right to left); on the other shapes it goes slot by slot along them', () => {
   const edge = (a, b) => LOGO_EDGES.some(([from, to]) => (from === a && to === b) || (from === b && to === a));
-  for (const route of [CREST_ROUTE, TROUGH_ROUTE, HOME_ROUTE]) route.slice(1).forEach((dot, i) => assert.ok(edge(route[i], dot), `${route[i]} to ${dot} is an edge of the mark`));
-  assert.ok(CREST_ROUTE.includes(2) && !CREST_ROUTE.includes(3) && TROUGH_ROUTE.includes(3) && !TROUGH_ROUTE.includes(2));
+  for (const route of [CREST_ROUTE, HOME_ROUTE]) route.slice(1).forEach((dot, i) => assert.ok(edge(route[i], dot), `${route[i]} to ${dot} is an edge of the mark`));
+  assert.ok(CREST_ROUTE.includes(2) && !CREST_ROUTE.includes(3));
   assert.deepEqual(HOME_ROUTE, [...CREST_ROUTE].reverse(), 'home is the way over the crest, backwards');
-  assert.deepEqual(RUNS.map(run => run.dots), [CREST_ROUTE, TROUGH_ROUTE, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, STAR_ROUTE, TREE_ROUTE, LADDER_ROUTE, HOME_ROUTE]);
+  assert.deepEqual(RUNS.map(run => run.dots), [CREST_ROUTE, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, SLOT_ORDER, STAR_BURST, TREE_ROUTE, LADDER_ROUTE, HOME_ROUTE]);
   assert.ok(TRAIL_SLOTS >= SLOT_ORDER.length - 1, 'a piece of trail for each step of the longest run');
+  assert.deepEqual(RUNS.map(run => !!run.burst), [false, false, false, false, false, false, true, false, false, false], 'only the star is a burst');
 });
 
 test('it starts and ends every cycle as the plain mark, at rest, so the next cycle joins on without a jump', () => {
@@ -91,11 +97,9 @@ test('the height is continuous through the whole cycle: no moment where it pops'
 });
 
 test('crouch, stretch, squash: it gets much shorter, then much taller, then shorter than anything on landing, and ends exactly at rest', () => {
-  assert.equal(heightScale(CROUCH_END), CROUCH_SQUASH);
-  assert.equal(heightScale(LAUNCH_END), LAUNCH_STRETCH);
-  assert.ok(Math.abs(heightScale(IMPACT_END) - LAND_SQUASH) < 1e-9, 'the landing squash');
-  assert.ok(CROUCH_SQUASH <= 0.6 && LAUNCH_STRETCH >= 1.5, 'a big squash and a big stretch');
-  assert.ok(LAND_SQUASH < CROUCH_SQUASH, 'the landing hits harder than the crouch');
+  assert.equal(heightScale(CROUCH_END), 1, 'stage 1 holds still: no crouch');
+  assert.equal(heightScale(LAUNCH_END), 1, 'no stretch');
+  assert.equal(heightScale(IMPACT_END), 1, 'no landing squash');
   assert.equal(heightScale(SETTLE_END), 1);
   assert.equal(heightScale(LOOP_MS), 1);
   assert.ok(widthFor(CROUCH_SQUASH) > 1.3 && widthFor(LAUNCH_STRETCH) < 0.8 && widthFor(1) === 1, 'squashing makes it wider and stretching makes it thinner');
@@ -105,7 +109,7 @@ test('it leaves the ground at the launch and is back on it at the end of the air
   const lift = t => 100 - Number(at(t).transform.match(/^translate\(88 (-?[\d.]+)\)/)[1]);
   assert.equal(lift(LAUNCH_END), 0);
   assert.equal(lift(AIR_END), 0);
-  assert.ok(lift((LAUNCH_END + AIR_END) / 2) > 15, 'well up at the top');
+  assert.equal(lift((LAUNCH_END + AIR_END) / 2), 0, 'stage 1 never leaves the ground');
   assert.equal(lift(100), 0, 'on the ground in the crouch');
   assert.equal(lift(STAGE_MS + 500), 0, 'and during the second run');
   assert.equal(lift(MORPH_START + 500), 0, 'and while the dots are apart');
@@ -122,7 +126,7 @@ test('the logo itself never turns: no rotation of the mark, no perspective, no f
   for (const text of [read('./thinkingLogoMotion.ts'), read('./ThinkingLogo.tsx')]) assert.doesNotMatch(strip(text), /perspective|rotateX|rotateY|\brotate\(|loopKind|LoopKind|style\.transform/);
 });
 
-test('it breaks apart into a circle: the six dots end evenly spaced round it, in the order they sat round the logo, the logo\'s lines are gone and the circle\'s line is there', () => {
+test('the helix morphs into a circle: the six dots end evenly spaced round it, in the order they sat round the logo, the logo\'s lines are gone and the circle\'s line is there', () => {
   const pose = at(BREAK_END);
   pose.dots.forEach((dot, i) => assert.ok(Math.abs(distance([dot.x, dot.y], CENTRE) - CIRCLE_RADIUS) < 0.01, `dot ${i} is on the circle`));
   const angles = SLOT_ORDER.map(dot => Math.atan2(pose.dots[dot].y - CENTRE[1], pose.dots[dot].x - CENTRE[0]) * 180 / Math.PI);
@@ -132,9 +136,10 @@ test('it breaks apart into a circle: the six dots end evenly spaced round it, in
   assert.equal(pose.curve.opacity, 1);
   assert.ok(pose.curve.points.every(point => Math.abs(distance(point, CENTRE) - CIRCLE_RADIUS) < 0.01), 'the line through them is the circle');
   const early = at(MORPH_START + 100);
-  assert.ok(early.edgeOpacity < 1 && early.curve.opacity === 0, 'the lines let go before the circle appears');
+  assert.ok(early.edgeOpacity === 0 && early.curve.opacity === 1, 'the line never goes: the helix\'s line turns into the circle\'s, so nothing pops in or fades');
+  assert.ok(early.curve.points.some(point => Math.abs(distance(point, CENTRE) - CIRCLE_RADIUS) > 3), 'and early on it is still mostly the helix');
   const late = at(MORPH_START + 500);
-  assert.ok(late.edgeOpacity === 0 && late.curve.opacity > 0.5);
+  assert.ok(late.edgeOpacity === 0 && late.curve.opacity === 1);
 });
 
 test('the dots go round the circle (two turns), always on it, speeding up and slowing down, and are back where they started when it stops', () => {
@@ -338,8 +343,12 @@ test('between two shapes the links of one never show with the links of the other
   for (let t = FLOW_END; t <= STAR_END; t += 5) assert.ok(!(at(t).curve.opacity > 0 && at(t).edgeOpacity > 0), `line and spokes together at ${t}`);
 });
 
-test('the runner goes along the links of each graph shape (and never to a dot it has been to): across the star, up and down the tree, round the ladder', () => {
-  for (const [route, scene, label] of [[STAR_ROUTE, SCENES.star, 'star'], [TREE_ROUTE, SCENES.tree, 'tree'], [LADDER_ROUTE, SCENES.ladder, 'ladder']]) {
+test('the star bursts from its hub along every spoke at once; the runner goes along the links of the tree and the ladder (and never to a dot it has been to)', () => {
+  const [hub, ...points] = STAR_BURST;
+  assert.equal(hub, 2, 'the big dot is the hub');
+  assert.equal(new Set(STAR_BURST).size, 6, 'six different dots');
+  points.forEach(dot => assert.ok(setOf(SCENES.star.links).includes([hub, dot].sort().join('-')), `the hub has a spoke to dot ${dot}`));
+  for (const [route, scene, label] of [[TREE_ROUTE, SCENES.tree, 'tree'], [LADDER_ROUTE, SCENES.ladder, 'ladder']]) {
     assert.equal(new Set(route).size, route.length, `${label}: no dot twice`);
     route.slice(1).forEach((dot, i) => assert.ok(setOf(scene.links).includes([route[i], dot].sort().join('-')), `${label}: ${route[i]} to ${dot} is a link`));
   }
@@ -365,6 +374,10 @@ test('the dots never fly about wildly: from one frame to the next none moves fur
 test('the runner goes in every stage, from dot to dot: at each dot of its run it is on that dot (wherever the dot is, even while it moves), and between two it is part of the way', () => {
   RUNS.forEach((run, stage) => {
     const times = runTimes(run);
+    if (run.burst) {
+      for (let t = run.start; t <= run.start + RUN_MS; t += 50) assert.equal(at(t).runner.opacity, 0, `a burst has no single runner (${t})`);
+      return;
+    }
     times.forEach((time, i) => {
       const pose = at(time);
       const dot = pose.dots[run.dots[i]];
@@ -394,7 +407,7 @@ test('the runner goes along whatever the dots are on: the logo\'s edges, the cir
   // on the loop once it is a loop
   for (const hop of [3, 4]) assert.ok(offLoop([mid(5, hop).x, mid(5, hop).y]) < 0.02, `loop, step ${hop}`);
   // along the logo's own edge in the logo: the first step of the first run goes from dot 0 to dot 1 in a straight line
-  const times = runTimes(RUNS[1]);
+  const times = runTimes(RUNS[0]);
   const pose = at((times[0] + times[1]) / 2);
   const [a, b] = [LOGO_NODES[0], LOGO_NODES[1]];
   const cross = (pose.runner.x - a[0]) * (b[1] - a[1]) - (pose.runner.y - a[1]) * (b[0] - a[0]);
@@ -404,6 +417,28 @@ test('the runner goes along whatever the dots are on: the logo\'s edges, the cir
 test('a dashed trail follows behind the runner in every stage and joins the last two dots it has touched: the piece behind it is whole, the piece it is on grows, and the oldest fades when it touches the next dot', () => {
   RUNS.forEach((run, stage) => {
     const times = runTimes(run);
+    if (run.burst) {
+      // a line shoots from the hub to each point, all five together, so they arrive together, stay a moment and fade together
+      const hub = at(times[0]).dots[run.dots[0]];
+      const half = at((times[0] + times[1]) / 2);
+      assert.deepEqual(visible(half), [0, 1, 2, 3, 4], 'all five lines are out at once');
+      half.trail.slice(0, 5).forEach(piece => assert.ok(distance(piece.points[0], [half.dots[run.dots[0]].x, half.dots[run.dots[0]].y]) < 0.01, 'each starts at the hub'));
+      half.trail.slice(0, 5).forEach((piece, i) => {
+        const whole = distance([half.dots[run.dots[0]].x, half.dots[run.dots[0]].y], [half.dots[run.dots[i + 1]].x, half.dots[run.dots[i + 1]].y]);
+        const so_far = distance(piece.points[0], piece.points.at(-1));
+        assert.ok(so_far > 3 && so_far < whole - 3, `line ${i} is part of the way out (${so_far.toFixed(1)} of ${whole.toFixed(1)})`);
+      });
+      assert.ok(distance(at(times[0] + 100).trail[0].points[0], at(times[0] + 100).trail[0].points.at(-1)) < distance(half.trail[0].points[0], half.trail[0].points.at(-1)), 'and they grow');
+      const arrived = at(times[1]);
+      arrived.trail.slice(0, 5).forEach((piece, i) => {
+        const dot = arrived.dots[run.dots[i + 1]];
+        assert.ok(distance(piece.points.at(-1), [dot.x, dot.y]) < 0.01, `line ${i} has reached its point`);
+      });
+      assert.deepEqual(full(at(times[1] + 10)), [0, 1, 2, 3, 4], 'and they stay');
+      assert.ok(at(times[1] + TRAIL_HOLD_MS - 1).trail.slice(0, 5).every(piece => piece.opacity > 0.99), 'a moment after they arrive');
+      assert.ok(at(times[1] + TRAIL_HOLD_MS + TRAIL_FADE_MS).trail.every(piece => piece.opacity === 0), 'then they fade together, as the stage ends');
+      return;
+    }
     const first = at((times[0] + times[1]) / 2);
     assert.deepEqual(visible(first), [0], `stage ${stage + 1}: only the piece it is on, growing from the first dot`);
     assert.ok(Math.abs(first.trail[0].points.at(-1)[0] - first.runner.x) < 0.01 && Math.abs(first.trail[0].points.at(-1)[1] - first.runner.y) < 0.01, 'and it reaches the runner');
@@ -534,4 +569,106 @@ test('it is the loader before the first step (one instance, fading when the step
   const textLeft = Math.round((px * 176) / 111) + 8 + 12;          // the mark's width, its 8px margin and the 12px gap
   assert.ok(css.includes(`.gl-start-text-logo { left: ${textLeft}px; }`), 'its text clear of it');
   assert.match(css, /\.thinking-logo \{ display: block; flex: 0 0 auto; overflow: visible; margin-right: 8px; color: var\(--accent-primary\); \}/);
+});
+
+
+// ---- the double helix (stage 2): the dots morph into the preview's helix; it is not an overlay that pops in -----------------------------------------------------------------------------------
+
+// where strand `strand` is `k` (0 to 1) of the way down it: a strand runs from HELIX_MARGIN to 1 - HELIX_MARGIN of the helix's height
+const strandAt = (strand, k) => helixPoint(strand, HELIX_MARGIN + k * (1 - 2 * HELIX_MARGIN));
+
+test('the helix has two strands with three dots each, laid out as in the approved preview: the top pair apart, the middle pair apart on the other sides, the bottom pair apart again', () => {
+  const dots = at(HELIX_END).dots;
+  SLOT_ORDER.forEach((dot, slot) => {
+    const strand = slot < 3 ? 0 : 1;
+    const k = strand === 0 ? slot / 2 : (5 - slot) / 2;
+    assert.ok(distance([dots[dot].x, dots[dot].y], strandAt(strand, k)) < 0.01, `slot ${slot} (dot ${dot}) is on strand ${strand}, ${k} of the way down`);
+  });
+  assert.deepEqual(HELIX_DOT_FRACS.map(f => Math.round(f * 100) / 100), [0.08, 0.5, 0.92], 'the dots sit where the preview puts them');
+  const [a, b, c] = [0, 1, 2].map(slot => dots[SLOT_ORDER[slot]]);
+  const [d, e, f] = [5, 4, 3].map(slot => dots[SLOT_ORDER[slot]]);
+  [[a, d], [b, e], [c, f]].forEach(([one, other], row) => assert.ok(Math.abs(one.y - other.y) < 0.01 && Math.abs(one.x - other.x) > 15, `row ${row}: the two strands' dots are level and apart`));
+  assert.ok(a.x > CENTRE[0] && b.x < CENTRE[0] && c.x > CENTRE[0], 'the first strand swings right, left, right');
+  assert.ok(a.y < b.y && b.y < c.y, 'and goes down');
+  let closest = Infinity;
+  dots.forEach((one, i) => dots.slice(i + 1).forEach(other => { closest = Math.min(closest, distance([one.x, one.y], [other.x, other.y])); }));
+  assert.ok(closest > 15, 'no two dots on top of each other');
+});
+
+test('the two strands are SEPARATE lines, never joined at the top or the bottom: each is open, and the two ends at the top are apart, and the two at the bottom', () => {
+  const pose = at(HELIX_END);
+  const first = pose.curve.points;
+  const second = pose.curve.second.points;
+  assert.equal(pose.curve.second.opacity, 1);
+  first.forEach((point, i) => assert.ok(distance(point, strandAt(0, i / (first.length - 1))) < 0.01, `first strand at ${i}`));
+  second.forEach((point, i) => assert.ok(distance(point, strandAt(1, i / (second.length - 1))) < 0.01, `second strand at ${i}`));
+  assert.ok(distance(first[0], second[0]) > 15, 'apart at the top');
+  assert.ok(distance(first[first.length - 1], second[second.length - 1]) > 15, 'apart at the bottom');
+  assert.ok(distance(first[0], first[first.length - 1]) > 50 && distance(second[0], second[second.length - 1]) > 50, 'neither strand closes on itself');
+  const near = (line, ends) => line.some(point => distance(point, ends) < 0.5);
+  assert.ok(!near(second, first[0]) && !near(second, first[first.length - 1]), 'the second strand never touches the first one\'s ends');
+});
+
+test('the second strand belongs to the helix alone: not there before it forms, fading out as it becomes the circle, and gone for every other stage', () => {
+  assert.equal(at(0).curve.second, undefined);
+  assert.equal(at(STAGE_MS).curve.second.opacity, 0, 'not there at the first instant of stage 2');
+  assert.ok(at(STAGE_MS + 400).curve.second.opacity > 0 && at(STAGE_MS + 400).curve.second.opacity < 1, 'coming in with the first strand');
+  assert.equal(at(MORPH_START).curve.second.opacity, 1);
+  assert.ok(at(MORPH_START + 275).curve.second.opacity > 0.3 && at(MORPH_START + 275).curve.second.opacity < 0.7, 'fading as the dots leave it');
+  assert.equal(at(BREAK_END).curve.second, undefined);
+  for (let t = BREAK_END; t <= LOOP_MS; t += 100) assert.equal(at(t).curve.second, undefined, `none at ${t}`);
+});
+
+test('the dots MORPH into the helix and out of it: held still while it is shown, never a jump, the strands there for the whole of their time, and the logo\'s own lines gone before it is complete', () => {
+  const held = spots(at(HELIX_END));
+  for (let t = HELIX_END; t < MORPH_START; t += 20) spots(at(t)).forEach((spot, i) => assert.ok(distance(spot, held[i]) < 1e-9, `dot ${i} holds still at ${t}`));
+  let last = spots(at(STAGE_MS - 5));
+  for (let t = STAGE_MS; t <= BREAK_END; t += 5) {
+    const now = spots(at(t));
+    now.forEach((spot, i) => assert.ok(distance(spot, last[i]) < 6, `dot ${i} jumped at ${t}`));
+    last = now;
+  }
+  assert.equal(at(STAGE_MS).curve.opacity, 0, 'the helix line is not there at the first instant');
+  assert.ok(at(STAGE_MS + 300).edgeOpacity < 0.5 && at(STAGE_MS + 300).curve.opacity < 1, 'the logo\'s lines are letting go while the helix lines come in: a morph, not a swap');
+  assert.ok(at(STAGE_MS + 650).edgeOpacity === 0 && at(STAGE_MS + 650).curve.opacity === 1);
+});
+
+test('the runner goes down one strand, across the gap at the bottom and up the other, with a trail bent along each strand and a straight one across', () => {
+  assert.deepEqual(RUNS[1].dots, SLOT_ORDER);
+  const times = runTimes(RUNS[1]);
+  const onStrand = (piece, strand) => piece.points.every(([x, y]) => { const f = (y - HELIX_TOP) / (HELIX_BOTTOM - HELIX_TOP); return Math.abs(x - helixPoint(strand, f)[0]) < 0.6; });
+  // the first hops happen while the dots are still flying onto the helix (the run starts with its stage, like every other run); once it is formed, the pieces are bent along it
+  assert.ok(times[4] - 20 > HELIX_END, 'by the last hops the helix is formed');
+  const across = at(times[4] - 20).trail[2];                                        // the piece from the first strand's last dot to the second strand's first
+  assert.ok(across.opacity > 0 && across.points.length === 2, 'between the strands there is no line, so the way across is a straight hop');
+  const [lastOfFirst, firstOfSecond] = [SLOT_ORDER[2], SLOT_ORDER[3]].map(dot => [at(HELIX_END).dots[dot].x, at(HELIX_END).dots[dot].y]);
+  assert.ok(distance(across.points[0], lastOfFirst) < 0.01 && distance(across.points[1], firstOfSecond) < 0.01, 'from one strand\'s last dot to the other\'s first');
+  const up = at(times[4] + 60).trail[3];                                            // the piece up the second strand
+  assert.ok(up.points.length > 3 && onStrand(up, 1), 'the piece up the second strand follows its curve');
+  const aboveGap = at(times[5] + 60).trail[4];
+  assert.ok(aboveGap.points.length > 3 && onStrand(aboveGap, 1), 'right to the top of it');
+});
+
+test('the helix is not an overlay: the component has no strands or comets of its own and never hides or shows a group by the clock; its second strand is just another line it draws from the pose', () => {
+  const component = read('./ThinkingLogo.tsx');
+  assert.doesNotMatch(component, /helix.*(animate|comet)|<animate|animateMotion/i);
+  assert.doesNotMatch(component, /setAttribute\('opacity', '[01]'\)/);
+  assert.match(component, /curve2Ref\.current\?\.setAttribute\('opacity', String\(pose\.curve\.second\?\.opacity \?\? 0\)\);/);
+  assert.match(component, /if \(pose\.curve\.second && pose\.curve\.second\.opacity > 0\) curve2Ref\.current\?\.setAttribute\('d', pathOf\(pose\.curve\.second\.points\)\)/, 'drawn whenever it is visible');
+});
+
+
+test('the star pulses from its centre to all five points: the hub when the stage begins, then every point at the same moment, none before its line has got there', () => {
+  const hub = STAR_BURST[0];
+  const points = STAR_BURST.slice(1);
+  const starts = PULSES.filter(pulse => pulse.time >= 6 * STAGE_MS && pulse.time < 7 * STAGE_MS);
+  assert.deepEqual(starts.map(pulse => pulse.dot), [hub, ...points], 'the hub, then the five points');
+  const hubPulse = starts[0];
+  assert.equal(hubPulse.time, 6 * STAGE_MS);
+  const reach = starts.slice(1).map(pulse => pulse.time);
+  assert.ok(reach.every(time => time === reach[0] && time === 6 * STAGE_MS + RUN_MS), 'all five at once');
+  const ringed = at(6 * STAGE_MS + RUN_MS + 100).dots;
+  points.forEach(dot => assert.ok(ringed[dot].ringOpacity > 0, `dot ${dot} is pulsing when the lines arrive`));
+  assert.ok(at(6 * STAGE_MS + RUN_MS - 100).dots[points[0]].ringOpacity === 0, 'and not before');
+  assert.ok(at(6 * STAGE_MS + 100).dots[hub].ringOpacity > 0, 'the hub is pulsing at the start');
 });

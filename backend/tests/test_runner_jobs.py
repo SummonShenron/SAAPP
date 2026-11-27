@@ -407,15 +407,15 @@ def test_every_check_is_on_and_fake_keys_are_on_until_the_person_changes_it():
     db = FakeDB()
     record, _ = connected(db)
     runner = rj.runners_for(db, "jack@example.com", NOW)[0]
-    assert runner["settings"] == {"auto_update": False, "read_only_auto": False} and runner["projects"][0]["settings"] == {"disabled": [], "fake_keys": True}
-    assert view_of(db)["settings"] == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False}
-    assert rj.settings_of(None) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False} and rj.settings_of({"settings": {"fake_keys": "no"}})["fake_keys"] is True      # only a real False turns it off
+    assert runner["settings"] == {"auto_update": False, "read_only_auto": False, "after_edit_auto": False} and runner["projects"][0]["settings"] == {"disabled": [], "fake_keys": True}
+    assert view_of(db)["settings"] == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False, "after_edit_auto": False}
+    assert rj.settings_of(None) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False, "after_edit_auto": False} and rj.settings_of({"settings": {"fake_keys": "no"}})["fake_keys"] is True      # only a real False turns it off
 
 
 def test_a_check_turned_off_is_not_offered_to_sonic_and_cannot_be_asked_for():
     db = FakeDB()
     record, _ = connected(db)
-    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types"], "fake_keys": True}) == {"disabled": ["types"], "fake_keys": True, "auto_update": False, "read_only_auto": False}
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types"], "fake_keys": True}) == {"disabled": ["types"], "fake_keys": True, "auto_update": False, "read_only_auto": False, "after_edit_auto": False}
     runner = view_of(db)
     assert rj.describe_checks(runner) == "tests = pytest -q {files} (takes files)" and [c["name"] for c in rj.enabled_checks(runner)] == ["tests"]
     with pytest.raises(rj.RunnerError) as error:
@@ -430,12 +430,12 @@ def test_saving_settings_keeps_only_real_check_names_and_a_plain_yes_or_no():
     db = FakeDB()
     record, _ = connected(db)
     saved = rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types", "types", "ghost", "../x", 7, None], "fake_keys": False})
-    assert saved == {"disabled": ["types"], "fake_keys": False, "auto_update": False, "read_only_auto": False}                                    # only names the runner reported, once each
-    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": "tests", "fake_keys": "no"}) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False}
-    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main"}) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False}
+    assert saved == {"disabled": ["types"], "fake_keys": False, "auto_update": False, "read_only_auto": False, "after_edit_auto": False}                                    # only names the runner reported, once each
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": "tests", "fake_keys": "no"}) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False, "after_edit_auto": False}
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main"}) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False, "after_edit_auto": False}
     # without a project only the runner's own setting can change: the checks and the fake-key choice are a project's, so nothing leaks between them
     rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types"], "fake_keys": False})
-    assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": [], "fake_keys": True, "auto_update": True, "read_only_auto": False}) == {"disabled": [], "fake_keys": True, "auto_update": True, "read_only_auto": False}
+    assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": [], "fake_keys": True, "auto_update": True, "read_only_auto": False, "after_edit_auto": False}) == {"disabled": [], "fake_keys": True, "auto_update": True, "read_only_auto": False, "after_edit_auto": False}
     assert rj.runners_for(db, "jack@example.com", NOW)[0]["projects"][0]["settings"] == {"disabled": ["types"], "fake_keys": False}
     assert rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "nope", "disabled": ["types"]})["disabled"] == []                   # a project the runner does not have changes nothing
 
@@ -445,7 +445,7 @@ def test_only_the_owner_can_change_a_runners_settings_and_not_after_it_is_remove
     record, _ = connected(db)
     assert rj.update_settings(db, "someone@else.com", record["_id"], {"disabled": ["tests"]}) is None
     assert rj.update_settings(db, "jack@example.com", "no-such-runner", {"disabled": ["tests"]}) is None
-    assert rj.settings_of(db[rj.RUNNERS].docs[record["_id"]]) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False}
+    assert rj.settings_of(db[rj.RUNNERS].docs[record["_id"]]) == {"disabled": [], "fake_keys": True, "auto_update": False, "read_only_auto": False, "after_edit_auto": False}
     rj.revoke_key(db, "jack@example.com", record["_id"], later(seconds=1))
     assert rj.update_settings(db, "jack@example.com", record["_id"], {"disabled": ["tests"]}) is None
 
@@ -456,7 +456,7 @@ def test_a_runner_saying_hello_again_does_not_undo_the_persons_settings():
     rj.update_settings(db, "jack@example.com", record["_id"], {"project_id": "main", "disabled": ["types"], "fake_keys": False, "auto_update": True})
     rj.hello(db, record, {"version": "0.1.0", "root_name": "saapp", "checks": CHECKS}, later(minutes=5))
     runner = rj.runners_for(db, "jack@example.com", later(minutes=5))[0]
-    assert runner["projects"][0]["settings"] == {"disabled": ["types"], "fake_keys": False} and runner["settings"] == {"auto_update": True, "read_only_auto": False}
+    assert runner["projects"][0]["settings"] == {"disabled": ["types"], "fake_keys": False} and runner["settings"] == {"auto_update": True, "read_only_auto": False, "after_edit_auto": False}
 
 
 def test_a_handed_out_job_carries_the_current_fake_key_choice_and_never_a_command():
@@ -530,7 +530,7 @@ def test_every_run_tool_uses_that_line():
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[2] / "backend" / "services" / "agent_workflow.py").read_text(encoding="utf-8")
-    assert source.count("**runner_jobs.waiting_text(seconds, job_status)") == 3 and "Nothing runs until you press Run" not in source      # the check, the command, and the shared card wait used by servers and looks
+    assert source.count("**runner_jobs.waiting_text(seconds, job_status)") == 4 and "Nothing runs until you press Run" not in source      # the check, the after-edit check, the command, and the shared card wait used by servers and looks
 
 
 def test_stopping_the_turn_while_waiting_cancels_the_check_so_it_cannot_run_unseen():
@@ -733,7 +733,7 @@ def test_each_projects_settings_are_its_own_and_the_runners_auto_update_is_separ
     rj.update_settings(db, "jack@example.com", record["_id"], {"auto_update": True})
     runner = rj.runners_for(db, "jack@example.com", NOW)[0]
     assert runner["projects"][0]["settings"] == {"disabled": ["types"], "fake_keys": False} and runner["projects"][1]["settings"] == {"disabled": [], "fake_keys": True}
-    assert runner["settings"] == {"auto_update": True, "read_only_auto": False}
+    assert runner["settings"] == {"auto_update": True, "read_only_auto": False, "after_edit_auto": False}
     rj.hello(db, record, {"version": "0.1.1", "projects": [{"id": PA, "name": "local-rag", "checks": CHECKS}, {"id": PB, "name": "other-app", "checks": CHECKS}]}, later(minutes=5))
     assert rj.runners_for(db, "jack@example.com", later(minutes=5))[0]["projects"][0]["settings"]["disabled"] == ["types"]              # hello again undoes nothing
 

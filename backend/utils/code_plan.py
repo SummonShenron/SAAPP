@@ -20,6 +20,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from backend.utils import orientation, targeted_read
+
 logger = logging.getLogger("SASS Logger")
 
 COLLECTION = "code_plans"
@@ -675,13 +677,73 @@ PREFETCH_TOTAL_CHARS = int(os.getenv("CODE_PLAN_PREFETCH_CHARS", "30000"))
 PREFETCH_FILE_CHARS = int(os.getenv("CODE_PLAN_PREFETCH_FILE_CHARS", "12000"))
 
 
+# A FILE TOO BIG TO SHOW WHOLE used to be shown as its first PREFETCH_FILE_CHARS characters, which in a big file is the imports (2026-11-27: for agent_workflow.py, lines 1-179 of 6,162, on a step that
+# changed a function near line 4,400; this ran 91 times in 35 days). It is now shown as the parts that hold the step's own words (the names it mentions first, a definition before a use), or, when
+# nothing matches, as a map of where things are, so the one read that follows asks for the right lines.
+PREFETCH_LINES_BEFORE = 8
+PREFETCH_LINES_AFTER = 45
+PREFETCH_HITS_PER_TERM = 3
+PREFETCH_COMMON_LINES = 8         # a plain word on more lines than this says nothing about where the step works
+_NAME_LIKE_RE = re.compile(r"[_.-]|[a-z][A-Z]|\d")
+
+
+def step_windows(text: str, terms: List[str], budget: int) -> List[Tuple[int, int]]:
+    """The parts of a big file worth showing for a step: (first line, last line) pairs, 1-indexed and inclusive, in file order, merged where they meet, within about `budget` characters. `terms`
+    are the step's words, most specific first (backend/utils/orientation.py search_terms): a name (snake_case, camelCase, dotted) is matched exactly and tried before a plain word, which is matched
+    in any case and skipped when it is on many lines. Where a term is on several lines, the line that defines it comes first. [] when nothing matches. Pure."""
+    lines = text.splitlines()
+    chosen: List[Tuple[int, int]] = []
+    used = 0
+    names = [t for t in terms if _NAME_LIKE_RE.search(t)]
+    for term in names + [t for t in terms if t not in names]:
+        is_name = term in names
+        found = [i for i, line in enumerate(lines) if (term in line if is_name else term.lower() in line.lower())]
+        if not found or (not is_name and len(found) > PREFETCH_COMMON_LINES):
+            continue
+        defines = re.compile(r"\b(?:def|class|function|const|let|var|interface|type|enum)\s+" + re.escape(term) + r"\b")
+        found.sort(key=lambda i: (0 if defines.search(lines[i]) else 1, i))
+        for i in found[:PREFETCH_HITS_PER_TERM]:
+            if any(first <= i + 1 <= last for first, last in chosen):
+                continue
+            first, last = max(1, i + 1 - PREFETCH_LINES_BEFORE), min(len(lines), i + 1 + PREFETCH_LINES_AFTER)
+            size = sum(len(line) + 1 for line in lines[first - 1:last])
+            if used + size > budget:
+                continue
+            chosen.append((first, last))
+            used += size
+    merged: List[List[int]] = []
+    for first, last in sorted(chosen):
+        if merged and first <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], last)
+        else:
+            merged.append([first, last])
+    return [(first, last) for first, last in merged]
+
+
+def _big_file_part(path: str, text: str, terms: List[str]) -> str:
+    """One file too big to show whole, for files_block: its matching parts under their line numbers, or a map of its declarations when nothing matches. Pure."""
+    lines = text.splitlines()
+    windows = step_windows(text, terms, PREFETCH_FILE_CHARS)
+    if not windows:
+        where = targeted_read.outline(lines) or "  (no top-level declarations found: search it for a word from the step)"
+        return (f"--- {path} [NOT SHOWN: it has {len(lines)} lines and none of this step's words were found in it. Find the place below or with search_literal, then read those lines "
+                f"with read_repo_file ranges]\nWhere things are in {path}:\n{where}")
+    parts = [f"--- {path} [IN PARTS: it has {len(lines)} lines, so only the parts that hold this step's words are shown, under their line numbers. If the step needs other lines, "
+             "read them with read_repo_file ranges]"]
+    for first, last in windows:
+        parts.append(f"lines {first}-{last} of {path}:\n" + "\n".join(lines[first - 1:last]))
+    return "\n".join(parts)
+
+
 def files_block(plan: Optional[Dict[str, Any]], read: Callable[[str], Optional[str]]) -> str:
-    """The text of the first step not done's existing files, for the prompt, or "" when there is nothing to show. `read(path)` returns a file's current text or None. Each file is cut at
-    PREFETCH_FILE_CHARS and the block at PREFETCH_TOTAL_CHARS, and says so. New files are not read (they do not exist). Pure apart from `read`."""
+    """The text of the first step not done's existing files, for the prompt, or "" when there is nothing to show. `read(path)` returns a file's current text or None. A file of up to
+    PREFETCH_FILE_CHARS characters is shown whole; a bigger one as the parts that hold the step's words (`step_windows`), or as a map when nothing matches. The block stops at
+    PREFETCH_TOTAL_CHARS and says what it left out. New files are not read (they do not exist). Pure apart from `read`."""
     step = next_step(plan)
     if not step or (plan or {}).get("state") != APPROVED:
         return ""
     new_files = {f.get("path") for f in plan.get("files") or [] if f.get("new")}
+    why = {f.get("path"): f.get("why") or "" for f in plan.get("files") or []}
     parts, used = [], 0
     for path in step.get("files") or []:
         if path in new_files:
@@ -689,14 +751,13 @@ def files_block(plan: Optional[Dict[str, Any]], read: Callable[[str], Optional[s
         text = read(path)
         if text is None:
             continue
-        shown = text[:PREFETCH_FILE_CHARS]
+        shown = f"--- {path}\n{text}" if len(text) <= PREFETCH_FILE_CHARS else _big_file_part(path, text, orientation.search_terms([step.get("text") or "", why.get(path, "")]))
         if used + len(shown) > PREFETCH_TOTAL_CHARS:
             parts.append(f"--- {path}: not included here ({len(text)} characters); read it if you need it")
             continue
         used += len(shown)
-        cut = f" [cut: the first {len(shown)} of {len(text)} characters; read the rest if you need it]" if len(shown) < len(text) else ""
-        parts.append(f"--- {path}{cut}\n{shown}")
+        parts.append(shown)
     if not parts:
         return ""
-    return (f"FILES FOR STEP {step['id']}, read for you from the folder as they are right now. Copy old_string exactly from these; read a file again only if it is cut off or you need "
-            "another. If you need several, read them together in ONE step.\n" + "\n".join(parts))
+    return (f"FILES FOR STEP {step['id']}, read for you from the folder as they are right now. Copy old_string exactly from these; read a file again only if the lines you need are not "
+            "shown or you need another. If you need several places, read them together in ONE step.\n" + "\n".join(parts))

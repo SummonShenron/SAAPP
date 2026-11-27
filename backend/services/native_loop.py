@@ -38,7 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from backend.utils import act_not_suggest, advisor as advisor_module, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, handback_check, loop_progress, loop_rhythm, reading_waste
+from backend.utils import act_not_suggest, advisor as advisor_module, answer_checks, claim_check, combo as combo_rules, diff_review, draft_checkpoint, handback_check, loop_progress, loop_rhythm, multi_read, reading_waste
 from backend.utils.log_hygiene import describe_tool_result
 from backend.utils.prompt_meter import PromptMeter
 from backend.utils.agent_utils import _UnsafeActionRequested, build_tool_facts, build_trace_subject, new_trace_step_id
@@ -67,6 +67,12 @@ EDIT_CHECKPOINT_NOTICE = (
     "CHECKPOINT: you have used {used} of {total} tool steps, and this request is a change to the person's folder, so the way to finish is propose_local_edits. Decide now. If you have "
     "read enough to write the change, call propose_local_edits with every edit (copy each old_string exactly as you read it). If something specific still has to be read first, call "
     "continue_working with one line on what. Prefer proposing: more reading is only worth it for something you can name."
+)
+# After a change has been applied on a request for one, "prefer answering" told the model to stop with the request half done (2026-11-27: one file of a two-file change applied, then it answered at the checkpoint).
+AFTER_EDIT_CHECKPOINT_NOTICE = (
+    "CHECKPOINT: you have used {used} of {total} tool steps and a change has been applied. Decide now. If EVERY part of what the person asked for is done, write your final answer. If any part is still left "
+    "(another file to change, the wiring, a test to update, a check to run), do not stop: call propose_local_edits with the next change, or continue_working with one line on what you still need to read. "
+    "You can make more edits in this same turn; there is no need for a new request."
 )
 MAX_CHECKPOINT_REASON = 200
 # ONE TOOL LIST FOR THE WHOLE TURN, for a model that caches the conversation (ClaudeLLM.caches_prompt). The tool list is the first thing in the cached prefix, so a call that offered a different list
@@ -100,6 +106,11 @@ def checkpoint_after(budget: int) -> tuple:
     return (interval, 2 * interval)
 MAX_REPEATS = 3
 MAX_OBSERVATION_CHARS = 6000
+# ... EXCEPT a file read, which the read tool bounds itself (backend/utils/multi_read.py: MAX_TOTAL_LINES lines and MAX_CHARS characters a call, whole lines, with the last line shown named in its
+# header). Cutting it again here at 6,000 threw away most of what was asked for under a header that still named every line (2026-11-27: three ranges, 16,555 characters, arrived as 6,082 with no
+# range whole; a default 150-line read arrived as about 79 lines), and the "already read" list then told the model not to read those lines again. The room above MAX_CHARS is for headers and notes.
+READ_OBSERVATION_CHARS = multi_read.MAX_CHARS + 2000
+_OWN_LIMIT_TOOLS = frozenset({"read_repo_file"})
 # OLDER RESULTS ARE SHORTENED. Every step re-sends the whole conversation, so a big result (a file read is up to 6,000 characters) is paid
 # for again on every later step. The model has long since used it by then: it read the file, noted what mattered and moved on. So a
 # result stays in full for the next KEEP_RECENT_STEPS steps and after that is cut to its first MASKED_HEAD_CHARS characters, with a plain
@@ -109,6 +120,12 @@ KEEP_RECENT_STEPS = max(int(os.getenv("TOOL_AGENT_NATIVE_KEEP_STEPS", "2")), 1)
 MASK_MIN_CHARS = 1200
 MASKED_HEAD_CHARS = 350
 MAX_REREADS = 3
+# ... EXCEPT on a model that caches the conversation (shorten_old=False), where editing an earlier message makes every later step write the whole tail again at 1.25x instead of reading it at
+# 0.1x (about 12 times what the shortening saves). The one moment that costs nothing is when the cache has ALREADY expired: its entries live five minutes from their last use, and a turn that
+# waited longer than that (for Apply on a change card, for Run on a check) writes the whole conversation again on its next step anyway. Then the old results are shortened by the same rule, so
+# that rewrite, and every step after it, is smaller. CACHE_EXPIRED_SECONDS is a little over five minutes so a cache that is still alive is never broken.
+CACHE_EXPIRED_SECONDS = float(os.getenv("TOOL_AGENT_CACHE_EXPIRED_SECONDS", "330"))
+_clock = time.monotonic
 
 SYSTEM_PROMPT = """You are Sonic Assistant, working in tool mode. You answer by calling tools and reading their real results.
 
@@ -124,7 +141,7 @@ SYSTEM_PROMPT = """You are Sonic Assistant, working in tool mode. You answer by 
 - You can only use the tools you were given. If the request needs something none of them can do (an email inbox, a calendar, a drive, a database, a browser), say plainly that you can't do that from here. Never claim to have made a call you did not make, and never invent an outage, a timeout or a stuck process to explain it.
 - When asked to write or change code, call save_draft with your draft (the code, in full) as soon as you know roughly what to change, together with any reads you still need: it costs no step. Check the draft against what you read, save a corrected whole draft if anything is wrong, and start your answer from it.
 - What you said earlier in the conversation about your own jobs, schedule, reading or status came from your own records, which you cannot check with these tools; it stands. Never retract, correct or comment on an earlier reply unless the person asks about it or what you read this turn directly contradicts it.
-- Read where the work is. Never read a file from line 1 (it is imports and setup): search_literal for a word from the task, then read_repo_file with start_line a little before the match and line_count about 60. A read from the top of a big file is refused with a map of the file. Do not read a file you already read this turn: its result is in the conversation above. To find where something is defined or used, SEARCH before you read (search_literal; when run_local_command is among your tools, `git grep -n term` or `grep -rn term dir` also work, and `git log -S term` finds when it changed), then read only the lines that match: never open a file just to look for something in it, and do not read again a place the list of what you already read names.
+- Read where the work is. Never read a file from line 1 (it is imports and setup): search_literal for a word from the task, then read_repo_file with start_line a little before the match and line_count about 60. A read from the top of a big file is refused with a map of the file. Do not read a file you already read this turn: its result is in the conversation above. To find where something is defined or used, SEARCH before you read (search_literal; when run_local_command is among your tools, `git grep -n term` or `grep -rn term dir` also work, and `git log -S term` finds when it changed), then read only the lines that match: when you need several places (in one file or several), ask for them all in ONE read_repo_file call with `ranges` (e.g. ["40-90", "210-260", "other.py:12-40"]), not one call each. Never open a file just to look for something in it, and do not read again a place the list of what you already read names.
 - Answer in plain, concise prose. Cite the file paths and line numbers you actually read. Ask the user a question in your answer only when the request is genuinely ambiguous or missing a detail only they can supply and no tool could resolve it (two equally plausible repos, a time range that was never given, \"that file\" with nothing identifying which). "
     "It is not for a search that came back empty: that is an honest \"I checked X and Y, nothing conclusive turned up\". Ask one clear, specific question, never a vague \"can you tell me more?\"; their next message carries on the same conversation."""
 
@@ -202,10 +219,21 @@ def _observation_text(value: Any) -> str:
         return str(value)
 
 
-def _clip(text: str) -> str:
-    if len(text) <= MAX_OBSERVATION_CHARS:
+def result_limit(name: str) -> int:
+    """The most characters of one tool's result the model is sent. A file read is bounded by the read tool itself (READ_OBSERVATION_CHARS above); everything else by MAX_OBSERVATION_CHARS. Pure."""
+    return READ_OBSERVATION_CHARS if name in _OWN_LIMIT_TOOLS else MAX_OBSERVATION_CHARS
+
+
+def _clip(text: str, name: str = "") -> str:
+    limit = result_limit(name)
+    if len(text) <= limit:
         return text
-    return text[:MAX_OBSERVATION_CHARS] + f"\n... [truncated: {len(text) - MAX_OBSERVATION_CHARS} more characters; ask for a narrower slice if you need them]"
+    if name in _OWN_LIMIT_TOOLS:
+        # A backstop only (the read tool keeps to its own limits): cut after a whole line, and say so in words that cannot be taken for "you have the lines the header names".
+        cut = text.rfind("\n", 0, limit)
+        cut = cut if cut > 0 else limit
+        return text[:cut] + f"\n... [CUT HERE: {len(text) - cut} more characters were not shown, so the lines after this point were NOT read. Ask for them with a smaller range.]"
+    return text[:limit] + f"\n... [truncated: {len(text) - limit} more characters; ask for a narrower slice if you need them]"
 
 
 def shorten_old_result(text: str) -> Optional[str]:
@@ -312,6 +340,7 @@ async def run(
     seen: Dict[str, int] = {}
     held: List[Dict[str, Any]] = []  # each tool result in the conversation: its message, the step it came from, its call and the full text
     shortened_keys: set = set()
+    cache_clock: Dict[str, Any] = {"last": None, "shrinks": 0, "chars": 0}      # when the model was last called; times old results were shortened after the cache expired, and characters cut
     rereads = 0
     steering_notes: List[str] = []
     steering_used = 0
@@ -365,8 +394,10 @@ async def run(
         """Before the model decides on `current_step`: cuts down every result older than the last KEEP_RECENT_STEPS steps. Off for a model that caches the
         conversation (`shorten_old=False`): editing an earlier message there would invalidate the cache from that point, and re-reading an old result from
         the cache costs a tenth of what re-sending it does, so keeping it whole is the cheaper choice."""
-        if not shorten_old:
+        expired = not shorten_old and cache_clock["last"] is not None and _clock() - cache_clock["last"] >= CACHE_EXPIRED_SECONDS
+        if not shorten_old and not expired:
             return
+        cut = 0
         for item in held:
             if item["done"] or current_step - item["step"] <= KEEP_RECENT_STEPS:
                 continue
@@ -375,6 +406,17 @@ async def run(
             if shortened is not None:
                 item["message"].content = shortened
                 shortened_keys.add(item["key"])
+                cut += len(item["text"]) - len(shortened)
+        if expired and cut:
+            cache_clock["shrinks"] += 1
+            cache_clock["chars"] += cut
+
+    async def call_model(conversation: List[Any], tool_list: List[Dict[str, Any]]) -> Any:
+        """One model call; notes when it ended, so a later step can tell whether the cache has expired since (shorten_old_results)."""
+        try:
+            return await llm.ainvoke_tools(conversation, tool_list)
+        finally:
+            cache_clock["last"] = _clock()
 
     async def consult_advisor(kind: str, brief: str, why: str) -> Optional[str]:
         """One second opinion (advisor.consult never raises), shown in the trace. None when none is allowed or it failed."""
@@ -458,7 +500,7 @@ async def run(
                 failed_runs_by_tool[name] = retries + 1
             try:
                 await emit_facts(step_id, build_tool_facts(
-                    name, args, time.monotonic() - started, result, retries=retries, truncated=len(result) > MAX_OBSERVATION_CHARS,
+                    name, args, time.monotonic() - started, result, retries=retries, truncated=len(result) > result_limit(name),
                 ))
             except Exception:
                 logger.debug("[native_loop] could not emit trace facts.", exc_info=True)
@@ -496,7 +538,7 @@ async def run(
             if call.get("name") not in ("save_draft", "continue_working"):      # keeping a draft, or saying it keeps going, is not a step worth listing in the receipt
                 progress.note(step_number, str(call.get("name") or ""), args, result)
                 attempts.append({"purpose": f"Run {call.get('name')}", "action_desc": _describe(str(call.get("name")), args), "observation": result})
-            clipped = _clip(result)
+            clipped = _clip(result, str(call.get("name") or ""))
             message = ToolMessage(content=clipped, tool_call_id=str(call.get("id") or f"call_{step_number}_{index}"), name=str(call.get("name")))
             messages.append(message)
             held.append({"message": message, "step": step_number, "text": clipped, "done": False, "key": f"{call.get('name')}|{json.dumps(args, sort_keys=True, default=str)}"})
@@ -515,13 +557,13 @@ async def run(
         offered_here = turn_tools if stable_tools else [CONTINUE_TOOL] + ([t for t in tools if t.get("name") == tool_name] if can_propose else [])
         mark = len(messages)
         edit_notice = (required_action or {}).get("checkpoint_notice") or EDIT_CHECKPOINT_NOTICE      # a plan turn finishes with submit_plan, not a proposal
-        notice = (edit_notice if edit_turn else CHECKPOINT_NOTICE).format(used=used, total=budget)
+        notice = (edit_notice if edit_turn else (AFTER_EDIT_CHECKPOINT_NOTICE if can_propose and required_done() and not (required_action or {}).get("checkpoint_notice") else CHECKPOINT_NOTICE)).format(used=used, total=budget)
         if rhythm is not None and after_apply_hint and rhythm.applies > rhythm.applies_checked and not edit_turn:
             # An edit has been applied and not checked: "prefer answering" would end the turn untested, so say that checking is a reason to keep working (the one specific thing it can name).
             notice += " You have applied an edit that has not been checked: if a check can run for it, call continue_working with that as the reason instead of answering."
         messages.append(HumanMessage(content=notice))
         meter.note_call(messages, offered_here)
-        reply = await llm.ainvoke_tools(messages, offered_here)
+        reply = await call_model(messages, offered_here)
         text = _text(getattr(reply, "content", ""))
         calls = [call for call in (getattr(reply, "tool_calls", None) or []) if call.get("name")]
         if await absorb_steering(used + 1):
@@ -585,6 +627,12 @@ async def run(
         that ends "want me to update X?" is a good answer, not a hand-back: forcing the work there would be over-correcting."""
         return claim_checking and (required_action is not None or plan_budget is not None or edited_this_turn())
 
+    def send_back_handback(which: str, steps_left: int) -> str:
+        """Counts one hand-back send-back of kind `which` and returns its notice (a repeat says so)."""
+        before = sum(int(answer_sent_back.get(f"handback_{k}", 0) or 0) for k in handback_check.KINDS)
+        answer_sent_back[f"handback_{which}"] = answer_sent_back.get(f"handback_{which}", 0) + 1
+        return handback_check.notice(which, steps_left, offered) + handback_check.repeat_note(before)
+
     def required_done() -> bool:
         """The required tool (propose_local_edits on a change request) has been called and did not come back as an error."""
         tool = (required_action or {}).get("tool_action") or ""
@@ -616,6 +664,16 @@ async def run(
         if checkpoints and (step - 1) in checkpoints and (step - 1) not in checkpoints_done and attempts:
             checkpoints_done.add(step - 1)
             outcome = await run_checkpoint(step - 1)
+            if outcome == "answered" and handback_in_scope() and (handed_back := handback_check.kind(
+                    final_text or "", coding_turn=claim_checking, edited=edited_this_turn(), offered=offered, steps_left=budget - step + 1,
+                    checked=any(str(a.get("action_desc", "")).startswith(("run_local_check(", "run_local_command(", "run_sandbox_tests(")) for a in attempts), check_failed=handback_check.last_check_failed(attempts)))                     and handback_check.may_send_back(answer_sent_back, handed_back):
+                # An answer at the checkpoint used to end the turn with no check at all (2026-11-27: after an applied edit, "The morph still isn't wired ... it needs a new request", 13 steps left). It is held to the
+                # same hand-back rule as any answer.
+                messages.append(HumanMessage(content=send_back_handback(handed_back, budget - step + 1)))
+                final_text = None
+                logger.info("[native_loop] step %s: an answer at the checkpoint was sent back by the hand-back check.", step)
+                step -= 1      # the step it was about to take was never taken
+                continue
             if outcome == "answered":
                 step -= 1      # the step it was about to take was never taken
                 stop_reason = "checkpoint_answered"
@@ -649,7 +707,7 @@ async def run(
             reply = pre_reply          # made at the checkpoint, which already checked for steering
         else:
             meter.note_call(messages, turn_tools)
-            reply = await llm.ainvoke_tools(messages, turn_tools)
+            reply = await call_model(messages, turn_tools)
             if await absorb_steering(step):
                 # The user redirected the work while this was being decided. Drop it rather than act on, or conclude from, a plan they
                 # just changed; the next step decides again with the steering in view.
@@ -689,12 +747,12 @@ async def run(
                 elif not can_edit and answer_sent_back.get("no_read", 0) < answer_checks.MAX_SEND_BACKS and answer_checks.code_without_reading(answer, attempts, conversation_text):
                     answer_sent_back["no_read"] = answer_sent_back.get("no_read", 0) + 1
                     notice = answer_checks.NO_READ_NOTICE
-                elif handback_in_scope() and not any(answer_sent_back.get(f"handback_{k}", 0) for k in handback_check.KINDS) and (handed_back := handback_check.kind(
+                elif handback_in_scope() and (handed_back := handback_check.kind(
                         answer, coding_turn=claim_checking, edited=edited_this_turn(), offered=offered, steps_left=budget - step,
-                        checked=any(str(a.get("action_desc", "")).startswith(("run_local_check(", "run_local_command(", "run_sandbox_tests(")) for a in attempts), check_failed=handback_check.last_check_failed(attempts))):
-                    # The answer ends by offering to carry on, or by telling the person to run it themselves, with steps left and the tools to do it (backend/utils/handback_check.py): sent back once.
-                    answer_sent_back[f"handback_{handed_back}"] = 1
-                    notice = handback_check.notice(handed_back, budget - step, offered)
+                        checked=any(str(a.get("action_desc", "")).startswith(("run_local_check(", "run_local_command(", "run_sandbox_tests(")) for a in attempts), check_failed=handback_check.last_check_failed(attempts)))                         and handback_check.may_send_back(answer_sent_back, handed_back):
+                    # The answer ends by offering to carry on, saying the work is not finished, or telling the person to run it themselves, with steps left and the tools to do it (backend/utils/handback_check.py):
+                    # sent back, and an "unfinished" or "offer" one again while it keeps saying so (up to handback_check.MAX_REPEATS: 2026-11-27, one send-back was not enough).
+                    notice = send_back_handback(handed_back, budget - step)
                 if notice:
                     messages.append(HumanMessage(content=notice))
                     logger.info("[native_loop] step %s: an answer was sent back by the %s check.", step, ",".join(sorted(answer_sent_back)))
@@ -831,14 +889,14 @@ async def run(
         nonlocal narrow_fallbacks
         if stable_tools:
             meter.note_call(messages, turn_tools)
-            reply = await llm.ainvoke_tools(messages, turn_tools)
+            reply = await call_model(messages, turn_tools)
             allowed = {tool.get("name") for tool in narrow}
             if all(call.get("name") in allowed for call in (getattr(reply, "tool_calls", None) or [])):
                 return reply
             narrow_fallbacks += 1
             logger.info("[native_loop] a forced ending made a call it may not make there; asking again with the narrow list.")
         meter.note_call(messages, narrow)
-        return await llm.ainvoke_tools(messages, narrow)
+        return await call_model(messages, narrow)
 
     if final_text is None and can_edit and (required_action is not None or plan_budget is not None) and stop_reason in ("", "step_limit") and not edited_this_turn():
         # The reading budget ran out before the change was made. The old ending asked for the code "in a fenced code block", which is how a turn ended in pseudocode. Now the last call can ONLY be the edit.
@@ -908,7 +966,7 @@ async def run(
             if name in PAGE_TOOLS:
                 key = "browser_read_native" if name == "browser_read_text" else f"{name}_native"
                 page_counts[key] = page_counts.get(key, 0) + 1
-        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}, **({"keep_going_sent_back": keep_going_sent} if keep_going_sent else {}), **(advisor.counts if advisor is not None else {}), **loop_progress.counts(ended, last_step_status), **cache_counts(stable_tools, narrow_fallbacks)})
+        await asyncio.to_thread(record_turn_counts, {**meter.counts(sum(len(item["text"]) for item in held)), **combo.counts(forced and stop_reason in ("", "step_limit")), **page_counts, **{f"answer_sent_back_{kind}": count for kind, count in answer_sent_back.items()}, **({"keep_going_sent_back": keep_going_sent} if keep_going_sent else {}), **(advisor.counts if advisor is not None else {}), **loop_progress.counts(ended, last_step_status), **cache_counts(stable_tools, narrow_fallbacks), **({"native_cache_expired_shrinks": cache_clock["shrinks"], "native_cache_expired_chars": cache_clock["chars"]} if cache_clock["shrinks"] else {})})
     except Exception:
         logger.debug("[native_loop] could not record the prompt sizes.", exc_info=True)
     return {
