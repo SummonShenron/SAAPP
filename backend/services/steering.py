@@ -10,9 +10,12 @@ State is process-local on purpose. If the steer request lands on a different bac
 the running turn (or no turn is running), submit() says so and the browser sends the message as a
 normal follow-up instead, so a steer is never silently lost.
 """
+import asyncio
+import contextvars
 import logging
 import threading
 from dataclasses import dataclass, field
+from typing import Optional
 
 from langchain_core.messages import HumanMessage
 
@@ -33,16 +36,24 @@ class _Run:
     applied: int = 0
     accepting: bool = True
     stop: bool = False          # the person pressed Stop (POST /api/chat/stop): the only thing that ends a turn early now that a lost connection does not
+    interrupt: Optional["asyncio.Event"] = None     # set with `stop`, so a turn blocked on a person's answer (wait_event) wakes at once instead of at its next check
+    waiting: int = 0            # how many waits for a person's answer this turn is inside right now
 
 
 _runs: dict = {}
 _lock = threading.Lock()
 
 
+_turn_key: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar("steering_turn_key", default=None)
+
+
 def open_run(key: str, transcript: list) -> _Run:
+    """Registers the turn. It also remembers the key for everything this turn runs (the context is copied into the tasks and threads it starts), so a wait for a person's
+    answer can find its own turn without being handed the key (wait_event)."""
     run = _Run(transcript=transcript)
     with _lock:
         _runs[key] = run
+    _turn_key.set(key)
     return run
 
 
@@ -73,7 +84,78 @@ def request_stop(key: str) -> str:
             return "no_active_run"
         run.stop = True
         run.accepting = False
+        if run.interrupt is not None:
+            run.interrupt.set()
     return "stopping"
+
+
+def abandon_wait(key: str) -> bool:
+    """The person sent a new message while the last turn is blocked on a card or a check waiting for THEIR answer: they have moved on, so that wait ends the way Stop would end it
+    (nothing is applied, the turn finishes). True only when the turn really is in such a wait; a turn that is working is left alone (the caller answers 409)."""
+    with _lock:
+        run = _runs.get(key)
+        if run is None or run.waiting <= 0:
+            return False
+    return request_stop(key) == "stopping"
+
+
+class person_wait:
+    """`with steering.person_wait():` marks the turn as blocked on a person for as long as the block runs (for a wait that polls instead of using one event), so a new message can end it (abandon_wait)."""
+    def __enter__(self):
+        key = _turn_key.get()
+        with _lock:
+            self._run = _runs.get(key) if key else None
+            if self._run is not None:
+                self._run.waiting += 1
+        return self
+
+    def __exit__(self, *exc):
+        if self._run is not None:
+            with _lock:
+                self._run.waiting -= 1
+        return False
+
+
+def wait_stopped(key: Optional[str] = None) -> bool:
+    """Whether the turn this code runs in has been told to stop (Stop, or a new message instead of an answer)."""
+    return stop_requested(key or _turn_key.get() or "")
+
+
+async def wait_event(event: "asyncio.Event", timeout: float) -> str:
+    """Waits up to `timeout` seconds for `event` (the person's press or answer) and says how it ended: "set", "timeout", or "stopped" (the person pressed Stop, or sent a new message instead
+    of answering, while this turn was waiting). A press that arrived at the same moment wins. A browser that merely went away does NOT end it: the turn is meant to carry on (a locked phone).
+    Outside a registered turn it is a plain timed wait."""
+    key = _turn_key.get()
+    with _lock:
+        run = _runs.get(key) if key else None
+        if run is not None:
+            if run.stop and not event.is_set():
+                return "stopped"
+            if run.interrupt is None:
+                run.interrupt = asyncio.Event()
+            run.waiting += 1
+            interrupt = run.interrupt
+    if run is None:
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            return "set"
+        except asyncio.TimeoutError:
+            return "timeout"
+    pressed = asyncio.ensure_future(event.wait())
+    interrupted = asyncio.ensure_future(interrupt.wait())
+    try:
+        await asyncio.wait({pressed, interrupted}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        with _lock:
+            run.waiting -= 1
+        for task in (pressed, interrupted):
+            if not task.done():
+                task.cancel()
+    if pressed.done() and not pressed.cancelled():
+        return "set"
+    if interrupted.done() and not interrupted.cancelled():
+        return "stopped"
+    return "timeout"
 
 
 def stop_requested(key: str) -> bool:

@@ -13,9 +13,9 @@ not asking for paths that do not exist; the open question is whether the files i
   edited file ranked in the block (1 to 4, or absent). This is how the block is judged: does what it lists turn out to be what gets changed?
 
 No path, no term, no text is kept (the paths live in memory for the turn only, to answer "was this file edited?" and "was it in the block?"), and nothing here logs. Pure."""
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
-from backend.utils import targeted_read
+from backend.utils import multi_read, targeted_read
 
 READ_TOOLS = ("read_repo_file",)
 SEARCH_TOOLS = ("search_literal", "search_code")
@@ -29,6 +29,14 @@ def _path(args: Any) -> str:
     return str((args or {}).get("path") or "").strip().replace("\\", "/") if isinstance(args, dict) else ""
 
 
+def _read_paths(args: Any) -> List[str]:
+    """Every file one read call read: its `path`, or, with `ranges` (backend/utils/multi_read.py), each file the ranges name, once each."""
+    if isinstance(args, dict) and args.get("ranges"):
+        return list(dict.fromkeys(path.replace("\\", "/") for path, _ in multi_read.places(args.get("path"), args.get("ranges"))))
+    path = _path(args)
+    return [path] if path else []
+
+
 def _norm(path: Any) -> str:
     text = str(path or "").strip().replace(chr(92), "/")
     while text.startswith("./"):
@@ -40,6 +48,8 @@ def opening_kind(name: str, args: Any, result: Any) -> str:
     """What kind of move a tool call is, for the opening-move count. Pure."""
     if name in READ_TOOLS:
         arguments = args if isinstance(args, dict) else {}
+        if arguments.get("ranges"):
+            return "read_window"
         if _REDIRECT_MARK in str(result or "") or targeted_read.is_top_read(arguments.get("start_line"), arguments.get("line_count")):
             return "read_top"
         return "read_window"
@@ -69,6 +79,7 @@ class ReadingLog:
         self.applied = 0
         self.opening = ""
         self.top_reads = self.window_reads = 0
+        self.multi_reads = 0          # reads that asked for several places at once (`ranges`)
         self._first_read = ""
         self._block: list = []
 
@@ -82,10 +93,12 @@ class ReadingLog:
         if not self.opening:
             self.opening = opening_kind(name, args, text)
         if name in READ_TOOLS and not failed:
-            path = _path(args)
-            if path:
+            for path in _read_paths(args):
                 self._read[path] = self._read.get(path, 0) + 1
                 self._first_read = self._first_read or _norm(path)
+            if isinstance(args, dict) and args.get("ranges") and _read_paths(args):
+                self.multi_reads += 1
+            if _read_paths(args):
                 if opening_kind(name, args, text) == "read_top":
                     self.top_reads += 1
                 else:
@@ -112,7 +125,7 @@ class ReadingLog:
         return {
             "files_read": len(read), "edited_and_read": len(read & self._edited), "files_edited": len(self._edited), "rereads": sum(count - 1 for count in self._read.values()),
             "searches": self.searches, "empty_searches": self.empty_searches, "tree_listings": self.tree_listings, "find_files": self.find_files, "applied": self.applied,
-            "top_reads": self.top_reads, "window_reads": self.window_reads,
+            "top_reads": self.top_reads, "window_reads": self.window_reads, "multi_reads": self.multi_reads,
             "orient_shown": 1 if block else 0, "orient_first_read_in_block": 1 if block and self._first_read and self._first_read in block else 0,
             "orient_rank": min(ranks) if ranks else 0,
             "opening": self.opening if self.opening in OPENING_KINDS else "",
@@ -149,7 +162,7 @@ def counts_from(summary: Optional[Dict[str, Any]]) -> Dict[str, int]:
         return counts
     counts["reading_turns"] = 1
     for source, key in (("files_read", "reading_files_read"), ("rereads", "reading_rereads"), ("searches", "reading_searches"), ("empty_searches", "reading_empty_searches"),
-                        ("tree_listings", "reading_tree_listings"), ("find_files", "reading_find_files"), ("top_reads", "reading_top_reads"), ("window_reads", "reading_window_reads")):
+                        ("tree_listings", "reading_tree_listings"), ("find_files", "reading_find_files"), ("top_reads", "reading_top_reads"), ("window_reads", "reading_window_reads"), ("multi_reads", "reading_multi_reads")):
         if n(source):
             counts[key] = n(source)
     if n("applied"):

@@ -111,7 +111,7 @@ def test_the_setting_is_the_computers_not_a_projects_and_survives_hello_and_othe
     rj.update_settings(db, USER, key["_id"], {"project_id": PID, "disabled": [], "fake_keys": False})
     rj.hello(db, key, {"version": "0.1.1", "launch": "service", "status": "", "projects": []}, later(seconds=1))
     settings = rj.runners_for(db, USER, later(seconds=2))[0]["settings"]
-    assert settings == {"auto_update": True, "read_only_auto": True}
+    assert settings == {"auto_update": True, "read_only_auto": True, "after_edit_auto": False}
     rj.update_settings(db, USER, key["_id"], {"read_only_auto": "yes"})                                # only a real true counts
     assert rj.runners_for(db, USER, later(seconds=3))[0]["settings"]["read_only_auto"] is False
 

@@ -10,7 +10,7 @@ reason when they give one), or no answer within the timeout, in which case nothi
 - ONE PERSON'S. A decision is accepted only from the person the proposal was made for.
 - NOTHING IS APPLIED HERE. The browser still writes the files; this only carries its report back. A report with no one waiting (the turn ended, or the wait timed out) is
   ignored, and the card behaves as it always did.
-- BOUNDED. LOCAL_EDIT_WAIT_SECONDS (default 600, ten minutes); a turn that is cancelled (the person pressed Stop, or left) stops waiting at once. The waiting is in this process,
+- BOUNDED. LOCAL_EDIT_WAIT_SECONDS (default 600, ten minutes); a turn that is cancelled, stopped (Stop) or answered with a new message instead of a press stops waiting at once (steering.wait_event); a browser that merely went away does not end it. The waiting is in this process,
   so it needs the decision to reach the same server instance (one worker today; with more, a report that lands elsewhere is simply not seen and the wait times out).
 - ONLY WHEN THE BROWSER SAYS IT CAN REPORT. A page from before this existed would never answer, and a turn must not wait ten minutes for it (the chat request carries
   `edit_decisions`).
@@ -20,6 +20,8 @@ import asyncio
 import logging
 import os
 from typing import Any, Awaitable, Callable, Dict, Optional
+
+from backend.services import steering
 
 logger = logging.getLogger("SASS Logger")
 
@@ -147,17 +149,19 @@ async def wait_for(proposal_id: str, timeout: Optional[float] = None, on_tick: O
     try:
         while waited < limit:
             step = min(HEARTBEAT_SECONDS, limit - waited)
-            try:
-                await asyncio.wait_for(entry["event"].wait(), timeout=step)
+            how = await steering.wait_event(entry["event"], step)
+            if how == "set":
                 ended = "decided"
                 return entry["outcome"]
-            except asyncio.TimeoutError:
-                waited += step
-                if on_tick is not None and waited < limit:
-                    try:
-                        await on_tick(int(waited))
-                    except Exception:
-                        pass
+            if how == "stopped":
+                ended = "stopped"           # Stop, or a new message instead of an answer: nobody is waiting any more, so nothing is applied
+                return None
+            waited += step
+            if on_tick is not None and waited < limit:
+                try:
+                    await on_tick(int(waited))
+                except Exception:
+                    pass
         return None
     except asyncio.CancelledError:
         ended = "cancelled"           # the turn was cancelled while it waited: the stream was cut, or the person pressed Stop or left

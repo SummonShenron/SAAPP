@@ -133,3 +133,29 @@ def send_back_notice(kinds: Iterable[str], can_run: bool) -> str:
         return (f"CHECK YOUR CLAIM: your answer says {names} passed, but no passing run of it happened in this turn. Run it now with run_local_check or run_local_command, then answer from the result; "
                 "or, if you cannot run it, say plainly that it was not run.")
     return f"CHECK YOUR CLAIM: your answer says {names} passed, but no run of it happened in this turn and none is possible here. Say plainly that it was not run."
+
+
+# A reply that says NOTHING WAS WRITTEN on a turn where the person applied an edit (2026-11-27, the loader session: the edit to thinkingLogoMotion.ts was applied mid-turn, and the reply said "this reply didn't write any
+# files. My tools only read and search, so I can't confirm the change is on disk"). The opposite of NO_EDIT_NOTE above, and the same idea: said by code after the reply is composed, so no rewording keeps it. The
+# sentence is taken out (no model call), and only when an Apply was really reported in this turn (loop_rhythm's `applies`).
+_WRITE_DENIAL_RE = re.compile(
+    r"\b(?:this reply|this turn|i)\b[^.!?\n]{0,40}\b(?:didn'?t|did not|haven'?t|have not|hasn'?t|has not|can'?t|cannot|couldn'?t|could not|wasn'?t able to)\s+"
+    r"(?:actually )?(?:write|written|change|changed|edit|edited|touch|touched|modify|modified)\s+(?:any |the )?(?:files?|anything)\b"
+    r"|\bmy tools (?:can )?only (?:read|search|look)"
+    r"|\b(?:needs?|requires?) (?:a |an )?(?:new|separate|another|actual) (?:request|write)\b",
+    re.IGNORECASE,
+)
+
+
+def drop_write_denials(text: str) -> "tuple[str, int]":
+    """The reply without its sentences that deny writing files, and how many were dropped. Only for a turn where an edit was applied. Pure."""
+    paragraphs = str(text or "").split("\n")
+    dropped = 0
+    kept_paragraphs = []
+    for paragraph in paragraphs:
+        sentences = re.split(r"(?<=[.!?])\s+", paragraph)
+        kept = [sentence for sentence in sentences if not _WRITE_DENIAL_RE.search(sentence)]
+        dropped += len(sentences) - len(kept)
+        if kept or not paragraph.strip():
+            kept_paragraphs.append(" ".join(kept) if len(kept) != len(sentences) else paragraph)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept_paragraphs)).strip(), dropped

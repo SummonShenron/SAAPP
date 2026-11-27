@@ -126,7 +126,7 @@ async def test_applied_tells_the_loop_so_and_brings_the_servers_copy_up_to_date(
     _connect_folder()
     seen = await _drive(monkeypatch, lambda pid: led.decide("jack", pid, "applied"))
     assert seen["card"]["awaiting_decision"] is True
-    assert "APPLIED" in seen["observation"] and "src/app.py" in seen["observation"] and "read the changed files to check them" in seen["observation"]
+    assert "APPLIED" in seen["observation"] and "src/app.py" in seen["observation"] and "you can make more edits in this same turn" in seen["observation"] and "Answer only when the whole request is done" in seen["observation"]
     assert "'hello ' + name" in _text_on_server("src/app.py") and "'hi ' + name" not in _text_on_server("src/app.py")      # a read after this sees the change
 
 

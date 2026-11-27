@@ -59,6 +59,7 @@ from backend.services import ci_status, commit_flow, git_commit, pr_read
 from backend.utils import sonic_notes
 from backend.utils import read_log
 from backend.utils import cross_file, symbol_refs
+from backend.utils import multi_read
 from backend.utils import advisor as advisor_module
 from backend.utils import demo_project
 from backend.services.local_workspace import apply_sync as apply_workspace_sync, get_workspace_handle, is_guest_username, snapshot_paths, workspace_status
@@ -105,7 +106,7 @@ from backend.utils.agent_utils import (
     _FILE_EXTENSION_RE, _PATH_TOKEN_SPLIT_RE, _CAMEL_BOUNDARY_RE,
     _FUZZY_MATCH_CUTOFF, _FUZZY_MATCH_LIMIT, _tokenize_for_fuzzy_match, _fuzzy_path_score,
     fuzzy_query_tokens,
-    looks_like_edit_request, looks_like_plan_request, previous_human_texts, recent_user_text,
+    is_correction, looks_like_edit_request, looks_like_plan_request, previous_human_texts, recent_user_text,
     _classify_symbol_line,
     _VISUAL_INSPECTION_RE, _mentions_visual_inspection,
     _AUDIT_TASK_RE, _is_audit_style_task, _AUDIT_TASK_SEARCH_NUDGE,
@@ -2235,6 +2236,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 return {**state, "relevance_grade": "tool_agent", "content_to_format": code_plan.halt_facts(stuck_plan)}
         if edit_turn:
             logger.info("[tool_agent_node] edit request with a connected local folder — propose_local_edits is required this turn.")
+            if is_correction(state.get("messages", [])):
+                # A correction of the last coding reply ("ugh no the logo should not bounce"), read as the change request it is (backend/utils/agent_utils.py corrects_recent_change): counted, no text.
+                from backend.utils.self_counters import record_turn_counts
+
+                await asyncio.to_thread(record_turn_counts, {"edit_turn_correction": 1})
         else:
             # Which of the two things behind "it said it can't edit" this turn was: no folder copy on the server, or a folder with a message that did not read as an edit request.
             logger.info("[tool_agent_node] not an edit turn (folder on the server: %s).", "yes" if local_workspace_handle is not None else "no")
@@ -2265,9 +2271,10 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 f"run against the user's connected local folder '{workspace_name}' — their live "
                 f"working tree, including uncommitted changes — not GitHub's {default_branch} "
                 f"branch. Treat what you read there as the code as it is right now. History, "
-                f"branch diff and pull request actions still query GitHub; search_code and "
-                f"trace_symbol are not offered because GitHub's index cannot see this folder — "
-                f"use search_literal to find where something is defined or used. "
+                f"branch diff and pull request actions still query GitHub; search_code is not "
+                f"offered because GitHub's index cannot see this folder. trace_symbol works on the "
+                f"folder itself: use it to find every file that defines or uses a name before a change "
+                f"that crosses files, and search_literal for any other text. "
                 + (
                     f"WHEN THE USER ASKS YOU TO MAKE A CHANGE (add, edit, fix, update, rename, "
                     f"implement, move...) to files in this folder, do the work by calling "
@@ -2544,9 +2551,13 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             _turn_file_cache[path] = decoded
             return decoded, None
 
-        def _read_file(path: str, start_line=None, line_count=None):
+        def _read_file(path: str, start_line=None, line_count=None, ranges=None):
             if not path:
                 return "ERROR: no path given"
+            if ranges:
+                # Several places, of this file or others, in one call (backend/utils/multi_read.py): each file is fetched once, and the same limits apply as to any read.
+                spans, problems = multi_read.parse(path, ranges)
+                return multi_read.render(spans, problems, _fetch_file_content, _READ_FILE_CHAR_CAP)
             decoded, error = _fetch_file_content(path)
             if error:
                 return error
@@ -2571,11 +2582,19 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     count = _READ_FILE_DEFAULT_LINE_WINDOW
                 start_idx = start_line - 1
                 end_idx = start_idx + count
-                window = lines[start_idx:end_idx]
-                more_note = (
-                    f"\n... [{len(lines) - end_idx} more lines below — re-call with a higher "
-                    f"start_line to keep reading]" if end_idx < len(lines) else ""
-                )
+                asked = lines[start_idx:end_idx]
+                window = multi_read.fit(asked)          # whole lines, within what one read may show: the header below names the last line really shown
+                end_idx = start_idx + len(window)
+                if len(window) < len(asked):
+                    more_note = (
+                        f"\n... [stopped at line {end_idx}: one read shows at most {multi_read.MAX_TOTAL_LINES} lines / {multi_read.MAX_CHARS} characters. "
+                        f"{len(lines) - end_idx} more lines below — re-call with start_line={end_idx + 1} to keep reading]"
+                    )
+                else:
+                    more_note = (
+                        f"\n... [{len(lines) - end_idx} more lines below — re-call with a higher "
+                        f"start_line to keep reading]" if end_idx < len(lines) else ""
+                    )
                 return (
                     f"URL: {html_url}\nLines {start_line}-{start_idx + len(window)} of {len(lines)} "
                     f"total:\n{chr(10).join(window)}{more_note}"
@@ -3039,7 +3058,9 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             "- list_repo_tree — no args; lists every file path in the repo",
             "- read_repo_file — args: path (relative file path within the repo), start_line "
             "(optional, 1-indexed — jump straight to this line instead of reading from the top), "
-            "line_count (optional, defaults to 150 — how many lines to show from start_line). A "
+            "line_count (optional, defaults to 150 — how many lines to show from start_line), ranges (optional: a list such as "
+            "[\"40-120\", \"300-340\", \"other/file.py:15-60\"] to read several places, of this file or others, in ONE call instead of one call each; use it whenever you "
+            "already know two or more places you need). A "
             "large file's response gets truncated with a list of its top-level function/class "
             "names and line numbers when read without start_line — use that list to jump straight "
             "to the one you need on your next call, rather than assuming the truncated snippet is "
@@ -4012,6 +4033,47 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
             outcome = await sandbox_tests.run_tests(workspace_user, args.get("tests"), overlay)
             return sandbox_tests.format_result(outcome, with_edits=bool(args.get("edits")))
 
+        async def _after_edit_check(changed: list) -> str:
+            """After an Apply: the person's own check that fits the change (backend/utils/after_edit_check.py). It runs by itself when they turned that on for their runner, and its real result goes back
+            with the Apply result; otherwise the Apply result names the exact check to run. "" when no runner is connected or none of its checks fits. Counts only. Never raises."""
+            from backend.utils import after_edit_check
+            from backend.utils.self_counters import record_turn_counts
+
+            if runner_for_checks is None or not changed:
+                return ""
+            try:
+                choice = after_edit_check.pick(changed, runner_jobs.runnable_checks(runner_for_checks), await asyncio.to_thread(snapshot_paths, workspace_user))
+            except Exception:
+                logger.warning("[tool_agent_node] could not pick a check for an applied change.", exc_info=True)
+                return ""
+            if not choice:
+                return ""
+            if not runner_jobs.settings_of(runner_for_checks)["after_edit_auto"]:
+                await asyncio.to_thread(record_turn_counts, {"code_after_edit_check_suggested": 1})
+                return after_edit_check.suggestion(choice)
+            db = get_db()
+            try:
+                job = await asyncio.to_thread(runner_jobs.create_job, db, username, runner_for_checks["id"], choice["check"], choice["files"], None, runner_for_checks.get("project_id"), True)
+            except runner_jobs.RunnerError:
+                return after_edit_check.suggestion(choice)          # busy or no longer connected: the model can still ask for it
+            await safe_emit_event("runner_check", {"job": job, "runner": {"name": runner_for_checks.get("name"), "root_name": runner_for_checks.get("root_name")}})
+
+            async def _still_waiting(seconds: int, job_status: str) -> None:
+                await safe_emit_event("trace_detail", {"node": "tool_agent_node", **runner_jobs.waiting_text(seconds, job_status)})
+
+            finished = await runner_jobs.wait_for_result(db, username, job["id"], timeout=after_edit_check.WAIT_SECONDS, on_tick=_still_waiting)
+            if not finished:
+                return ""
+            done = finished.get("status") == runner_jobs.DONE and not finished.get("timed_out")
+            passed = done and finished.get("exit_code") == 0
+            counts = {"code_after_edit_check_run": 1}
+            if done:
+                llm_turns.note_tool_call("run_local_check", ok=True)       # a finished run is the turn checking its work (code_outcomes counts it as verified), whoever started it
+            if done and not passed:
+                counts["code_after_edit_check_failed"] = 1
+            await asyncio.to_thread(record_turn_counts, counts)
+            return after_edit_check.result_note(choice, runner_jobs.format_result(finished), passed)
+
         async def _decision_result(shown: str, result: dict, decision: dict | None) -> str:
             """What the loop is told once the person has decided on a proposal (or has not within the wait)."""
             if decision is None:
@@ -4062,9 +4124,12 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                     note += code_plan.progress_note(await asyncio.to_thread(code_plan.load, get_db(), username, state.get("session_id") or ""))
                 except Exception:
                     logger.warning("[tool_agent_node] could not update the plan after an applied change.", exc_info=True)
+            checked = await _after_edit_check(list(texts))
             return (
-                shown + " APPLIED: the person applied the edits, so those files now contain them." + note + " You can read the changed files to check them, propose a follow-up "
-                "change, or finish with a short answer on what changed."
+                # It used to end "...or finish with a short answer on what changed", and after the first of two files Haiku did just that (2026-11-27): the rest of the request comes first.
+                shown + " APPLIED: the person applied the edits, so those files now contain them." + note + " If any part of what they asked for is still not done (another file, the wiring, "
+                "a test to update), make that change now with propose_local_edits: you can make more edits in this same turn. Check the change if you can. Answer only when the whole request is done."
+                + checked
             )
 
         # Set once incident data (untrusted text from errAgent) has been read this turn. From then on, the actions that could
@@ -4362,7 +4427,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                 if tool_action == "list_repo_tree":
                     return _list_tree()
                 if tool_action == "read_repo_file":
-                    return _read_file(args.get("path"), args.get("start_line"), args.get("line_count"))
+                    return _read_file(args.get("path"), args.get("start_line"), args.get("line_count"), args.get("ranges"))
                 if tool_action == "search_code":
                     return _search_code(args.get("query"))
                 if tool_action == "find_file":

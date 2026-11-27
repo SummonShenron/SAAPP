@@ -108,6 +108,11 @@ export function withReadOnlyAuto(settings: RunnerSettings, on: boolean): RunnerS
   return { ...settings, read_only_auto: on };
 }
 
+/** The settings after the person ticks or unticks "check my changes right after I apply them" (the computer's own setting). */
+export function withAfterEditAuto(settings: RunnerSettings, on: boolean): RunnerSettings {
+  return { ...settings, after_edit_auto: on };
+}
+
 /** The first runner version that can update itself; an older one has to be set up again by hand. */
 export const SELF_UPDATE_FROM = '0.1.1';
 

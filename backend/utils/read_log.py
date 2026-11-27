@@ -33,6 +33,8 @@ MAX_CONTEXT_CHARS = 1600
 
 _PLACE_RE = re.compile(r"([\w./\\-]+\.[A-Za-z0-9]{1,6}):(\d+)")
 _PATH_RE = re.compile(r"[\w./\\-]*[\w-]+\.[A-Za-z0-9]{1,6}\b")
+_SHOWN_RE = re.compile(r"^Lines (\d+)-(\d+) of \d+ total:", re.MULTILINE)                      # the header of a window read (agent_workflow `_read_file`)
+_RANGE_SHOWN_RE = re.compile(r"^== (.+?) lines (\d+)-(\d+) of \d+ ==$", re.MULTILINE)          # the header of each range of a `ranges` read (backend/utils/multi_read.py render)
 _indexed = {"done": False}
 
 
@@ -72,6 +74,20 @@ def entry_for(tool: str, args: Any, result: Any) -> Optional[Dict[str, Any]]:
             return None
         start, count = _positive_int(args.get("start_line")), _positive_int(args.get("line_count"))
         span = f"{start}-{start + count - 1}" if start and count else (f"from {start}" if start else "")
+        # The lines the result SAYS it showed win over the lines asked for: a read is cut to what one call may show, and listing lines that never arrived as "already read" told the model not to
+        # read them (2026-11-27). Only the line numbers of the read tool's own headers are taken, never a word of the file.
+        shown = _SHOWN_RE.search(text) if start else None
+        if shown:
+            span = f"{shown.group(1)}-{shown.group(2)}"
+        if args.get("ranges"):
+            # Several places in one call (backend/utils/multi_read.py): each range, with its file when it is not `path`.
+            from backend.utils import multi_read
+
+            main = str(args.get("path") or "").strip()
+            asked = multi_read.places(args.get("path"), args.get("ranges"))
+            asked_paths = {where for where, _ in asked}                 # a header-shaped line inside a file's own text names no path that was asked for, so it is never taken
+            delivered = [(where.strip(), f"{first}-{last}") for where, first, last in _RANGE_SHOWN_RE.findall(text) if where.strip() in asked_paths]
+            span = _clip("; ".join(lines if where == main else f"{where}:{lines}" for where, lines in (delivered or asked)))
         return {"tool": tool, "target": path, "range": span, "hits": []}
     target = _clip(args.get("term") or args.get("query") or args.get("symbol"))
     if not target:

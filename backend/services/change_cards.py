@@ -13,7 +13,7 @@ proposal, makes the Google call and returns one sentence, raising ChangeError (b
 
 - ONE PERSON'S. A press is accepted only from the person the card was shown to.
 - ONCE. The first press decides; a second press (a double click, another tab) changes nothing.
-- BOUNDED. CHANGE_CARD_WAIT_SECONDS (default 600). A turn that is cancelled stops waiting at once. No press means nothing was changed, and the card says it is no longer waiting. Nothing is ever applied without a waiting turn.
+- BOUNDED. CHANGE_CARD_WAIT_SECONDS (default 600). A turn that is cancelled, or that the person stops (Stop) or answers with a new message instead of pressing, stops waiting at once (steering.wait_event); a browser that merely went away does not end it. No press means nothing was changed, and the card says it is no longer waiting. Nothing is ever applied without a waiting turn.
 - ONLY WHEN THE PAGE CAN ANSWER. The chat request carries `change_cards`; without it the tools are not offered and the older text path (Outlook, or a page from before this) is used.
 - NO EVENT OR DOCUMENT TEXT IS LOGGED: only that a wait ended, and how.
 """
@@ -22,6 +22,7 @@ import logging
 import os
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from backend.services import steering
 from backend.utils.change_error import ChangeError
 
 logger = logging.getLogger("SASS Logger")
@@ -93,17 +94,19 @@ async def wait_for(proposal_id: str, timeout: Optional[float] = None, on_tick: O
     try:
         while waited < limit:
             step = min(HEARTBEAT_SECONDS, limit - waited)
-            try:
-                await asyncio.wait_for(entry["event"].wait(), timeout=step)
+            how = await steering.wait_event(entry["event"], step)
+            if how == "set":
                 ended = entry["outcome"]["kind"]
                 return entry["outcome"]
-            except asyncio.TimeoutError:
-                waited += step
-                if on_tick is not None and waited < limit:
-                    try:
-                        await on_tick(int(waited))
-                    except Exception:
-                        pass
+            if how == "stopped":
+                ended = "stopped"           # Stop, or a new message instead of an answer: nobody is waiting any more, so nothing is applied
+                return None
+            waited += step
+            if on_tick is not None and waited < limit:
+                try:
+                    await on_tick(int(waited))
+                except Exception:
+                    pass
         return None
     except asyncio.CancelledError:
         ended = "cancelled"

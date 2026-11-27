@@ -140,7 +140,7 @@ async def test_a_cancelled_turn_stops_waiting_and_leaves_nothing_behind():
 
 def test_a_failing_tick_does_not_end_the_wait_and_the_wait_is_ten_minutes_by_default():
     source = (ROOT / "backend" / "services" / "choice_cards.py").read_text(encoding="utf-8")
-    assert '"CHOICE_WAIT_SECONDS", "600"' in source and "except Exception:\n                        pass" in source
+    assert '"CHOICE_WAIT_SECONDS", "600"' in source and "except Exception:\n                    pass" in source
 
 
 # ---- what the loop is told -----------------------------------------------------------------------------------------------------------------

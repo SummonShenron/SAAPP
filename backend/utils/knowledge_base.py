@@ -417,6 +417,12 @@ def approve(db, key: str, embed: Callable[[str], Optional[List[float]]], by: str
             "expires_at": _iso(now + timedelta(days=EXPIRY_DAYS[kind])), "uses": 0, "last_used_at": None,
         },
     })
+    try:
+        from local_function_app import function_app as ingest
+        ingest.index_graph_for_source(db, AFFILIATE, doc["url"], [doc["body"]])
+    except Exception:
+        import logging
+        logging.getLogger("SASS Logger").warning("[knowledge base] graph edges were not built for an approved card.")
     db[PENDING].delete_many({"_id": key})
     db[TOMBSTONES].delete_many({"_id": key})          # an evicted or expired page that is learned again is no longer a tombstone
     count("kb_approved")

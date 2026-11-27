@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, disconnectLocalWorkspace, getLocalWorkspaceStatus, type LocalWorkspaceStatus, type ProjectSettings, type RunnerInfo, type RunnerList, type RunnerPairing, type RunnerProject, type RunnerScript } from '../api';
-import { OS_LABEL, browserLine, canShareFiles, checkIsOn, detectOs, launchHint, minutesLeft, noChecksLine, notConnectedReason, requestSentence, requestsOpen, requestsToShow, runnerCanShareFiles, sharingLine, runHint, statusSentence, updateNote, withAutoUpdate, withCheck, withFakeKeys, withReadOnlyAuto, type OsKind } from '../runnerLogic';
+import { OS_LABEL, browserLine, canShareFiles, checkIsOn, detectOs, launchHint, minutesLeft, noChecksLine, notConnectedReason, requestSentence, requestsOpen, requestsToShow, runnerCanShareFiles, sharingLine, runHint, statusSentence, updateNote, withAutoUpdate, withCheck, withAfterEditAuto, withFakeKeys, withReadOnlyAuto, type OsKind } from '../runnerLogic';
 import './__styles__/RunnerSettingsCard.css';
 
 const POLL_WHILE_PAIRING_MS = 4000;
@@ -191,6 +191,11 @@ export default function RunnerSettingsCard() {
     save(runner, current => ({ ...current, runners: current.runners.map(item => (item.id === runner.id ? { ...item, settings: withReadOnlyAuto(item.settings, on) } : item)) }),
       () => api.updateRunnerSettings(runner.id, { read_only_auto: on }));
 
+  // The computer's own choice: whether the check that fits a change Sonic just applied runs without a click (backend/utils/after_edit_check.py).
+  const changeAfterEditAuto = (runner: RunnerInfo, on: boolean) =>
+    save(runner, current => ({ ...current, runners: current.runners.map(item => (item.id === runner.id ? { ...item, settings: withAfterEditAuto(item.settings, on) } : item)) }),
+      () => api.updateRunnerSettings(runner.id, { after_edit_auto: on }));
+
   const removeProject = async (runner: RunnerInfo, project: RunnerProject) => {
     if (!window.confirm(`Stop serving "${project.name}" on ${runner.name}? Nothing in the folder is touched, and no check can be run in it until you add it again.`)) return;
     setError('');
@@ -326,6 +331,13 @@ export default function RunnerSettingsCard() {
                     </span>
                   </label>
                 )}
+                <label className="runner-check" data-help="runner.afterEdit">
+                  <input type="checkbox" checked={runner.settings.after_edit_auto === true} disabled={saving === runner.id} onChange={event => void changeAfterEditAuto(runner, event.target.checked)} />
+                  <span className="runner-check-text">
+                    <span className="account-label">Check my changes right after I apply them</span>
+                    <span className="account-hint">When you apply a change Sonic proposed, the one check of yours that fits it runs without the Run button: the tests that belong to the changed Python files (never the whole suite), or the type check for TypeScript. Sonic reads the result and fixes what it broke in the same turn. Off by default.</span>
+                  </span>
+                </label>
                 <label className="runner-check" data-help="runner.autoUpdate">
                   <input type="checkbox" checked={runner.settings.auto_update} disabled={saving === runner.id} onChange={event => void changeAutoUpdate(runner, event.target.checked)} />
                   <span className="runner-check-text">

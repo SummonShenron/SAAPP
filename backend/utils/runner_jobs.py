@@ -386,7 +386,8 @@ def settings_of(runner: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """The settings that apply to a runner or to one project of it (a "view", see `runner_view`): {"disabled", "fake_keys", "auto_update"}. Automatic updates are OFF until the person turns them on. Pure."""
     saved = (runner or {}).get("settings") or {}
     disabled = [name for name in saved.get("disabled") or [] if isinstance(name, str) and _CHECK_RE.match(name)]
-    return {"disabled": disabled, "fake_keys": saved.get("fake_keys") is not False, "auto_update": saved.get("auto_update") is True, "read_only_auto": saved.get("read_only_auto") is True}
+    return {"disabled": disabled, "fake_keys": saved.get("fake_keys") is not False, "auto_update": saved.get("auto_update") is True, "read_only_auto": saved.get("read_only_auto") is True,
+            "after_edit_auto": saved.get("after_edit_auto") is True}
 
 
 def enabled_checks(runner: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -414,7 +415,9 @@ def update_settings(db: Any, username: str, runner_id: str, body: Dict[str, Any]
         saved["auto_update"] = body.get("auto_update") is True
     if "read_only_auto" in body:
         saved["read_only_auto"] = body.get("read_only_auto") is True
-    update: Dict[str, Any] = {"settings": {"auto_update": saved.get("auto_update") is True, "read_only_auto": saved.get("read_only_auto") is True}}
+    if "after_edit_auto" in body:
+        saved["after_edit_auto"] = body.get("after_edit_auto") is True
+    update: Dict[str, Any] = {"settings": {"auto_update": saved.get("auto_update") is True, "read_only_auto": saved.get("read_only_auto") is True, "after_edit_auto": saved.get("after_edit_auto") is True}}
     project = next((p for p in runner.get("projects") or [] if p["id"] == str(body.get("project_id") or "")), None)
     chosen = project_settings_of(runner, project["id"]) if project else {"disabled": [], "fake_keys": True}
     if project:
@@ -579,7 +582,7 @@ def public_runner(key: Dict[str, Any], doc: Dict[str, Any], now: datetime) -> Di
                 for p in doc.get("projects") or [] if p["id"] not in hidden]
     return {"id": key["_id"], "name": key.get("name") or "runner", "created_at": (_aware(key.get("created_at")) or now).isoformat(), "version": doc.get("version") or "",
             "status": doc.get("status") or "", "launch": doc.get("launch") or "", "last_seen": seen.isoformat() if seen else None,
-            "connected": bool(seen and (now - seen).total_seconds() <= RUNNER_ALIVE_SECONDS), "settings": {"auto_update": settings_of(doc)["auto_update"], "read_only_auto": settings_of(doc)["read_only_auto"]}, "update": update_info(doc, now),
+            "connected": bool(seen and (now - seen).total_seconds() <= RUNNER_ALIVE_SECONDS), "settings": {"auto_update": settings_of(doc)["auto_update"], "read_only_auto": settings_of(doc)["read_only_auto"], "after_edit_auto": settings_of(doc)["after_edit_auto"]}, "update": update_info(doc, now),
             "commands": commands_supported(doc), "looks": can_look(doc), "browser": doc.get("browser") or "",
             "projects": projects, "requests": [{"id": r["id"], "name": r["name"], "state": request_state(r, now), **({"kind": KIND_FILES, "project_id": r.get("project_id") or ""} if r.get("kind") == KIND_FILES else {})}
                                               for r in doc.get("requests") or []][-5:]}
@@ -590,7 +593,7 @@ def runner_view(runner: Dict[str, Any], project: Dict[str, Any]) -> Dict[str, An
     `auto_update`), `root_name` (the project's name) and `project_id`. Pure."""
     return {**{k: v for k, v in runner.items() if k not in ("projects", "requests")}, "project_id": project["id"], "root_name": project["name"], "checks": project.get("checks") or [], "servers": project.get("servers") or [],
             "status": project.get("status") or "", "settings": {**project.get("settings", {"disabled": [], "fake_keys": True}), "auto_update": (runner.get("settings") or {}).get("auto_update") is True,
-                         "read_only_auto": (runner.get("settings") or {}).get("read_only_auto") is True}}
+                         "read_only_auto": (runner.get("settings") or {}).get("read_only_auto") is True, "after_edit_auto": (runner.get("settings") or {}).get("after_edit_auto") is True}}
 
 
 def runners_for(db: Any, username: str, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -647,9 +650,10 @@ def _pick_project(runner: Dict[str, Any], project_id: Optional[str]) -> Dict[str
     raise RunnerError("no_project", "That computer serves more than one project, so say which: " + ", ".join(p["name"] for p in projects) + ".")
 
 
-def create_job(db: Any, username: str, runner_id: str, check: Any, files: Any = None, now: Optional[datetime] = None, project_id: Optional[str] = None) -> Dict[str, Any]:
+def create_job(db: Any, username: str, runner_id: str, check: Any, files: Any = None, now: Optional[datetime] = None, project_id: Optional[str] = None, after_edit: bool = False) -> Dict[str, Any]:
     """Asks for a check of one project to be run, waiting for the person's approval on a card. The runner must be connected, the project one it reported, the check one that project reported (and not turned
-    off), the files plain relative paths, and the runner free. Blocking."""
+    off), the files plain relative paths, and the runner free. `after_edit`: the check code picked right after the person applied a change (backend/utils/after_edit_check.py); it is approved at once
+    only when they turned that on for this runner (`after_edit_auto`, off until they do), and otherwise waits for Run like any other. Blocking."""
     now = now or _now()
     ensure_indexes(db)
     sweep(db, username, now)
@@ -682,8 +686,10 @@ def create_job(db: Any, username: str, runner_id: str, check: Any, files: Any = 
     if db[JOBS].find_one({"runner_id": runner_id, "status": {"$in": list(OPEN_STATES)}}):
         raise RunnerError("busy", "A check is already waiting or running on that runner. Finish or cancel it first.")
     job_id = uuid.uuid4().hex
+    automatic = after_edit and settings_of(doc)["after_edit_auto"]
+    fields: Dict[str, Any] = {"status": APPROVED, "approved_at": now, "auto_approved": True} if automatic else {"status": AWAITING, "expires_at": now + timedelta(minutes=JOB_APPROVAL_MINUTES)}
     db[JOBS].insert_one({"_id": job_id, "username": username, "runner_id": runner_id, "project_id": project["id"], "project_name": project["name"], "check": name, "command_shown": command, "files": paths,
-                         "status": AWAITING, "created_at": now, "expires_at": now + timedelta(minutes=JOB_APPROVAL_MINUTES)})
+                         "created_at": now, **fields})
     return get_job(db, username, job_id, now) or {}
 
 
@@ -957,6 +963,14 @@ def waiting_text(seconds: int, status: str) -> Dict[str, str]:
     return {"title": "Waiting for you to press Run...", "detail": f"{clock} so far. Nothing runs until you press Run."}
 
 
+def _cancel_unseen(db: Any, username: str, job_id: str) -> None:
+    """Cancels a check whose turn ended, so it cannot run later unseen. Never raises."""
+    try:
+        cancel_job(db, username, job_id)
+    except Exception:
+        logger.warning("[runner] could not cancel a check after its turn was stopped.")
+
+
 async def wait_for_result(db: Any, username: str, job_id: str, timeout: Optional[float] = None, on_tick: Any = None, poll: float = 1.5) -> Optional[Dict[str, Any]]:
     """Waits, at no model cost, for the person to run the check and for it to finish, then returns the job (None if it vanished). Gives up after `timeout` (WAIT_SECONDS) and returns the job as it is,
     still open, so the caller can say it is not finished. If the turn is stopped while waiting (the person pressed Stop, or left), a check nobody is waiting for is cancelled, so it cannot run later unseen.
@@ -964,25 +978,29 @@ async def wait_for_result(db: Any, username: str, job_id: str, timeout: Optional
     import asyncio
     import time
 
+    from backend.services import steering
+
     limit = WAIT_SECONDS if timeout is None else timeout
     started = last_tick = time.monotonic()
     try:
-        while True:
-            job = await asyncio.to_thread(get_job, db, username, job_id)
-            if job is None or job["status"] not in OPEN_STATES:
-                return job
-            elapsed = time.monotonic() - started
-            if elapsed >= limit:
-                return job
-            if on_tick is not None and time.monotonic() - last_tick >= TICK_SECONDS:
-                last_tick = time.monotonic()
-                await on_tick(int(elapsed), job["status"])
-            await asyncio.sleep(poll)
+        with steering.person_wait():
+            while True:
+                job = await asyncio.to_thread(get_job, db, username, job_id)
+                if job is None or job["status"] not in OPEN_STATES:
+                    return job
+                elapsed = time.monotonic() - started
+                if elapsed >= limit:
+                    return job
+                if on_tick is not None and time.monotonic() - last_tick >= TICK_SECONDS:
+                    last_tick = time.monotonic()
+                    await on_tick(int(elapsed), job["status"])
+                if steering.wait_stopped():
+                    # Stop, or a new message instead of pressing Run: the same as a cancelled turn, a check nobody is waiting for must not run later unseen.
+                    _cancel_unseen(db, username, job_id)
+                    return await asyncio.to_thread(get_job, db, username, job_id)
+                await asyncio.sleep(poll)
     except asyncio.CancelledError:
-        try:
-            cancel_job(db, username, job_id)
-        except Exception:
-            logger.warning("[runner] could not cancel a check after its turn was stopped.")
+        _cancel_unseen(db, username, job_id)
         raise
 
 

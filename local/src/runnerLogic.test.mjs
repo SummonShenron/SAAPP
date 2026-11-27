@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { OS_LABEL, agoText, checkIsOn, detectOs, filesLine, followUpLine, headline, isFinal, isOlderVersion, canSelfUpdate, launchHint, minutesLeft, noChecksLine, notConnectedReason, parseVersion, requestSentence, requestsOpen, requestsToShow, runHint, statusSentence, updateNote, verdict, withAutoUpdate, withCheck, withFakeKeys, classSentence, isCommand, needsSecondStep, withReadOnlyAuto } from './runnerLogic.ts';
+import { OS_LABEL, agoText, checkIsOn, detectOs, filesLine, followUpLine, headline, isFinal, isOlderVersion, canSelfUpdate, launchHint, minutesLeft, noChecksLine, notConnectedReason, parseVersion, requestSentence, requestsOpen, requestsToShow, runHint, statusSentence, updateNote, verdict, withAutoUpdate, withCheck, withFakeKeys, classSentence, isCommand, needsSecondStep, withReadOnlyAuto, withAfterEditAuto } from './runnerLogic.ts';
 
 const job = (over = {}) => ({ id: 'j1', runner_id: 'r1', check: 'tests', command_shown: 'pytest -q {files}', files: [], status: 'done', created_at: null, expires_at: null, finished_at: null, exit_code: 0, output_tail: '', truncated: false, timed_out: false, duration: 1.5, error: '', ...over });
 
@@ -312,4 +312,9 @@ test('the sentence about what follows a command is trimmed, empty when nothing f
   const card = readFileSync(new URL('./components/RunnerCheckCard.tsx', import.meta.url), 'utf8');
   assert.match(card, /\{followUp && <div className="rcc-followup"/);        // shown whatever state the card is in, so it is on screen when Run is pressed
   assert.match(card, /which this also approves/);                         // and the second, stronger confirmation points at it
+});
+
+test('ticking "check my changes right after I apply them" changes only that setting', () => {
+  assert.deepEqual(withAfterEditAuto({ auto_update: true, read_only_auto: false }, true), { auto_update: true, read_only_auto: false, after_edit_auto: true });
+  assert.deepEqual(withAfterEditAuto({ auto_update: false, read_only_auto: true, after_edit_auto: true }, false), { auto_update: false, read_only_auto: true, after_edit_auto: false });
 });

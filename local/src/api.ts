@@ -2202,7 +2202,7 @@ export interface RunnerCheck { name: string; command: string; /** false when the
 /** What the person chose for one PROJECT of a runner: the checks turned off, and whether its checks run with a fake AI key (on until turned off). Names and a yes or no only; the page never supplies a command. */
 export interface ProjectSettings { disabled: string[]; fake_keys: boolean; }
 /** What the person chose for the runner (the computer) itself: whether it updates itself without a click (off until turned on). */
-export interface RunnerSettings { auto_update: boolean; /** run command lines that only look around (git status, ls...) without a click on a card; off until turned on */ read_only_auto: boolean; }
+export interface RunnerSettings { auto_update: boolean; /** run command lines that only look around (git status, ls...) without a click on a card; off until turned on */ read_only_auto: boolean; /** run the check that fits a change right after it is applied, without a click; off until turned on */ after_edit_auto?: boolean; }
 /** One project folder a runner serves: chosen on that computer, reported by the runner with its checks and a status code. */
 export interface RunnerProject { id: string; name: string; status: string; checks: RunnerCheck[]; /** the servers this project can keep running, by name (npm run dev as dev) */ servers?: { name: string; command: string }[]; settings: ProjectSettings; }
 /** A request to add a project: the page sends only the folder NAME, and the person chooses the folder in a window on their own computer. */
@@ -2257,7 +2257,7 @@ export const listRunners = (): Promise<RunnerList> => taskRequest('/api/runner/r
 export const createRunnerPairing = (name: string, folderName = ''): Promise<RunnerPairing> =>
   taskRequest('/api/runner/pairings', { method: 'POST', body: JSON.stringify({ name, folder_name: folderName }) }, 'Failed to make a pairing code.');
 /** Saves a choice: a project's checks and fake-key setting (give `project_id`), or the runner's own `auto_update`. Anything left out is unchanged. */
-export interface RunnerSettingsChange { project_id?: string; disabled?: string[]; fake_keys?: boolean; auto_update?: boolean; read_only_auto?: boolean; }
+export interface RunnerSettingsChange { project_id?: string; disabled?: string[]; fake_keys?: boolean; auto_update?: boolean; read_only_auto?: boolean; after_edit_auto?: boolean; }
 export const updateRunnerSettings = (id: string, change: RunnerSettingsChange): Promise<{ settings: ProjectSettings & RunnerSettings }> =>
   taskRequest(`/api/runner/runners/${encodeURIComponent(id)}/settings`, { method: 'POST', body: JSON.stringify(change) }, 'Failed to save the runner settings.');
 export const addRunnerProject = (id: string, name: string): Promise<{ request: RunnerRequest }> =>

@@ -1144,7 +1144,9 @@ def _is_explicit_edit(text: str) -> bool:
 # A bare yes ("yes", "yes please.", "finish it!!!", "keep going") answers whatever Sonic offered last. In a coding thread that is usually "should I apply this edit?", and a yes to it was not read as an
 # edit request (the confirmation phrases above need "do it", "go ahead", "apply"...), so the turn was not required to call propose_local_edits and spent its steps reading again (2026-10-28 session).
 _BARE_YES_RE = re.compile(
-    r"^\W*(?:(?:yes|yep|yeah|yup|ok|okay|sure|please|do it|go ahead|go on|keep going|carry on|finish it|finish up|finish|just|now|come on|then|and|all right|alright)\W*)+$",
+    # "let's see if it works", "try it", "go for it" (2026-11-27: "okay lets see if it works" after "My next step is to propose a change..." was not read as the go-ahead it was)
+    r"^\W*(?:(?:yes|yep|yeah|yup|ok|okay|sure|please|do it|go ahead|go on|keep going|carry on|finish it|finish up|finish|just|now|come on|then|and|all right|alright"
+    r"|let'?s see(?: if (?:it|that) works)?|let'?s try(?: it)?|try it|go for it|let'?s do (?:it|this|that)|let'?s go|send it)\W*)+$",
     re.IGNORECASE,
 )
 BARE_YES_MAX_WORDS = 6
@@ -1243,6 +1245,88 @@ def continues_unfinished_edit(last: str, previous_ai: str, humans: list) -> bool
     return answers_it or says_yes or bool(_TASK_WORD_RE.search(last))
 
 
+# A CORRECTION to work Sonic has just done (2026-11-27, Jack's loader session: 9 of his 17 messages were not edit turns): "ugh no the logo should not bounce it should just show the comet pulse", "shoot no, the
+# animations dont transition, they just pop in, it needs to morph into the helix", "okay perfect now lets implement it for real please". Each came right after a coding reply, and none named a file or said "do it",
+# so the turn could only read and describe; nothing sent its plan-and-a-question answer back. A correction is an edit request when ALL of:
+# - one of the last CORRECTION_REPLIES replies was coding work: marked so by the server (code_outcomes.CODE_MARK), or, for a transcript loaded without marks, a reply that names a file AND says what was done to
+#   it (_WORK_REPLY_RE), after an explicit change request among the person's last few messages;
+# - the message is a statement, not a question, short enough to be about that work (CORRECTION_MAX_WORDS), and not about their own life (_PERSONAL_RE: a feeling, a person, a date);
+# - it corrects or directs: what it should / needs to / must do, a "no / ugh / shoot / close" opener, "didn't work / still / pops in", or an edit verb;
+# - it is about the work: it names something code-shaped, or shares a word with the replies or the request that is not small talk (_SMALL_TALK), or it is a short directive with an edit verb ("implement it for real").
+# Measured on Jack's whole history (5,981 messages) before it went in: the rule must not turn "ugh well she canceled" or "im overwhelmed i need to go grocery shopping" into a turn that has to edit code, because the
+# reasoner routes every edit request to the tool agent.
+_CORRECTION_RE = re.compile(
+    r"\b(?:should(?:n'?t| not)?|needs? to|has to|have to|must(?:n'?t)?|supposed to|instead|rather than|not the same|same (?:as|way)|just like)\b"
+    r"|^\W*(?:no|nope|nah|ugh+|shoot|wait|hmm+|close|so close|almost|not quite|wrong)\b"
+    r"|\b(?:didn'?t|doesn'?t|does not|did not|isn'?t|is not|won'?t|not) (?:work|working|change|move|show|morph|transition|match|look right)\b"
+    r"|\b(?:still|just) (?:pops?|jumps?|flickers?|fades?|shows?|breaks?|fails?|bounces?)\b",
+    re.IGNORECASE,
+)
+_WORK_FILE_RE = re.compile(r"\b[\w./-]+\.(?:py|tsx?|jsx?|mjs|css|json|md|html|ya?ml|toml)\b", re.IGNORECASE)
+_WORK_REPLY_RE = re.compile(r"\b(?:applied|the edit|edits|proposed|propose|changed|diff|tests? (?:pass|fail)|passed|tsc|npm test|exits? 0|line \d+|lines \d+)\b", re.IGNORECASE)
+_PERSONAL_RE = re.compile(
+    r"\b(?:i feel|i'?m feeling|i felt|feeling (?:so|really|kinda|pretty|a bit)|sad|nervous|anxious|anxiety|overwhelmed|scared|afraid|lonely|depressed|cry|crying|exhausted|stressed|upset|guilty|heartbroken|hurts?"
+    r"|she|her|girlfriend|boyfriend|date|dating|my (?:mom|dad|mum|family|friend|friends|boss|manager|therapist|life)|bed|sleep|tired|weed|smok\w*|drunk|interview|job)\b",
+    re.IGNORECASE,
+)
+# Not a request at all, though it can sound like one (the measurement above): turning it down ("no thats okay", "no dont look in this repo"), handing it to someone else or to later ("im gonna have claude fix it",
+# "were gonna add to it", "this is just a hypothetical"), owning the mistake ("this one might have been my fault"), or "id have to remove the hash routing though".
+_NOT_A_REQUEST_RE = re.compile(
+    r"^\W*(?:no|nah|nope)\W+(?:(?:that'?s|thats|it'?s|its|that is|it is)\s+(?:ok|okay|alright|all right|fine|fan|good)|(?:don'?t|dont|do not)\b)"
+    r"|\b(?:claude|gonna|gona|going to have|hypothetical|not (?:today|now|yet)|for now|later|tomorrow|tonight|my (?:fault|bad|mistake)|i'?d have to|would have to|i (?:don'?t|dont) think|stuck on"
+    r"|hang ?out|together|gym|workout|lunch|dinner|breakfast|proud of|crushed it|nailed it|you did it)\b",
+    re.IGNORECASE,
+)
+# Praise ("PERFECT, those are 2 ui changes thatll go a long way", "you should be so proud of yourself") is a request only with something still to do in it ("okay perfect now lets implement it for real please",
+# "yay its working. we need to address the new node sizes though").
+_STILL_TO_DO_RE = re.compile(r"\b(?:now|next|let'?s|lets|need to|needs to|but|though|also|again)\b", re.IGNORECASE)
+_SMALL_TALK = frozenset("feel feeling really think thing things good great okay yeah today tonight tomorrow morning ready right know going work working worked still maybe little actually everything something "
+                        "anything time again thanks thank sure well looks look looking make made need wanted want back first next last right also because getting doing done kind sort pretty".split())
+CORRECTION_MAX_WORDS = 60
+CORRECTION_REPLY_CHARS = 1500
+DIRECTIVE_MAX_WORDS = 12
+# The last TWO replies: the work stays the topic across one reply that is not about it (2026-11-27: "Fingers crossed..." after "hopefully it works this time!", and the "Stopped by user" placeholder, each sat between
+# the coding reply and the correction of it).
+CORRECTION_REPLIES = 2
+
+
+def _coding_reply(message, requests: list) -> bool:
+    from backend.utils.code_outcomes import CODE_MARK
+
+    if (getattr(message, "additional_kwargs", None) or {}).get(CODE_MARK):
+        return True
+    text = _message_text(message)
+    return bool(requests) and bool(_WORK_FILE_RE.search(text)) and bool(_WORK_REPLY_RE.search(text))
+
+
+def corrects_recent_change(last: str, replies: list, humans: list) -> bool:
+    """Whether `last` corrects or directs coding work one of Sonic's last replies (`replies`, the messages themselves so their marks can be read, oldest first) was doing. See the comment above. Pure."""
+    if not replies or "?" in last or len(last.split()) > CORRECTION_MAX_WORDS or _COPING_ASK_RE.search(last) or _PERSONAL_RE.search(last) or _NOT_A_REQUEST_RE.search(last):
+        return False
+    from backend.utils.code_outcomes import is_praise
+
+    if is_praise(last) and not _STILL_TO_DO_RE.search(last):
+        return False
+    requests = [_message_text(m) for m in humans[-(CONTINUATION_LOOKBACK + 1):-1] if _is_explicit_edit(_message_text(m))]
+    if not any(_coding_reply(m, requests) for m in replies):
+        return False
+    directive = bool(_EDIT_VERB_RE.search(last))
+    if not (_CORRECTION_RE.search(last) or directive):
+        return False
+    reply = " ".join(_FOLLOW_UP_TAG_RE.sub("", _message_text(m)).strip()[-CORRECTION_REPLY_CHARS:] for m in replies)
+    shared = (_content_words(last) & (_content_words(reply) | _content_words(" ".join(requests)))) - _SMALL_TALK
+    return bool(_CODE_TARGET_RE.search(last) or shared or (directive and len(last.split()) <= DIRECTIVE_MAX_WORDS))
+
+
+def is_correction(messages) -> bool:
+    """Whether the latest message reads as a correction of recent coding work (corrects_recent_change on the same inputs looks_like_edit_request gives it): counted as edit_turn_correction. Pure."""
+    humans = [m for m in (messages or []) if _is_human(m)]
+    if not humans:
+        return False
+    last = _message_text(humans[-1]).strip()
+    return bool(last) and corrects_recent_change(last, [m for m in messages if not _is_human(m)][-CORRECTION_REPLIES:], humans)
+
+
 def looks_like_edit_request(messages) -> bool:
     """True when the user's latest message is asking for a code/file change — either directly
     (an edit verb plus a code-shaped target: "change the header text in Chat.tsx") or as a
@@ -1265,6 +1349,8 @@ def looks_like_edit_request(messages) -> bool:
         return True
     previous_ai = next((_message_text(m) for m in reversed(messages) if not _is_human(m)), "")
     if len(last.split()) <= BARE_YES_MAX_WORDS and _BARE_YES_RE.match(last) and offered_a_change(previous_ai):
+        return True
+    if corrects_recent_change(last, [m for m in messages if not _is_human(m)][-CORRECTION_REPLIES:], humans):
         return True
     words = len(last.split())
     if words > 40:

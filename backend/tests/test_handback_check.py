@@ -127,11 +127,14 @@ def test_an_offer_to_carry_on_is_sent_back_once_and_the_next_answer_stands(monke
     assert any("you have" in t and "tool steps left" in t and "ask_choice" in t for t in sent_texts(llm))
 
 
-def test_a_second_hand_back_in_the_same_turn_stands_so_it_is_never_a_loop(monkeypatch):
+def test_a_hand_back_is_sent_back_up_to_max_repeats_then_stands_so_it_is_never_a_loop(monkeypatch):
+    """2026-11-27: one send-back was not enough (Haiku handed the work back again with 13 steps left), so an offer or "not finished" answer goes back up to MAX_REPEATS times, saying it is a repeat; then it stands."""
     offer = "Should I read dashboard.tsx next?"
-    llm = ToolLLM(asks(call("propose_local_edits", {"summary": "s", "edits": []})), answers(offer), answers(offer))
-    result, counts = drive(monkeypatch, llm)
-    assert result["final_answer"] == offer and counts.get("answer_sent_back_handback_offer") == 1 and len(llm.calls) == 3
+    llm = ToolLLM(asks(call("propose_local_edits", {"summary": "s", "edits": []})), *[answers(offer) for _ in range(hb.MAX_REPEATS + 1)])
+    result, counts = drive(monkeypatch, llm, max_steps=12)
+    assert result["final_answer"] == offer and counts.get("answer_sent_back_handback_offer") == hb.MAX_REPEATS and len(llm.calls) == hb.MAX_REPEATS + 2
+    assert any("send-back number 2" in t and "no need for a new request" in t for t in sent_texts(llm))
+    assert not any("send-back number" in t for t in sent_texts(llm)[:1])
 
 
 def test_telling_the_person_to_run_the_tests_after_an_applied_edit_is_sent_back_to_run_them_itself(monkeypatch):
@@ -302,10 +305,11 @@ def test_handing_the_work_back_again_after_the_free_send_back_asks_the_stronger_
         asked.append(prompt)
         return "Read context.py, then pass covered_indexes(run) into build_meeting_text there."
 
-    llm = ToolLLM(asks(call("propose_local_edits", {"summary": "s", "edits": []})), asks(call("run_local_check", {"check": "tests"})), answers(REAL_SHAPE), answers(REAL_SHAPE),
+    llm = ToolLLM(asks(call("propose_local_edits", {"summary": "s", "edits": []})), asks(call("run_local_check", {"check": "tests"})), *[answers(REAL_SHAPE) for _ in range(hb.MAX_REPEATS + 1)],
                   asks(call("read_repo_file", {"path": "context.py"})), answers("Done: wired and tested."))
     result, counts, ending = run_turn(monkeypatch, llm, advisor=advisor_module.Advisor(strong))
-    assert result["final_answer"] == "Done: wired and tested." and counts.get("answer_sent_back_handback_unfinished") == 1 and counts.get("advisor_handback") == 1
+    # the free send-backs come first (MAX_REPEATS of them); only an answer that still hands the work back after them asks the stronger model
+    assert result["final_answer"] == "Done: wired and tested." and counts.get("answer_sent_back_handback_unfinished") == hb.MAX_REPEATS and counts.get("advisor_handback") == 1
     assert len(asked) == 1 and "ended its turn handing work back" in asked[0] and "WHAT IT SAID INSTEAD OF ACTING" in asked[0]
     assert ending.steps[-1]["turn_end"] == "answered"
 
@@ -379,4 +383,4 @@ def test_a_question_about_code_that_ends_by_offering_to_make_a_change_is_not_a_h
 def test_a_turn_that_must_propose_an_edit_is_in_scope_even_before_any_edit_exists():
     source = (ROOT / "backend" / "services" / "native_loop.py").read_text(encoding="utf-8")
     assert "return claim_checking and (required_action is not None or plan_budget is not None or edited_this_turn())" in source
-    assert source.count("handback_in_scope() and") == 3                                  # the free send-back, the advisor hand-off and the stopped-early ending
+    assert source.count("handback_in_scope() and") == 4                                  # the free send-back, an answer at the checkpoint (2026-11-27), the advisor hand-off and the stopped-early ending

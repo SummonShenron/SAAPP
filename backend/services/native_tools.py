@@ -32,6 +32,7 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "path": {"type": "string", "description": "relative file path within the repo"},
         "start_line": {"type": "integer", "description": "1-indexed line to start from"},
         "line_count": {"type": "integer", "description": "how many lines to show from start_line"},
+        "ranges": {"type": "array", "items": {"type": "string"}, "description": "optional: several places in ONE call, e.g. [\"40-120\", \"300-340\", \"backend/other.py:15-60\"] (a bare number reads the lines around it); instead of start_line"},
     }, ["path"]),
     "search_code": _object({"query": {"type": "string", "description": "a function, class or variable name, or an exact string"}}, ["query"]),
     "find_file": _object({"query": {"type": "string", "description": "a colloquial or approximate file name"}}, ["query"]),

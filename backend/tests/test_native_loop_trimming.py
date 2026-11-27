@@ -183,3 +183,75 @@ def test_a_tiny_budget_is_told_straight_away():
 
 def test_the_step_limit_message_asks_for_the_code_itself_when_code_was_requested():
     assert "write it now, in full" in nl.STEP_LIMIT_NOTICE and "fenced code block" in nl.STEP_LIMIT_NOTICE
+
+
+# ---- a cached model, after the cache has already expired (a long wait for Apply or Run) -----------------------------------
+
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def _waiting_run(monkeypatch, wait_seconds, wait_on_call=4, reads_count=6, text=BIG, max_steps=None):
+    """A cached model reads `reads_count` big files; the `wait_on_call`-th tool call takes `wait_seconds` (the person deciding on a card). Returns (recorder, counters recorded)."""
+    from backend.utils import self_counters
+
+    clock = Clock()
+    monkeypatch.setattr(nl, "_clock", clock)
+    recorded = []
+    monkeypatch.setattr(self_counters, "record_turn_counts", lambda counts, *a, **k: recorded.append(dict(counts)))
+    calls = {"n": 0}
+
+    def result(decision):
+        calls["n"] += 1
+        if calls["n"] == wait_on_call:
+            clock.now += wait_seconds
+        return text
+
+    llm = Recorder(*[reads(f"f{i}.py") for i in range(reads_count)])
+    run(llm, Acts(result), shorten_old=False, max_steps=max_steps or reads_count + 2)
+    return llm, {k: v for counts in recorded for k, v in counts.items()}
+
+
+def test_after_the_cache_expired_old_results_are_shortened_once_and_never_before(monkeypatch):
+    llm, counts = _waiting_run(monkeypatch, nl.CACHE_EXPIRED_SECONDS + 60)
+    # calls 1-4 happen before the long wait finishes: every result they carry is whole, so the live cache is never broken
+    assert all(result == BIG for sent in llm.sent[:4] for result in sent)
+    after = llm.sent[4]                                    # the first call after the wait: the old results are cut, the recent ones kept whole
+    shortened = [r for r in after if "older result shortened" in r]
+    assert shortened and len(after) - len(shortened) == nl.KEEP_RECENT_STEPS
+    assert after[-nl.KEEP_RECENT_STEPS:] == [BIG] * nl.KEEP_RECENT_STEPS
+    assert counts["native_cache_expired_shrinks"] == 1 and counts["native_cache_expired_chars"] == len(shortened) * (len(BIG) - len(shortened[0]))
+
+
+def test_after_the_wait_the_cache_is_alive_again_so_later_results_stay_whole(monkeypatch):
+    llm, _ = _waiting_run(monkeypatch, nl.CACHE_EXPIRED_SECONDS + 60)
+    cut_after_wait = sum("older result shortened" in r for r in llm.sent[4])
+    assert all(sum("older result shortened" in r for r in sent) == cut_after_wait for sent in llm.sent[5:])      # nothing more is cut while the new cache lives
+
+
+def test_a_wait_shorter_than_the_cache_life_shortens_nothing(monkeypatch):
+    llm, counts = _waiting_run(monkeypatch, nl.CACHE_EXPIRED_SECONDS - 40)
+    assert not any("shortened" in result for sent in llm.sent for result in sent)
+    assert "native_cache_expired_shrinks" not in counts
+
+
+def test_the_expiry_line_is_a_little_over_five_minutes_and_the_counters_are_known():
+    from backend.utils import self_counters
+
+    assert 300 < nl.CACHE_EXPIRED_SECONDS <= 360
+    assert "native_cache_expired_shrinks" in self_counters._PLAIN_KEYS and "native_cache_expired_chars" in self_counters._PLAIN_KEYS
+
+
+def test_an_expired_cache_with_nothing_big_to_cut_is_not_counted(monkeypatch):
+    _, counts = _waiting_run(monkeypatch, nl.CACHE_EXPIRED_SECONDS + 60, text=SMALL)
+    assert "native_cache_expired_shrinks" not in counts
+
+
+def test_a_checkpoint_call_after_the_wait_renews_the_cache_so_nothing_is_cut_twice(monkeypatch):
+    # nine steps put checkpoints after steps 3 and 6 (checkpoint_after); the wait comes just before the first, so the checkpoint's own call is the one that writes the new cache
+    llm, counts = _waiting_run(monkeypatch, nl.CACHE_EXPIRED_SECONDS + 60, wait_on_call=3, reads_count=10, max_steps=9)
+    assert counts.get("native_cache_expired_shrinks") == 1
