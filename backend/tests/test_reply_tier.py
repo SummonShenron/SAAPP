@@ -118,7 +118,7 @@ def test_the_reasons_are_the_counter_keys_and_the_turn_counts_the_one_that_appli
     self_counters.tally(counts, "reply_tier", "something else")                          # an unknown word is dropped, never recorded
     assert {k: v for k, v in counts.items() if k.startswith("reply_tier")} == {"reply_tier_auto_plain": 1}
     start = APP.index("tier, tier_reason = reply_tier.pick(")
-    assert 'tally(turn_counts, "reply_tier", tier_reason)' in APP[start: start + 1500]
+    assert 'tally(turn_counts, "reply_tier", tier_reason)' in APP[start: start + 2600]
 
 
 def test_how_much_a_turn_matters_is_read_whatever_the_setting_and_counted_and_stamped():
@@ -318,7 +318,7 @@ def test_the_app_takes_the_guests_choice_from_the_request_and_never_runs_lite_fo
     assert "reply_model: Optional[str] = None" in APP
     assert 'reply_choice = reply_choice_for_turn(username, _settings.get("reply_model"), request.reply_model, lite_reply_available(), haiku_reply_available())' in APP
     start = APP.index("tier, tier_reason = reply_tier.pick(")
-    block = APP[start: start + 1100]
+    block = APP[start: start + 2400]
     assert "risk_active=risk_level != RISK_NONE" in block and "turn_llm = lite_voice" in block and "prompt = lite_prompt(prompt, lite_voice)" in block and "R_NOT_OFFERED" in block
     assert "get_haiku_stream_llm(username) if tier == reply_tier.HAIKU else get_lite_stream_llm(username)" in block       # each choice runs its own model
 

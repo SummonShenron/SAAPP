@@ -511,6 +511,21 @@ def get_haiku_stream_llm(username: str):
     return _lite_stream_llms[name]
 
 
+def get_top_stream_llm(username: str):
+    """The Claude Sonnet model that writes the few top-stakes replies (backend/utils/top_tier.py), or None for the embedded view or a server that does not offer Sonnet (no key, or no price in
+    LLM_PRICES, so its spend could not be counted). Set up like the Haiku voice; the standard reply model is its fallback."""
+    if username in ("guest_bty",) or not sonnet_available():
+        return None
+    from backend.models import claude_llm
+
+    name = claude_llm.SONNET_MODEL
+    if name not in _lite_stream_llms:
+        _lite_stream_llms[name] = claude_llm.ClaudeLLM(
+            model_name=name, fallback=stream_llm, effort="low", thinking_off=True, max_tokens=2000, voice_shape=True, voice_tail="voice",
+        )
+    return _lite_stream_llms[name]
+
+
 def lite_prompt(prompt: str, llm: object) -> str:
     """The prompt for a lite reply. A Claude model reshapes it itself (system prompt, closing reminder); a Gemini lite model reads the same flat prompt with the check-in reminder added last when a check-in
     is due (the eval's `checkin` shape: backend/utils/claude_voice.with_tail). Nothing changes for the standard voice."""

@@ -18,7 +18,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 MOVE_MARK = "low_move"
 MOVE_GAP = 4
-KINDS = ("push_back", "pattern", "company")
+KINDS = ("push_back", "pattern", "read", "company")
+READ_MIN_WORDS = 12            # a read needs a situation to be a read OF: a few words give it nothing to stand on
 LOW_VALENCES = ("low", "distressed")
 MAX_EVIDENCE = 3
 MAX_INTERESTS = 3
@@ -27,7 +28,11 @@ MIN_SHARED_WORDS = 2
 HARSH_SELF_RE = re.compile(
     r"\bi(?:'|’)?m (?:such )?(?:a |an )?(?:failure|loser|idiot|mess|disappointment|joke|burden|fraud|waste|pathetic|worthless|useless|stupid|hopeless|unlovable|broken|not good enough|never going to)\b"
     r"|\bi (?:always|keep) (?:mess|screw|fuck|ruin)\w*\b|\bi (?:can(?:'|’)?t|cannot|never) do anything right\b|\bi(?:'|’)?ll never (?:be|get|find|amount)\b"
-    r"|\bnobody (?:likes|wants|cares about|would want) me\b|\bwhat(?:'|’)?s wrong with me\b|\bi (?:hate|can(?:'|’)?t stand) myself\b|\bi ruin everything\b|\bi(?:'|’)?m not (?:smart|good|enough)\b",
+    r"|\bnobody (?:likes|wants|cares about|would want) me\b|\bwhat(?:'|’)?s wrong with me\b|\bi (?:hate|can(?:'|’)?t stand) myself\b|\bi ruin everything\b|\bi(?:'|’)?m not (?:smart|good|enough)\b"
+    # Widened 2026-11-27 (push_back fired once in five days): the same judgment said as being the problem, too much, or deserving it.
+    r"|\bi(?:'|’)?m (?:just )?(?:the problem|too much|hard to love|so dumb|dumb|an embarrassment|embarrassing|bad at (?:this|everything|people|life))\b"
+    r"|\b(?:no one|nobody) (?:likes|wants|cares about|would want|could love) me\b|\beveryone (?:leaves|hates me|gets tired of me)\b|\bi deserve (?:this|it|to be alone)\b"
+    r"|\bi (?:always|never) get (?:it|this|anything|things) (?:wrong|right)\b",
     re.IGNORECASE,
 )
 # A pattern note that reads like a diagnosis is not something to say to someone who is hurting.
@@ -92,24 +97,44 @@ def recent_kinds(recent_messages: Iterable[Any], gap: int = MOVE_GAP) -> set:
     return {str((getattr(m, "additional_kwargs", None) or {}).get(MOVE_MARK)) for m in replies if (getattr(m, "additional_kwargs", None) or {}).get(MOVE_MARK)}
 
 
-def choose(message: str, state: Optional[Dict[str, Any]], *, facts: Sequence[Any], interests: Sequence[str], recent_messages: Iterable[Any], risk_active: bool, closing: bool) -> Optional[Dict[str, Any]]:
-    """{"kind", "items"} for this turn's move, or None. Pure."""
+def available(message: str, state: Optional[Dict[str, Any]], *, facts: Sequence[Any], interests: Sequence[str], recent_messages: Iterable[Any], risk_active: bool, closing: bool,
+              support_mode: Optional[str] = None, reach: str = "default") -> Dict[str, Dict[str, Any]]:
+    """Every move this turn could make, by kind, in the default order (push_back, pattern, read, company). {} when none applies. Pure.
+
+    2026-11-27: "company" (their interests, offered as "want to...?") was 16 of 18 moves in five days and the model ignored it; it is now only for someone who asked for a distraction, and
+    never while they have asked to be just listened to. "read" is new: one sentence of Sonic's own view of the situation, which is neither advice nor their words handed back. It is left out
+    in "just listen" mode and with the reach dial at "none"."""
     state = state or {}
     if risk_active or closing or not state.get("read_this_turn") or state.get("lift_this_turn") or str(state.get("valence")) not in LOW_VALENCES:
-        return None
+        return {}
     used = recent_kinds(recent_messages)
+    found: Dict[str, Dict[str, Any]] = {}
     if "push_back" not in used and harsh_about_self(message):
         evidence = evidence_facts(facts)
         if evidence:
-            return {"kind": "push_back", "items": evidence}
+            found["push_back"] = {"kind": "push_back", "items": evidence}
     if "pattern" not in used:
         pattern = matching_pattern(message, facts)
         if pattern:
-            return {"kind": "pattern", "items": [pattern]}
-    if "company" not in used and state.get("need") in ("venting", "distraction", None, "none"):
+            found["pattern"] = {"kind": "pattern", "items": [pattern]}
+    if ("read" not in used and support_mode != "listen" and reach != "none" and state.get("need") in ("venting", None, "none")
+            and len(str(message or "").split()) >= READ_MIN_WORDS and not harsh_about_self(message)):
+        found["read"] = {"kind": "read", "items": []}
+    if "company" not in used and support_mode != "listen" and state.get("need") == "distraction":
         liked = [i for i in interests or [] if i and not _SENSITIVE_RE.search(i) and not _PLAN_RE.search(i)][-MAX_INTERESTS:]
         if liked:
-            return {"kind": "company", "items": liked}
+            found["company"] = {"kind": "company", "items": liked}
+    return found
+
+
+def choose(message: str, state: Optional[Dict[str, Any]], *, facts: Sequence[Any], interests: Sequence[str], recent_messages: Iterable[Any], risk_active: bool, closing: bool,
+           support_mode: Optional[str] = None, reach: str = "default", prefer: Optional[Sequence[str]] = None) -> Optional[Dict[str, Any]]:
+    """{"kind", "items"} for this turn's move, or None. `prefer` is the kinds in the order this person has responded to best (backend/utils/what_lands.py order); the first of them that is
+    available wins, and without it the default order stands. Pure."""
+    found = available(message, state, facts=facts, interests=interests, recent_messages=recent_messages, risk_active=risk_active, closing=closing, support_mode=support_mode, reach=reach)
+    for kind in list(prefer or []) + list(KINDS):
+        if kind in found:
+            return found[kind]
     return None
 
 
@@ -121,6 +146,11 @@ _BLOCKS = {
     "pattern": (
         "\nSOMETHING YOU HAVE NOTICED OVER TIME (drawn from many things they have told you): {items}\nIf it bears on what they just said, say it in one sentence as your own observation, "
         "tentatively (\"I've noticed...\"), as something about them that is true and maybe useful right now, not as a diagnosis or a lesson. If it doesn't fit this moment, leave it out.\n"
+    ),
+    "read": (
+        "\nYOUR OWN READ: when you have answered what they said, add ONE sentence that says what you make of the situation: what you think is going on, or what stands out to you, as your "
+        "own view (\"I think...\", \"What stands out to me is...\"). It is not advice (nothing they should do), not a summary of what they said, and not a feeling of yours. If you see it "
+        "differently from how they put it, you may say so once, kindly.\n"
     ),
     "company": (
         "\nSOMETHING TO OFFER INSTEAD OF A CHECK-IN: things they have told you they are into:\n{items}\nWhen you have answered what they said, you may offer ONE of these as something to do or "
@@ -134,6 +164,8 @@ def build_block(move: Optional[Dict[str, Any]]) -> str:
     if not move or move.get("kind") not in _BLOCKS:
         return ""
     items = move.get("items") or []
+    if move["kind"] == "read":
+        return _BLOCKS["read"]
     if move["kind"] == "pattern":
         return _BLOCKS["pattern"].format(items=items[0] if items else "")
     return _BLOCKS[move["kind"]].format(items="\n".join(f"- {item}" for item in items))

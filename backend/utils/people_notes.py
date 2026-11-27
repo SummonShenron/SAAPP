@@ -136,6 +136,14 @@ def build_block(chosen: List[Dict[str, Any]]) -> str:
     return (BLOCK_HEAD + "".join(parts)) if parts else ""
 
 
+def used(reply: str, chosen: List[Dict[str, Any]]) -> bool:
+    """True when the finished reply really used one of the notes it was shown (backend/utils/material_use.py: three distinctive words shared with what the note says helps, or with its
+    pattern). "Offered" was the only count, so a note that is shown and never used looked the same as one that shapes replies (2026-11-27). Pure."""
+    from backend.utils import material_use
+
+    return material_use.used_any(reply, [str(note.get(field) or "") for note in chosen or [] for field in ("helps", "pattern")])
+
+
 def tally_turn(counts: Dict[str, int], chosen: List[Dict[str, Any]], tally: Callable[..., None]) -> None:
     """Adds this turn's counters to `counts` with the counters' own `tally` (backend/utils/self_counters.py, which ignores any key that is not registered): one for the turn and one per note. Counts only."""
     if not chosen:

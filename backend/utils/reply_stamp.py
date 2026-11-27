@@ -17,8 +17,8 @@ from typing import Any, Dict, Iterable, List, Optional
 from backend.utils import reply_tier
 
 KEY = "voice"
-LABELS = ("flash", "gpt", "haiku", "lite", "other")
-TIERS = (reply_tier.STANDARD, reply_tier.LITE, reply_tier.HAIKU, "other")
+LABELS = ("flash", "gpt", "haiku", "lite", "sonnet", "other")
+TIERS = (reply_tier.STANDARD, reply_tier.LITE, reply_tier.HAIKU, "sonnet", "other")      # "sonnet": the capped stronger voice (backend/utils/top_tier.py TIER)
 CHOICES = ("gemini", "gpt", "lite", "haiku", "auto")
 MAX_IDS = 2
 RECORD_STATES = ("none", "offered", "cited")
@@ -35,6 +35,8 @@ def label_for(tier: str, choice: str) -> str:
         return "haiku"
     if tier == reply_tier.LITE:
         return "lite"
+    if tier == "sonnet":
+        return "sonnet"
     if tier == reply_tier.STANDARD:
         return "gpt" if choice == "gpt" else "flash"
     return "other"

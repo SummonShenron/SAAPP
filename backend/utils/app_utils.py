@@ -52,6 +52,31 @@ def _get_conversations_file_path(username: str) -> str:
     return os.path.join(CONVERSATIONS_DIR, f"{username}.json")
 
 
+# THE MARKS A REPLY CARRIES FOR LATER TURNS. Each says "this reply did X" (told a joke, offered a line of its own, asked the step-back question, was a coding reply), and a later turn reads it to
+# space things out or to know what the next message answers. They lived only in this process's copy of the conversation: nothing saved them, so after a restart "one joke a conversation", the gap
+# between relatable lines, low moves and shared moments, and "the next message is their answer" all started again from nothing (found 2026-11-27: none of the last 400 saved replies carried one).
+# Literal names, so this module imports none of theirs; backend/tests/test_saved_marks.py holds each to its module's constant.
+SAVED_MARKS = (
+    "relatable_offered", "encouragement_offered", "callback_offered", "step_back_asked", "low_move", "shared_moment", "emotion_checkin", "curiosity_offered", "shelf_offered",
+    "code_turn", "leanings_used", "untrusted_content", "experience_cited", "joke_told", "clarify_offered", "self_history_offered",
+    "view_stated", "volunteered", "move_kinds",
+)
+_MARK_TEXT_MAX = 120
+_MARK_LIST_MAX = 12
+
+
+def clean_mark(value: Any) -> Any:
+    """A mark's value as it may be saved and read back: True, a short string, or a short list of short strings; None for anything else (so nothing unexpected is ever written). Pure."""
+    if value is True:
+        return True
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:_MARK_TEXT_MAX]
+    if isinstance(value, (list, tuple)):
+        items = [str(item).strip()[:_MARK_TEXT_MAX] for item in value if isinstance(item, str) and item.strip()][:_MARK_LIST_MAX]
+        return items or None
+    return None
+
+
 def _serialize_messages(messages: list) -> list:
     """Converts LangChain message objects (or already-plain dicts) into plain {type, content} dicts."""
     serialized = []
@@ -84,6 +109,10 @@ def _serialize_messages(messages: list) -> list:
             for mark in ("support_mode", "support_card"):
                 if additional_kwargs.get(mark):
                     entry[mark] = additional_kwargs[mark]      # the support card and the option picked on it (backend/utils/support_choice.py MODE_MARK / CARD_MARK)
+            for mark in SAVED_MARKS:
+                kept = clean_mark(additional_kwargs.get(mark))
+                if kept is not None:
+                    entry[mark] = kept
             if additional_kwargs.get("initiated"):
                 # Sonic wrote this on its own when the conversation was opened (backend/utils/initiation.py).
                 entry["initiated"] = True
@@ -223,6 +252,10 @@ def _deserialize_messages(raw_messages: list) -> list:
         for mark in ("support_mode", "support_card"):
             if msg.get(mark):
                 extra[mark] = msg[mark]
+        for mark in SAVED_MARKS:
+            kept = clean_mark(msg.get(mark))
+            if kept is not None:
+                extra[mark] = kept
         if msg.get("initiated"):
             extra["initiated"] = True
             if msg.get("initiated_kind"):

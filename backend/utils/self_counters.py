@@ -96,6 +96,8 @@ _GROUPS: Dict[str, tuple] = {
     # Which voice wrote each reply and why (backend/utils/reply_tier.py REASONS; counts only): lite_setting and auto_plain are lite replies, the rest stayed on the standard voice.
     "reply_tier": ("standard_setting", "lite_setting", "haiku_setting", "auto_plain", "not_offered", "safety", "emotional", "checkin", "companion", "identity", "frustration"),
     "proactive_quiet": ("guest", "risk", "closing", "energy", "route", "rate_limit", "nothing_matched"),
+    # What an emotional turn was doing beside its mood, read by fixed patterns (backend/utils/message_doing.py KINDS). Counts only.
+    "doing": ("joking", "winding_down", "asking", "news"),
     # How much each turn mattered, whatever model wrote it (backend/utils/reply_tier.py STAKES, plus "none" for a plain turn): sizes the turns a stronger reply voice would be spent on. Counts only.
     "reply_stakes": ("safety", "emotional", "checkin", "companion", "identity", "frustration", "none"),
 }
@@ -182,7 +184,13 @@ PROACTIVE_KEYS = ("relatable_by_meaning",
                   "emotion_checkin_offered", "emotion_checkin_asked", "emotion_checkin_eased", "emotion_checkin_still_low",
                   # Turns where Sonic's own material (its habits, record cases, captures) was allowed although the plain energy tier would have held it: frustration at the work, or a low that eased
                   # (backend/utils/emotion_utils.py own_material_tier). Read against relatable_offered / experience_offered / experience_captured. Counts only.
-                  "own_material_opened")
+                  "own_material_opened",
+                  # Sonic's own views and what it brings up unasked (2026-11-27). A view was asked for, a reply stated one, a reply handed the question back (backend/utils/view_check.py); a view
+                  # kept for the person and one recalled later (own_views.py); an approved stance put in the prompt and really used (stances.py); a take placed unprompted (volunteer.py); an
+                  # outcome recorded for the reply before, one that showed a lift, and a turn whose low moves were ordered by them (what_lands.py); the low move "read" (low_moves.py); a reply
+                  # written by the capped stronger voice (top_tier.py); and a reply that really used a people note it was shown (people_notes.used). Counts only.
+                  "view_asked", "view_stated", "view_handed_back", "own_view_kept", "own_view_recalled", "stance_offered", "stance_used", "volunteer_placed", "lands_recorded", "lands_lift",
+                  "lands_ordered", "low_move_read", "reply_top_tier_used", "people_notes_used")
 _PLAIN_KEYS = _PLAIN_KEYS + RHYTHM_KEYS + MAPS_KEYS + READING_KEYS + GUIDANCE_KEYS + PLAN_CHANGE_KEYS + COMBO_KEYS + LESSON_KEYS + APPLY_WAIT_KEYS + CONVSUM_KEYS + LOOK_KEYS + BROWSER_KEYS + MONGO_KEYS + KB_KEYS + CI_KEYS + CHOICE_KEYS + PROGRESS_KEYS + ANSWER_CHECK_KEYS + VERIFY_KEYS + ADVISOR_KEYS + REASONER_KEYS + SUBSTANCE_KEYS + RUNNER_FILES_KEYS + PATTERN_KEYS + STEPS_KEYS + PROACTIVE_KEYS
 # A model provider refusing Sonic's API key, and accepting it again (backend/utils/provider_health.py). Counted at most once a minute while it lasts: minutes with a refusal, not calls.
 PROVIDER_KEYS = ("llm_key_rejected_claude", "llm_key_rejected_openai", "llm_key_recovered_claude", "llm_key_recovered_openai")

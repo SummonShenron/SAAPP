@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from backend.models.models import reasoner_llm_for, llm, get_stream_llm, get_lite_stream_llm, get_haiku_stream_llm, haiku_reply_available, lite_prompt, lite_reply_available, claude_available, sonnet_available, openai_available
+from backend.models.models import reasoner_llm_for, llm, get_stream_llm, get_lite_stream_llm, get_haiku_stream_llm, get_top_stream_llm, haiku_reply_available, lite_prompt, lite_reply_available, claude_available, sonnet_available, openai_available
 from backend.models.attachment import Attachment
 from backend.services.github_service import (
     process_pr_summary, verify_and_store_github_token, GitHubTokenRejected, GitHubUnreachable,
@@ -211,6 +211,7 @@ from backend.utils import user_tasks as user_tasks_utils
 from backend.utils import meetings as meetings_utils
 from backend.utils import calendar_headsups as headsups_utils
 from backend.utils.shared_history import CALLBACK_MARK, build_callback_block, callback_allowed
+from backend.utils import message_doing, own_views, stances as stances_utils, top_tier, view_check, volunteer, what_lands
 from backend.utils.user_settings_utils import (
     get_user_rag_mode, set_user_rag_mode, VALID_RAG_MODES,
     get_user_deep_thinking_mode, set_user_deep_thinking_mode, get_user_plan_mode, set_user_plan_mode,
@@ -1316,12 +1317,25 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 if _bans_block:
                     emotional_context += _bans_block
                     tally(turn_counts, "reply_bans_shown")
+            # What the reply before this one did, against how this message read (backend/utils/what_lands.py): numbers only, for this person only. Never for a guest.
+            _prev_kinds = what_lands.last_reply_kinds(chat_sessions[history_key])
+            if _prev_kinds and not is_guest_username(username) and get_db() is not None:
+                _landed = what_lands.outcome(_mood, question, is_closing_message(question))
+                spawn_background_task(asyncio.to_thread(what_lands.record, get_db(), username, _prev_kinds, _landed))
+                tally(turn_counts, "lands_recorded")
+                if _landed == "lift":
+                    tally(turn_counts, "lands_lift")
             low_move = None
             if not is_guest_username(username) and not safety_plan.active and _mood.get("read_this_turn") and _mood.get("valence") in low_moves.LOW_VALENCES:
+                # The order of the moves follows what this person has lifted after before, once there is enough to go on; "just listen" and the reach dial decide which are allowed at all.
+                _move_order = what_lands.order(await asyncio.to_thread(what_lands.load, get_db(), username), low_moves.KINDS)
+                if tuple(_move_order) != tuple(low_moves.KINDS):
+                    tally(turn_counts, "lands_ordered")
                 low_move = low_moves.choose(
                     final_state.get("original_question", question), _mood,
                     facts=await asyncio.to_thread(lambda: load_user_facts(username)), interests=await asyncio.to_thread(remembered_interests, username),   # served from the in-memory copy
                     recent_messages=list(chat_sessions[history_key]), risk_active=risk_level != RISK_NONE, closing=is_closing_message(question),
+                    support_mode=support_choice_utils.current_mode(chat_sessions[history_key]), reach=reach_level.level, prefer=_move_order,
                 )
                 if low_move:
                     emotional_context += low_moves.build_block(low_move)
@@ -1849,6 +1863,37 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             if support_mode and risk_level == RISK_NONE:
                 prompt = prompt + support_choice_utils.mode_block(support_mode)
                 tally(turn_counts, "support_mode_applied")
+            # THEY ASKED WHAT IT THINKS (backend/utils/view_check.py): the reply answers that first, and is checked afterwards. What it told this person it thinks before, if it bears on this,
+            # comes along so it stands by it or says it has changed its mind (backend/utils/own_views.py). Never under a safety plan or on a closing message.
+            _their_words = final_state.get("original_question", question)
+            view_wanted = source_type == "conversational" and risk_level == RISK_NONE and not is_closing_message(question)
+            view_asked = bool(view_wanted and view_check.asks_for_view(_their_words))
+            stance_entry = None
+            volunteer_take = None
+            if view_asked:
+                prompt = prompt + view_check.build_block(reach_level.level)
+                tally(turn_counts, "view_asked")
+                if not is_guest_username(username) and get_db() is not None:
+                    kept_view = await asyncio.to_thread(own_views.recall, get_db(), username, _their_words)
+                    if kept_view:
+                        prompt = prompt + own_views.build_block(kept_view)
+                        tally(turn_counts, "own_view_recalled")
+            # One of its approved stances about people and life (backend/utils/stances.py), only on a turn that already calls for a view: asked for one, advice chosen on the support card, or
+            # this turn's low move is its own read. Nothing is offered until a stance is approved.
+            if view_wanted and (view_asked or support_mode == "advice" or (low_move or {}).get("kind") == "read"):
+                _stance_pool = stances_utils.approved()
+                if _stance_pool:
+                    stance_entry = stances_utils.select(_their_words, wanted=True, entries=_stance_pool, vector=question_embedding,
+                                                        vectors=await asyncio.to_thread(entry_vectors, embed_text, _stance_pool))
+                if stance_entry:
+                    prompt = prompt + stances_utils.build_block(stance_entry)
+                    tally(turn_counts, "stance_offered")
+            # What the message is doing beside its mood (backend/utils/message_doing.py): joking through it, winding down, asking, telling news. Only where the emotional guidance is in force
+            # (a plain turn already answers the question first), and never under a safety plan.
+            _doing = message_doing.kind(_their_words) if (view_wanted and emotional_context and not safety_plan.active) else None
+            if _doing:
+                prompt = prompt + message_doing.build_block(_doing)
+                tally(turn_counts, "doing", _doing)
             support_offer = (support_mode is None and not is_guest_username(username) and support_choice_utils.should_offer(
                 final_state.get("emotional_state"), question, chat_sessions[history_key][:-1], page_can_show=bool(request.choice_cards),
                 conversational=source_type == "conversational", closing=is_closing_message(question), safety_active=risk_level != RISK_NONE))
@@ -1903,7 +1948,16 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
             # How much the turn matters, whatever the setting (Haiku and Lite are never routed, so their count above cannot say): counted, and stamped on the reply below. Backend/utils/reply_tier.py STAKES.
             reply_stakes = reply_tier.stakes_of(prompt, risk_active=risk_level != RISK_NONE, question=question)
             tally(turn_counts, "reply_stakes", reply_stakes)
-            if tier in (reply_tier.LITE, reply_tier.HAIKU):
+            # The few turns that matter most may be written by a stronger voice (backend/utils/top_tier.py): OFF unless REPLY_TOP_TIER=on, capped a day, never in a safety context.
+            top_voice = None
+            if top_tier.wanted(reply_stakes, effective_intensity(final_state.get("emotional_state"), datetime.now(timezone.utc)), risk_active=risk_level != RISK_NONE,
+                               used=top_tier.used_today(chat_sessions[history_key]), guest=is_guest_username(username)):
+                top_voice = get_top_stream_llm(username)
+            if top_voice is not None:
+                turn_llm, tier = top_voice, top_tier.TIER
+                prompt = lite_prompt(prompt, top_voice)
+                tally(turn_counts, "reply_top_tier_used")
+            elif tier in (reply_tier.LITE, reply_tier.HAIKU):
                 lite_voice = get_haiku_stream_llm(username) if tier == reply_tier.HAIKU else get_lite_stream_llm(username)
                 if lite_voice is None:
                     tier_reason = reply_tier.R_NOT_OFFERED
@@ -2010,6 +2064,11 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 )
                 # A reply that cheers on what they are trying to quit ("let the bowl do its job", with "quit using weed" among their goals): rewritten once (backend/utils/goal_guard.py).
                 goal_issue = goal_entries and goal_guard.reply_goes_against(checked_reply, goal_entries)
+                # They asked what it thinks: a reply whose opening states no view, or that hands the question back, is written once more (backend/utils/view_check.py). And a view they asked for
+                # is not "advice given to someone venting": their own question outranks the guessed need.
+                view_issue = None if (safety_plan.active or not view_asked) else view_check.issue(_their_words, checked_reply)
+                if view_asked and emotional_issue == "venting_advice":
+                    emotional_issue = None
                 if safety_issue:
                     revision_prompt, _ = build_safety_revision_prompt(prompt, full_response, safety_issue)
                     revision_tag = "safety"
@@ -2030,6 +2089,10 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                     revision_prompt, _ = build_emotional_revision_prompt(prompt, full_response, "against_their_goal")
                     revision_tag = "against_their_goal"
                     revision_title = "Keeping what you want for yourself in view"
+                elif view_issue:
+                    revision_prompt, _ = build_emotional_revision_prompt(prompt, full_response, view_issue)
+                    revision_tag = view_issue
+                    revision_title = "Saying what I think, since you asked"
                 elif closing_turn:
                     closing_issue = closing_reply_issue(checked_reply)
                     if closing_issue:
@@ -2156,6 +2219,20 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 full_response = placement.after_first_paragraph(full_response, relatable_entry["line"])
                 placed_own = True
                 tally(turn_counts, "relatable_placed")
+            # Once in a while it brings up something of its own unasked (backend/utils/volunteer.py): one take from its reading shelf, at the end of the reply, at most once a day, only at an
+            # open moment with nothing else going on in the turn. A take comes from a public page it read, never from anyone's conversation.
+            if (not placed_own and not safety_plan.active and not is_guest_username(username) and get_db() is not None and volunteer.may(
+                    _their_words, chat_sessions[history_key], source_type=source_type, risk_active=risk_level != RISK_NONE,
+                    energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)), closing=is_closing_message(question),
+                    proactive_taken=bool(open_loop_entry or headsup_entry or relatable_entry or encouragement_entry or self_history or callback_offered or goal_nudge_context or finding_offer
+                                         or shelf_offer or curiosity_invited or lean_entry or clarify_entry or task_results_context or meeting_context or low_move or support_offer
+                                         or view_asked or stance_entry or llm_turn.experience_item or llm_turn.shape_offered or llm_turn.proposal_files),
+                    offers_allowed=profile_utils.offers_allowed(user_profile), reach=reach_level.level)):
+                volunteer_take = volunteer.pick(await asyncio.to_thread(takes_utils.live_takes, get_db()), chat_sessions[history_key])
+                if volunteer_take:
+                    full_response = placement.at_end(full_response, volunteer.spoken(volunteer_take))
+                    placed_own = True
+                    tally(turn_counts, "volunteer_placed")
             if llm_turn.proposal_files and not safety_plan.active:
                 # A change was proposed this turn: a curated joke may follow it (backend/utils/jokes.py), placed by code at the end, word for word, and only if every gate allows (a big or a small change, a mood that can take it, once a conversation).
                 joke = await asyncio.to_thread(
@@ -2199,6 +2276,30 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 await asyncio.to_thread(recurring_struggles.note_asked, get_db(), username, step_back_entry["key"])
             if low_move:
                 ai_message.additional_kwargs[low_moves.MOVE_MARK] = low_move["kind"]       # spaces the same kind of move out (low_moves.MOVE_GAP)
+            # Its own view, when the turn called for one and the reply stated it: marked, counted, and the sentence kept for this person (backend/utils/own_views.py). A reply that still
+            # handed the question back after the rewrite is counted too.
+            _view_stated = bool(view_wanted and (view_asked or stance_entry or (low_move or {}).get("kind") == "read") and view_check.states_view(plain_quotes(full_response)))
+            if _view_stated:
+                ai_message.additional_kwargs[view_check.VIEW_MARK] = True
+                tally(turn_counts, "view_stated")
+                if not is_guest_username(username) and get_db() is not None:
+                    spawn_background_task(asyncio.to_thread(own_views.note, get_db(), username, _their_words, plain_quotes(full_response)))
+                    tally(turn_counts, "own_view_kept")
+            if view_asked and view_check.hands_back(plain_quotes(full_response)):
+                tally(turn_counts, "view_handed_back")
+            if stance_entry and stances_utils.used(full_response, stance_entry):
+                tally(turn_counts, "stance_used")
+            if volunteer_take:
+                ai_message.additional_kwargs[volunteer.MARK] = volunteer_take["id"]          # spaces them out, and keeps a take from being said twice (backend/utils/volunteer.py)
+            if people_note_entries and people_notes_utils.used(full_response, people_note_entries):
+                tally(turn_counts, "people_notes_used")
+            # What this reply did, for the count of what lands with this person (backend/utils/what_lands.py): read against their next message.
+            if risk_level == RISK_NONE and source_type == "conversational" and not is_guest_username(username):
+                _kinds = what_lands.kinds_of(
+                    low_move=(low_move or {}).get("kind"), view=_view_stated, stance=bool(stance_entry and stances_utils.used(full_response, stance_entry)),
+                    story=bool(llm_turn.shape_offered), record=bool(llm_turn.experience_item), question=curiosity_utils.asked_a_question(full_response))
+                if _kinds:
+                    ai_message.additional_kwargs[what_lands.MARK] = _kinds
             if shared_moment:
                 ai_message.additional_kwargs[shared_moments.MARK] = True          # spaces moments out (shared_moments.GAP_MESSAGES)
                 if shared_moments.used(full_response, shared_moment):
@@ -2273,9 +2374,12 @@ async def secure_chat(request: ChatRequest, http_request: Request, current_user 
                 brought_something_up=bool(
                     open_loop_entry or headsup_entry or relatable_entry or encouragement_entry or self_history or callback_offered or goal_nudge_context or finding_offer
                     or shelf_offer or curiosity_invited or lean_entry or clarify_entry or task_results_context or meeting_context
+                    # ... and the things of its own that this count used to miss (2026-11-27), so a turn with a low move, a story, a record line, a view or a take is not called quiet.
+                    or low_move or step_back_entry or stance_entry or volunteer_take or view_asked or llm_turn.experience_item or llm_turn.shape_offered
                 ),
                 guest=is_guest_username(username), risk_active=risk_level != RISK_NONE, closing=is_closing_message(question),
-                energy_tier=energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)), source_type=source_type,
+                # "energy" is the reason only when the gate for its own material was held too: with that one open, nothing matching is "nothing_matched" (backend/utils/emotion_utils.py own_material_tier).
+                energy_tier="open" if own_tier == "open" else energy_tier(final_state.get("emotional_state"), datetime.now(timezone.utc)), source_type=source_type,
                 rate_limited=recently_offered(chat_sessions[history_key]),
             )
             if quiet:
