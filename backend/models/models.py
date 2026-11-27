@@ -409,11 +409,21 @@ def summary_llm():
     return _summary_llm["haiku"]
 
 
-def tool_agent_llm(deep: bool, choice=None):
+def coding_thinking_enabled() -> bool:
+    """Whether a coding turn on Haiku thinks (CODING_THINKING, on unless set to off). See tool_agent_llm."""
+    return os.getenv("CODING_THINKING", "on").strip().lower() not in ("0", "off", "false", "no")
+
+
+def tool_agent_llm(deep: bool, choice=None, coding: bool = False):
     """The model behind the tool agent's reasoning steps (the reply the person reads is written by Gemini either way). `choice` is the person's own setting,
     "claude" (Haiku), "sonnet" (Claude Sonnet, when it is offered: see sonnet_available) or "gemini"; with none, the server's default applies: Gemini unless
     TOOL_AGENT_PROVIDER=anthropic. Claude is only ever used with a key present, and carries the Gemini model it replaces as its fallback, so a Claude failure degrades to what
-    the turn was before, never to an error. A "sonnet" choice that cannot be offered (no price configured) is served by Haiku, the cheaper of the two. See backend/models/claude_llm.py."""
+    the turn was before, never to an error. A "sonnet" choice that cannot be offered (no price configured) is served by Haiku, the cheaper of the two. See backend/models/claude_llm.py.
+
+    `coding`: a turn that makes a change (an edit turn, or a plan turn). On Haiku it THINKS, whatever CLAUDE_THINKING says for everything else, with drop_block on: thinking was switched off on
+    2026-11-02 because Anthropic refused a request whose earlier messages had changed since a thinking block was written (a 400, then a silent fall back to Gemini), and the loop still changes earlier
+    messages (a checkpoint's continue, a forced ending asked again, old results shortened after the cache expired). drop_block drops such a block and the request goes through. Probed live 2026-11-27 on
+    an eight-file task with all three: thinking without drop_block hit the 400 and answered wrong; with it, 3 of 3 clean and right at about the same cost. CODING_THINKING=off turns it off."""
     gemini = lite_llm_deep if deep else lite_llm
     wanted = choice if choice in ("claude", "sonnet", "gpt", "gemini") else ("claude" if os.getenv("TOOL_AGENT_PROVIDER", "").strip().lower() == "anthropic" else "gemini")
     if wanted == "gemini":
@@ -434,6 +444,11 @@ def tool_agent_llm(deep: bool, choice=None):
         return gemini
     if wanted == "sonnet" and not sonnet_available():
         wanted = "claude"
+    if wanted == "claude" and coding and coding_thinking_enabled():
+        key = ("claude", deep, "thinking")
+        if key not in _claude_tool_llms:
+            _claude_tool_llms[key] = claude_llm.ClaudeLLM(fallback=gemini, thinking_off=False, drop_block=True)
+        return _claude_tool_llms[key]
     key = (wanted, deep)
     if key not in _claude_tool_llms:
         if wanted == "sonnet":

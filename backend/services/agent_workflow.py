@@ -4649,6 +4649,11 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
 
         # A listing of a long library adds the read steps it needs, once (backend/utils/library_allowance.py); not in low-power mode, where the step cap is the point.
         library_allowance = LibraryAllowance(enabled=not budget_guard.low_power(budget_state)) if library_scope else None
+        loop_llm = tool_agent_llm(bool(deep_thinking), tool_model_choice, coding=bool(edit_turn or plan_phase))     # a turn that makes a change thinks on Haiku (models.tool_agent_llm)
+        if (edit_turn or plan_phase) and isinstance(loop_llm, ClaudeLLM) and not loop_llm.thinking_off:
+            from backend.utils.self_counters import record_turn_counts
+
+            await asyncio.to_thread(record_turn_counts, {"code_thinking_turns": 1})
         try:
             try:
                 loop_result = await _native_engine(
@@ -4662,7 +4667,7 @@ async def tool_agent_node(state: GraphState, memory_vector_store=None) -> Dict[s
                             TOOL_AGENT_PLAN_STEPS if plan_phase == code_plan.PLAN_PHASE else 0),
                         budget_state,
                     ),
-                    llm=tool_agent_llm(bool(deep_thinking), tool_model_choice),
+                    llm=loop_llm,
                     capability_denial_watchlist=TOOL_AGENT_CAPABILITY_DENIAL_WATCHLIST,
                     required_action=_PLAN_REQUIRED_ACTION if plan_phase == code_plan.PLAN_PHASE else (_LOCAL_EDIT_REQUIRED_ACTION if edit_turn else None),
                     steering_source=lambda: steering.drain(steering_key),

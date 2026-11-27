@@ -83,7 +83,7 @@ def test_a_choice_that_cannot_be_offered_falls_back_as_it_always_did(monkeypatch
 def test_the_tool_agent_builds_its_model_through_the_phase_choice_and_says_so_in_the_trace():
     source = open(os.path.join(REPO, "backend", "services", "agent_workflow.py"), encoding="utf-8").read()
     assert 'tool_model_choice = code_plan.execute_phase_choice(state.get("tool_model"), plan_phase, state.get("execute_model"))' in source
-    assert "llm=tool_agent_llm(bool(deep_thinking), tool_model_choice)," in source
+    assert "loop_llm = tool_agent_llm(bool(deep_thinking), tool_model_choice, coding=bool(edit_turn or plan_phase))" in source and "llm=loop_llm," in source
     assert "code_plan.EXECUTE_MODEL_NAMES.get(str(tool_model_choice)" in source        # the trace names the model that runs the step
     assert 'if plan_phase == code_plan.EXECUTE_PHASE and tool_model_choice != state.get("tool_model"):' in source
 
