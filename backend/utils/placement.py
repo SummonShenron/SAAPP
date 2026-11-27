@@ -24,3 +24,16 @@ def after_first_paragraph(reply: str, words: str) -> str:
     paragraphs = body.rstrip().split("\n\n", 1)
     placed = f"{paragraphs[0]}\n\n{speech}" + (f"\n\n{paragraphs[1]}" if len(paragraphs) == 2 else "")
     return f"{placed}\n\n{tail}" if tail else placed
+
+
+def at_end(reply: str, words: str) -> str:
+    """The reply with `words` as its last paragraph (before any <<<FOLLOW_UP>>> tag). Unchanged when there is nothing to place, no reply, or the words are already in it. For something that
+    stands apart from the answer (backend/utils/volunteer.py), where the middle of the reply would interrupt it. Pure."""
+    text = reply or ""
+    speech = (words or "").strip()
+    if not speech or not text.strip() or speech in text:
+        return text
+    tag = _FOLLOW_UP_TAG_RE.search(text)
+    body, tail = (text[: tag.start()], text[tag.start():].lstrip()) if tag else (text, "")
+    placed = f"{body.rstrip()}\n\n{speech}"
+    return f"{placed}\n\n{tail}" if tail else placed

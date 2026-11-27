@@ -19,12 +19,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
+from backend.utils import view_check
 from backend.utils.emotion_utils import NEGATIVE_VALENCES
 from backend.utils.time_utils import sent_at
 
 MODE_MARK = "support_mode"          # on their message: the option they picked ("listen", "advice", "fix")
 CARD_MARK = "support_card"          # on Sonic's reply: a card was shown with it
 MODE_HOURS = 6
+LISTEN_TURNS = 10            # how many of their messages "just listen" holds for after the tap
 OFFER_MIN_INTENSITY = 0.35
 QUESTION = "What would help most right now?"
 OPTIONS = (
@@ -49,12 +51,21 @@ def stated_what_they_want(message: str) -> bool:
 def current_mode(messages: Iterable[Any], now: Optional[datetime] = None) -> Optional[str]:
     """The mode they picked in the last MODE_HOURS (the newest pick wins), or None. Pure apart from the clock."""
     moment = now or datetime.now(timezone.utc)
-    for message in reversed(list(messages or [])):
+    ordered = list(messages or [])
+    for message in reversed(ordered):
         mode = (getattr(message, "additional_kwargs", None) or {}).get(MODE_MARK)
         if getattr(message, "type", "") != "human" or mode not in KEYS:
             continue
         when = sent_at(message)
-        return mode if when is not None and moment - when <= timedelta(hours=MODE_HOURS) else None
+        if when is None or moment - when > timedelta(hours=MODE_HOURS):
+            return None
+        if mode == "listen":
+            # "Just listen" answers the stretch it was tapped in, not the next six hours of conversation (2026-11-27: 4 taps covered 78 of 313 conversational turns). It ends after
+            # LISTEN_TURNS of their messages, and it steps aside for a message that asks Sonic what it thinks: that is them saying they want something different.
+            later = [m for m in ordered[ordered.index(message) + 1:] if getattr(m, "type", "") == "human"]
+            if len(later) > LISTEN_TURNS or (later and view_check.asks_for_view(str(getattr(later[-1], "content", "") or ""))):
+                return None
+        return mode
     return None
 
 
@@ -101,8 +112,9 @@ OFFER_NOTE = (
 
 _MODE_TEXT = {
     "listen": (
-        "they asked you to JUST LISTEN. Stay with what they say and how it feels for them. No advice, suggestions, fixes, plans or silver linings. Short is fine. At most one gentle question, "
-        "and often none."
+        "they asked you to JUST LISTEN. Stay with what they say and how it feels for them. No advice, suggestions, fixes, plans or silver linings. Listening is not saying nothing, though: "
+        "you may name exactly what is hard about it (not a summary of it), bring in something they told you before that bears on it, or thank them for telling you something hard. Short is "
+        "fine. At most one gentle question, and often none."
     ),
     "advice": (
         "they asked for ADVICE. Give your honest take: what you see in what they described and what you would consider, with one or two concrete suggestions grounded in what they told you "

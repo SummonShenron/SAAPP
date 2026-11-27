@@ -68,16 +68,17 @@ def test_a_pattern_needs_two_shared_words():
 
 
 def test_company_offers_what_they_like_when_they_want_to_be_heard_never_a_sensitive_interest():
-    move = _choose("today just sucked", interests=["drinking with friends", "learning guitar", "Elden Ring"])
+    move = _choose("today just sucked", mood=_mood(need="distraction"), interests=["drinking with friends", "learning guitar", "Elden Ring"])
     assert move == {"kind": "company", "items": ["learning guitar", "Elden Ring"]}
     assert _choose("today just sucked", mood=_mood(need="solving")) is None              # they want help with something concrete
+    assert _choose("today just sucked") is None                                          # 2026-11-27: someone venting is no longer offered "want to...?" (16 of 18 moves, ignored)
 
 
 def test_company_never_offers_a_plan_or_an_appointment_only_something_they_do():
     real_shapes = ["The user engages in strength training exercises including shoulder presses and bicep curls.",
                    "The user plans to build a dedicated portfolio website to showcase their projects.",
                    "The user has a planned visit with Kelsey on November 20, 2026, and a significant meeting on November 24, 2026."]
-    assert _choose("today just sucked", interests=real_shapes) == {"kind": "company", "items": [real_shapes[0]]}
+    assert _choose("today just sucked", mood=_mood(need="distraction"), interests=real_shapes) == {"kind": "company", "items": [real_shapes[0]]}
 
 
 def test_the_same_kind_is_not_used_again_within_the_gap_and_comes_back_after_it():

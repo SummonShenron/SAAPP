@@ -1896,7 +1896,7 @@ CHANGELOG = [
         "month": "2026-11",
         "title": "More than reflecting you back",
         "line": (
-            "When you're down, I can now do more than repeat back what you said: push back with something true you've told me when you're hard on yourself, share a pattern I've noticed, or offer to do something you like together."
+            "When you're down, I can do more than repeat back what you said: push back with something true you've told me when you're hard on yourself, share a pattern I've noticed, or give my own read of the situation."
         ),
         "keywords": ["mirroring", "repeat back", "hard on yourself", "pattern", "noticed", "company", "low"],
         "volunteer": [],
@@ -2026,6 +2026,104 @@ CHANGELOG = [
             "In the Conversations panel I can now rename a conversation: press Rename on its row and type a new title."
         ),
         "keywords": ["rename", "conversation title", "retitle", "name a chat", "change title"],
+        "volunteer": [],
+    },
+    {
+        "id": "say_what_i_think",
+        "requires": [
+            "backend/utils/view_check.py::def issue",
+            "app.py::view_check.build_block",
+        ],
+        "month": "2026-11",
+        "title": "Saying what I think when you ask",
+        "line": (
+            "When you ask what I think, I now answer that first: my view in a sentence, then why, and I say so if I see it differently from you. I no longer hand the question back to you."
+        ),
+        "keywords": ["what do you think", "opinion", "your take", "am i wrong", "should i", "honest view", "disagree"],
+        "volunteer": [],
+    },
+    {
+        "id": "views_of_my_own",
+        "requires": [
+            "backend/components/sonic_stances.py::APPROVED_IDS",
+            "backend/utils/stances.py::def select",
+            "app.py::stances_utils.build_block",
+        ],
+        "month": "2026-11",
+        "title": "Views of my own about everyday life",
+        "line": (
+            "I now hold a few views of my own about people and everyday life, like rest being part of the work, or one short reply being thin evidence. When you ask what I think, I may say one, with my reason."
+        ),
+        "keywords": ["your views", "what do you believe", "stance", "opinion about people", "what do you think about rest", "values"],
+        "volunteer": [],
+    },
+    {
+        "id": "remember_my_views",
+        "requires": [
+            "backend/utils/own_views.py::def recall",
+            "app.py::own_views.note",
+        ],
+        "month": "2026-11",
+        "title": "Standing by what I said I think",
+        "line": (
+            "I now keep the sentence where I told you what I think, so later I can stand by it or tell you plainly that I've changed my mind. It's kept only for you and erased with your memory."
+        ),
+        "keywords": ["changed your mind", "you said before", "consistent", "your view", "what you thought", "opinion"],
+        "volunteer": [],
+    },
+    {
+        "id": "listening_isnt_silence",
+        "requires": [
+            "backend/utils/support_choice.py::LISTEN_TURNS",
+        ],
+        "month": "2026-11",
+        "title": "Just listen, without going quiet",
+        "line": (
+            "When you pick Just listen I still give no advice, but I can name what's hard, bring in something you told me before, or thank you. It now ends after about ten of your messages, or when you ask what I think."
+        ),
+        "keywords": ["just listen", "listen mode", "no advice", "support card", "how long"],
+        "volunteer": [],
+    },
+    {
+        "id": "bring_up_my_reading",
+        "requires": [
+            "backend/utils/volunteer.py::def may",
+            "app.py::volunteer.spoken",
+        ],
+        "month": "2026-11",
+        "title": "Mentioning my own reading",
+        "line": (
+            "About once a day, at a quiet moment, I may now mention something from my own reading at the end of a reply, unasked. If you set how often I bring things up to none on the Account page, I won't."
+        ),
+        "keywords": ["your reading", "unprompted", "bring up", "something of your own", "what you read", "take"],
+        "volunteer": [],
+    },
+    {
+        "id": "what_lands_with_you",
+        "requires": [
+            "backend/utils/what_lands.py::def order",
+            "app.py::what_lands.record",
+        ],
+        "month": "2026-11",
+        "title": "Leaning on what has helped",
+        "line": (
+            "I now count which kinds of reply were followed by you sounding a bit better, and lean on those first when you're low. Numbers only, kept for you, erased with your memory."
+        ),
+        "keywords": ["what helps", "what works", "learn", "feel better", "adapt"],
+        "volunteer": [],
+    },
+    {
+        "id": "what_a_message_is_doing",
+        "requires": [
+            "backend/utils/message_doing.py::def kind",
+            "app.py::message_doing.build_block",
+        ],
+        "month": "2026-11",
+        "title": "Reading what a message is doing",
+        "line": (
+            "When you're having a hard time I now notice whether a message is joking through it, heading to bed, asking me something or telling me news, and I answer that first."
+        ),
+        "keywords": ["joking", "going to bed", "news", "asked a question", "answer first", "attune"],
         "volunteer": [],
     },
 ]

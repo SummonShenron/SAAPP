@@ -340,6 +340,11 @@ _REVISION_REASONS = {
         "they spend the opening telling them their own situation. Write it again with at most one short acknowledgement, then something they did not say: what you notice, a true thing that "
         "bears on it, or what you'd offer. Keep the warmth."
     ),
+    "no_view": (
+        "they asked what you think, and the draft does not say: it opens with how they feel, or hands the question back to them. Write it again and answer first: your view in one plain "
+        "sentence (\"I think...\", \"I'd...\", \"No, I don't think...\"), then the reason, from what they told you. You may say after it what you are unsure of. Keep what was good in the "
+        "draft, and do not end by asking them what they think."
+    ),
     "against_their_goal": (
         "the draft encourages something they have told you they are trying to quit or cut back on (their goal is in THEIR OWN GOALS above). Write it again without encouraging it: stay with "
         "what they said and how they feel, and if it fits, name their goal once, gently, as theirs. Do not lecture."
